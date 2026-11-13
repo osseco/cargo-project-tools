@@ -1,0 +1,28 @@
+[package]
+name = "cargo-project-tools"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Manage a project's cargo-installed tools with project-owned Cargo.lock files"
+publish = false
+
+[dependencies]
+anyhow = "1.0.104"
+cargo-lock = "11.1.0"
+clap = { version = "4.6.7", features = ["derive"] }
+flate2 = "1.1.11"
+hex = "0.4.3"
+semver = "1.0.28"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+tar = "0.4.46"
+tempfile = "3.27.0"
+toml = "1.2.1"
+toml_edit = "0.25.19"
+ureq = "3.5.2"
+
+[profile.release]
+strip = "symbols"
+lto = "thin"
+codegen-units = 1
