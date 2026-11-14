@@ -14,7 +14,11 @@ sfw cargo add <crate>
 sfw pnpm install --frozen-lockfile
 ```
 
-Exception: never run `cargo audit` under sfw. cargo-audit uses the platform TLS verifier, which doesn't trust sfw's CA, and retries forever. Run it plainly: `cargo audit`.
+Exceptions, run plainly because their TLS verifiers don't trust sfw's CA:
+- `cargo audit` would retry forever.
+- `rustup toolchain install` fails. rustup checks its own downloads; the toolchain is pinned in `rust-toolchain.toml`.
+
+Python tooling goes through sfw too: `sfw uv lock`, `sfw uv sync`.
 
 The tool itself also wraps its package downloads in sfw (`settings.sfw = "auto"`). If you run it as `sfw cargo project-tools …`, it detects the outer sfw and doesn't start a second one.
 
@@ -41,12 +45,13 @@ type(scope): imperative subject
 - The subject is lowercase imperative, with no trailing period.
 - Breaking changes use `!` or a `BREAKING CHANGE:` footer.
 - The `ci` type and scope are only for this project's own CI, not for the CI guidance in the README.
+- Commit types decide the next release version (see [CONTRIBUTING.md](CONTRIBUTING.md#versions)). Pick them deliberately: `feat` bumps minor, `!` or `BREAKING CHANGE:` bumps major, everything else bumps patch.
 
 ## Checks
 
-Run `pre-commit run --all-files` before committing. It runs fmt, clippy, test, cargo-deny, cargo-audit, zizmor, actionlint and basic file checks.
+Run `pre-commit run --all-files` before committing. It runs fmt, clippy, test, cargo-deny, cargo-audit, zizmor, actionlint, the version-script checks and basic file checks.
 
-It needs these on PATH: `sfw`, `cargo-deny`, `cargo-audit`, `zizmor`, `actionlint`, `pre-commit`.
+It needs these on PATH: `sfw`, `cargo-deny`, `cargo-audit`, `zizmor`, `actionlint`, `uv`, `pre-commit`.
 
 Unit tests sit next to the code and must not touch the network.
 
@@ -77,7 +82,13 @@ Unit tests sit next to the code and must not touch the network.
 
 ## GitHub Actions
 
+How CI and releases work: [CONTRIBUTING.md](CONTRIBUTING.md#ci).
+
 - Pin every action to a full commit SHA with a version comment, in workflows and in README examples alike.
-- Keep `permissions: contents: read`.
+- Start each workflow with `permissions: {}`, and grant per job only what it needs.
 - Set `persist-credentials: false` on checkout.
+- Pass `${{ }}` values to `run:` through `env:`, never inline.
+- No `actions/cache` in `product.yml` or `release.yml`: their output is signed and released.
+- Every job that installs packages runs the SocketDev action in `firewall-free` mode with a pinned `firewall-version`. Dependabot doesn't track it; bump it on purpose, everywhere at once.
+- Pin tools that actions download by version (syft, zizmor, Socket CLI via `.github/socket/uv.lock`).
 - zizmor and actionlint must report no findings.

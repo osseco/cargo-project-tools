@@ -22,9 +22,19 @@ Commit `project-tools.toml` and `.project-tools/crates/`. Everything else is git
 
 ## Getting started
 
+Download a binary for your platform from the [latest release](https://github.com/osseco/cargo-project-tools/releases/latest), check it, and put it on your `PATH`:
+
+```bash
+gh attestation verify cargo-project-tools-x86_64-unknown-linux-musl --repo osseco/cargo-project-tools
+```
+
+Every asset is also signed with cosign; see [CONTRIBUTING.md](CONTRIBUTING.md#verifying-a-release). Or build from source:
+
 ```bash
 cargo install --git https://github.com/osseco/cargo-project-tools --locked
 ```
+
+Then, in your project:
 
 ```bash
 cargo project-tools init                 # create project-tools.toml and .project-tools/
