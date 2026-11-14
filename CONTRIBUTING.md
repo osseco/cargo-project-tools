@@ -17,7 +17,7 @@ Conventions for commits, branches and sfw are in [AGENTS.md](AGENTS.md). This pa
 | `release.yml` | push to `main` touching the product | the same product run for every target, then publishes the release |
 | `codeql.yml`, `zizmor.yml`, `actionlint.yml`, `socket.yml` | also weekly | report findings to code scanning |
 
-Every job that installs crates runs behind sfw. `cross` builds fetch through sfw first, then build offline inside the container. Jobs whose output is released use no `actions/cache`, so a poisoned cache entry can't end up in a signed binary.
+Every job that installs crates runs behind sfw. `cross` builds fetch through sfw first, then build offline inside the container. Jobs whose output is released use no `actions/cache`, so a poisoned cache entry can't end up in a signed binary. The exception is the sfw binary, installed by `osseco/setup-sfw-free`: only `main` saves it to the cache, other runs restore it, and every restore is checked against the sha256 pinned in the action.
 
 ## Versions
 

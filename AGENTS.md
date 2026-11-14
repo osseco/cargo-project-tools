@@ -88,7 +88,7 @@ How CI and releases work: [CONTRIBUTING.md](CONTRIBUTING.md#ci).
 - Start each workflow with `permissions: {}`, and grant per job only what it needs.
 - Set `persist-credentials: false` on checkout.
 - Pass `${{ }}` values to `run:` through `env:`, never inline.
-- No `actions/cache` in `product.yml` or `release.yml`: their output is signed and released.
-- Every job that installs packages runs the SocketDev action in `firewall-free` mode with a pinned `firewall-version`. Dependabot doesn't track it; bump it on purpose, everywhere at once.
+- No `actions/cache` in `product.yml` or `release.yml`: their output is signed and released. The one exception is the sfw binary cache of `osseco/setup-sfw-free`, which is checked against a pinned sha256 on restore.
+- Every job that installs packages runs `osseco/setup-sfw-free` with `cache: ${{ github.ref == 'refs/heads/main' && 'true' || 'restore' }}`: only `main` saves the cache, everything else restores it. Each action version pins one sfw-free version; Dependabot updates it.
 - Pin tools that actions download by version (syft, zizmor, Socket CLI via `.github/socket/uv.lock`).
 - zizmor and actionlint must report no findings.
