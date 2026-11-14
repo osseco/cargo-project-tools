@@ -1,0 +1,62 @@
+name: CodeQL
+
+on:
+  workflow_call:
+  schedule:
+    - cron: "27 3 * * 1"
+
+permissions: {}
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: rust
+            language: rust
+            config: ""
+          - name: python-github-scripts
+            language: python
+            config: ./.github/codeql/github-scripts.yml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        if: matrix.language == 'rust'
+        run: |
+          rustup set profile minimal
+          rustup toolchain install --no-self-update
+
+      - name: Initialize CodeQL
+        if: matrix.config != ''
+        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          config-file: ${{ matrix.config }}
+
+      - name: Initialize CodeQL
+        if: matrix.config == ''
+        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          category: /language:${{ matrix.name }}
