@@ -1,0 +1,24 @@
+# Distribution SBOM: the cargo-project-tools binary.
+
+check-for-app-update: false
+
+source:
+  name: cargo-project-tools
+
+output:
+  - cyclonedx-json=cargo-project-tools.cdx.json
+  - spdx-json=cargo-project-tools.spdx.json
+
+default-catalogers:
+  - rust-cargo-lock-cataloger
+
+select-catalogers:
+  - "-file"
+
+exclude:
+  - ./.github/**
+  - ./target/**
+
+file:
+  metadata:
+    selection: none
