@@ -34,7 +34,14 @@ Name it `type/short_description`, with the same types as commits.
 
 ## Commits
 
-Use [Conventional Commits](https://www.conventionalcommits.org/):
+Agents never commit. The maintainer reviews and signs every commit; the signing key needs a password.
+
+- Never run `git commit`, `git tag`, `git push`, or anything that rewrites history (`rebase`, `reset --hard`, `commit --amend`, force pushes).
+- Work in reviewable chunks. At the end of each chunk, stage exactly that chunk's files with explicit paths (`git add <path>…`, never `git add -A` or `git add .`), show `git diff --cached --stat`, and propose a commit message. Staged means "commit this". Then wait until the maintainer has committed before starting the next chunk. On requested changes, edit and re-stage.
+- Staging is the only git write an agent does.
+- Pull requests are squash-merged and the PR title becomes the commit on `main`, so PR titles follow the same format.
+
+Messages use [Conventional Commits](https://www.conventionalcommits.org/):
 
 ```text
 type(scope): imperative subject
@@ -49,7 +56,7 @@ type(scope): imperative subject
 
 ## Checks
 
-Run `pre-commit run --all-files` before committing. It runs fmt, clippy, test, cargo-deny, cargo-audit, zizmor, actionlint, the version-script checks and basic file checks.
+Run `pre-commit run --all-files` before staging a chunk. It runs fmt, clippy, test, cargo-deny, cargo-audit, zizmor, actionlint, the version-script checks and basic file checks.
 
 It needs these on PATH: `sfw`, `cargo-deny`, `cargo-audit`, `zizmor`, `actionlint`, `uv`, `pre-commit`.
 
