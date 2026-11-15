@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <title>cargo project-tools</title>
+  <rect width="32" height="32" rx="7" fill="oklch(0.47 0.09 185)"/>
+  <!-- A crate: box with a lid line. -->
+  <path d="M16 7 25 11.5v9L16 25l-9-4.5v-9z" fill="none" stroke="oklch(0.985 0.01 185)" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M7 11.5 16 16l9-4.5M16 16v9" fill="none" stroke="oklch(0.985 0.01 185)" stroke-width="2" stroke-linejoin="round"/>
+</svg>

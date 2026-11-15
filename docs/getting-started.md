@@ -57,7 +57,7 @@ cargo project-tools update cargo-nextest <dep>@<old> --precise <new>
 
 The lock is only saved if cargo resolves it.
 
-## Install
+## Build the tools
 
 ```bash
 cargo project-tools install
