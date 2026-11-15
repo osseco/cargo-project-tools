@@ -1,0 +1,38 @@
+# Checks for the GitHub Pages site in site/. Called by pr.yml (behind Merge
+# gate) and by pages.yml before a deploy.
+name: Site
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
+        with:
+          working-directory: site
+          cache-dependency-path: site/pnpm-lock.yaml
+          install: false
+          cache: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+      - uses: osseco/setup-sfw-free@e1cbeae80920eb20b289196bb420d5f45a45ead1 # v1.15.6-0.2.0
+        with:
+          cache: ${{ github.ref == 'refs/heads/main' && 'true' || 'restore' }}
+          job-summary: errors
+      - run: sfw pnpm audit
+      - run: sfw pnpm install --frozen-lockfile
+      - run: sfw pnpm run lint
+      - run: sfw pnpm run typecheck
+      - run: sfw pnpm test
+      - run: sfw pnpm run build

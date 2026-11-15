@@ -62,6 +62,18 @@ It needs these on PATH: `sfw`, `cargo-deny`, `cargo-audit`, `zizmor`, `actionlin
 
 Unit tests sit next to the code and must not touch the network.
 
+pre-commit doesn't cover `site/`. After changing `site/`, `docs/` or `llms.txt`, run in `site/`:
+
+```bash
+sfw pnpm install --frozen-lockfile
+sfw pnpm run lint
+sfw pnpm run typecheck
+sfw pnpm test
+sfw pnpm run build
+```
+
+Never stage `site/dist/` or `site/node_modules/`.
+
 ## Code map
 
 - `src/main.rs`: command implementations.
@@ -76,6 +88,7 @@ Unit tests sit next to the code and must not touch the network.
 - `src/audit.rs`: runs cargo-audit, our own yanked check, ignore list, fix suggestions.
 - `src/sfw.rs`: re-executes package-downloading commands under sfw.
 - `src/net.rs`: ureq agent (honours `HTTPS_PROXY` and `SSL_CERT_FILE`).
+- `site/`: the GitHub Pages site (Vite + React, built from the [osseco web design guide](https://github.com/osseco/web-design-guide) templates). It renders `docs/*.md` and publishes them raw with `llms.txt`. Follow the guide's `AGENTS.md` and `docs/checklist.md` when changing it.
 - `docs/`: user docs. A change to a command or setting updates them in the same commit. Adding, renaming or removing a doc also updates `llms.txt` and the list in `README.md`.
 
 ## Security rules
