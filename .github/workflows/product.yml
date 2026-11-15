@@ -162,6 +162,10 @@ jobs:
     permissions:
       contents: read
     runs-on: ${{ matrix.os }}
+    env:
+      # sfw's local CA has no CRL/OCSP endpoint; schannel can't check revocation.
+      # Only cargo on Windows checks revocation; elsewhere this is cargo's default.
+      CARGO_HTTP_CHECK_REVOKE: ${{ startsWith(matrix.os, 'windows') && 'false' || 'true' }}
     defaults:
       run:
         shell: bash
@@ -215,10 +219,6 @@ jobs:
           set -euo pipefail
           # Fetch through sfw, then build offline: cross runs cargo in a container
           # that can't reach the sfw proxy, but it mounts this CARGO_HOME.
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            # sfw's local CA has no CRL/OCSP endpoint; schannel can't check revocation.
-            export CARGO_HTTP_CHECK_REVOKE=false
-          fi
           sfw cargo fetch --locked --target "$TARGET"
           if [[ "$USE_CROSS" == "true" ]]; then
             # cross runs `cross auditable build` on the host, so set up what
