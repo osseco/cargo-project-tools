@@ -189,10 +189,28 @@ jobs:
       - name: Install cross
         if: matrix.cross
         run: sfw cargo install cross --locked --git https://github.com/cross-rs/cross --rev 49cd054de9b832dfc11a4895c72b0aef533b5c6a
+      # Pinned and built from source every time, like cross. cargo-auditable embeds
+      # the dependency list in the binary; rust-audit-info checks that it's there.
+      - name: Install cargo-auditable and rust-audit-info
+        env:
+          USE_CROSS: ${{ matrix.cross && 'true' || 'false' }}
+          AUDITABLE_ROOT: ${{ runner.temp }}/cargo-auditable
+        run: |
+          set -euo pipefail
+          if [[ "$USE_CROSS" == "true" ]]; then
+            # A static build, so it also runs inside the cross container. Not in
+            # CARGO_HOME/bin: cross hides that directory in the container.
+            rustup target add x86_64-unknown-linux-musl
+            sfw cargo install cargo-auditable --locked --version 0.7.7 --target x86_64-unknown-linux-musl --root "$AUDITABLE_ROOT"
+          else
+            sfw cargo install cargo-auditable --locked --version 0.7.7
+          fi
+          sfw cargo install rust-audit-info --locked --version 0.5.4
       - name: Build release binary
         env:
           TARGET: ${{ matrix.target }}
           USE_CROSS: ${{ matrix.cross && 'true' || 'false' }}
+          AUDITABLE_ROOT: ${{ runner.temp }}/cargo-auditable
         run: |
           set -euo pipefail
           # Fetch through sfw, then build offline: cross runs cargo in a container
@@ -203,9 +221,14 @@ jobs:
           fi
           sfw cargo fetch --locked --target "$TARGET"
           if [[ "$USE_CROSS" == "true" ]]; then
-            cross build --release --frozen --target "$TARGET"
+            # cross runs `cross auditable build` on the host, so set up what
+            # `cargo auditable` would: the rustc wrapper and the original cargo flags.
+            # Cross.toml mounts AUDITABLE_ROOT at the same path and passes the wrapper on.
+            RUSTC_WORKSPACE_WRAPPER="$AUDITABLE_ROOT/bin/cargo-auditable" \
+            CARGO_AUDITABLE_ORIG_ARGS='{"offline":false,"locked":false,"frozen":true,"config":[]}' \
+              cross build --release --frozen --target "$TARGET"
           else
-            cargo build --release --frozen --target "$TARGET"
+            cargo auditable build --release --frozen --target "$TARGET"
           fi
           suffix=""
           case "$TARGET" in
@@ -213,6 +236,8 @@ jobs:
           esac
           mkdir -p release-bin
           cp "target/${TARGET}/release/cargo-project-tools${suffix}" "release-bin/cargo-project-tools-${TARGET}${suffix}"
+          # Fails when the binary has no embedded dependency list.
+          rust-audit-info "release-bin/cargo-project-tools-${TARGET}${suffix}" > /dev/null
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: binary-${{ matrix.target }}

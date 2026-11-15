@@ -1,0 +1,6 @@
+# cargo-auditable as rustc wrapper inside the container (see product.yml).
+# CARGO_AUDITABLE_ORIG_ARGS starts with CARGO_, so cross passes it on by itself.
+# AUDITABLE_ROOT holds the wrapper; volumes mounts it at the same path.
+[build.env]
+passthrough = ["RUSTC_WORKSPACE_WRAPPER"]
+volumes = ["AUDITABLE_ROOT"]
