@@ -136,11 +136,14 @@ fn add(project: &Project, args: AddArgs) -> Result<()> {
         },
     };
     let checkout = source::checkout(project, name, &origin, Dest::Temp)?;
-    let shipped = checkout
-        .shipped_lock()?
-        .with_context(|| format!("{name} {} does not ship a Cargo.lock", checkout.version))?;
-    lock::check_root(&lock::parse(&shipped)?, name, &checkout.version)?;
-    write_new_lock(project, name, &shipped)?;
+    let (lock_text, start) =
+        lock::shipped_or_generated(&checkout.manifest_path(), &checkout.lock_path(), &[])?;
+    let kind = match start {
+        lock::Start::Shipped => "its published Cargo.lock",
+        lock::Start::Generated => "a generated Cargo.lock (it ships none)",
+    };
+    lock::check_root(&lock::parse(&lock_text)?, name, &checkout.version)?;
+    write_new_lock(project, name, &lock_text)?;
 
     let mut entries: Vec<(&str, toml_edit::Value)> =
         vec![("version", checkout.version.as_str().into())];
@@ -168,7 +171,7 @@ fn add(project: &Project, args: AddArgs) -> Result<()> {
     editor.set_tool(name, &entries);
     editor.save()?;
     println!(
-        "Added {name} {} with its published Cargo.lock in {}",
+        "Added {name} {} with {kind} in {}",
         checkout.version,
         project.crate_dir(name).display()
     );
@@ -211,16 +214,24 @@ fn upgrade(project: &Project, config: &Config, args: UpgradeArgs) -> Result<()> 
         }
     };
     let checkout = source::checkout(project, name, &origin, Dest::Temp)?;
-    let shipped_text = checkout
-        .shipped_lock()?
-        .with_context(|| format!("{name} {} does not ship a Cargo.lock", checkout.version))?;
-    let shipped = lock::parse(&shipped_text)?;
-    lock::check_root(&shipped, name, &checkout.version)?;
     let ours = lock::load(&project.lock_path(name))?;
-
-    // Keep dependency bumps we made that the new shipped lock doesn't already include.
     let manifest = checkout.manifest_path();
     let lock_path = checkout.lock_path();
+
+    let shipped = match checkout.shipped_lock()? {
+        Some(text) => {
+            let shipped = lock::parse(&text)?;
+            lock::check_root(&shipped, name, &checkout.version)?;
+            shipped
+        }
+        None => {
+            lock::reseed(&manifest, &lock_path, &project.lock_path(name), &[])?;
+            lock::load(&lock_path)?
+        }
+    };
+
+    // Keep dependency bumps we made that the new lock doesn't already include. A lock seeded
+    // from ours rarely lacks any, but a forced downgrade is retried here like any other.
     for (dep, from, to) in lock::newer_than(&ours, &shipped) {
         let backup = fs::read_to_string(&lock_path)?;
         let spec = format!("{dep}@{from}");
@@ -235,7 +246,7 @@ fn upgrade(project: &Project, config: &Config, args: UpgradeArgs) -> Result<()> 
             ],
         );
         match ok {
-            Ok(()) => println!("  kept {dep} {to} (published lock has {from})"),
+            Ok(()) => println!("  kept {dep} {to} (new lock has {from})"),
             Err(_) => {
                 fs::write(&lock_path, backup)?;
                 println!(
@@ -247,6 +258,7 @@ fn upgrade(project: &Project, config: &Config, args: UpgradeArgs) -> Result<()> 
     }
 
     let final_lock = lock::load(&lock_path)?;
+    lock::check_root(&final_lock, name, &checkout.version)?;
     println!("Changes to {name}'s lock:");
     lock::print_diff(&lock::diff(&ours, &final_lock));
     fs::copy(&lock_path, project.lock_path(name))?;

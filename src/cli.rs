@@ -23,7 +23,7 @@ pub struct Cli {
 pub enum Command {
     /// Create project-tools.toml and the .project-tools directory.
     Init,
-    /// Add a tool, using the Cargo.lock it ships with as the starting point.
+    /// Add a tool, starting from the Cargo.lock it ships with, or a generated one.
     Add(AddArgs),
     /// Remove a tool, its lock, build dir and binaries.
     Remove { name: String },

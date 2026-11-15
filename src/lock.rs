@@ -110,6 +110,47 @@ pub fn cargo_update(manifest: &Path, args: &[String]) -> Result<()> {
     )
 }
 
+/// Where a new tool's lock came from.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Start {
+    Shipped,
+    Generated,
+}
+
+/// The lock a new tool starts from: the one at `lock_path` if the source ships it, otherwise a
+/// fresh one from `cargo generate-lockfile`. That only reads the index: nothing is compiled
+/// and no build script runs. `cargo_args` go to cargo as is.
+pub fn shipped_or_generated(
+    manifest: &Path,
+    lock_path: &Path,
+    cargo_args: &[String],
+) -> Result<(String, Start)> {
+    let start = if lock_path.is_file() {
+        Start::Shipped
+    } else {
+        process::run(
+            process::cargo()
+                .args(["generate-lockfile", "--quiet", "--manifest-path"])
+                .arg(manifest)
+                .args(cargo_args),
+        )?;
+        Start::Generated
+    };
+    let text = std::fs::read_to_string(lock_path)
+        .with_context(|| format!("reading {}", lock_path.display()))?;
+    Ok((text, start))
+}
+
+/// Resolve the lock at `lock_path` for the project at `manifest`, starting from `ours`: cargo
+/// keeps every locked version that still fits and only resolves what the manifest now needs.
+pub fn reseed(manifest: &Path, lock_path: &Path, ours: &Path, cargo_args: &[String]) -> Result<()> {
+    std::fs::copy(ours, lock_path)
+        .with_context(|| format!("copying {} to {}", ours.display(), lock_path.display()))?;
+    let mut args = vec!["--quiet".to_string(), "--workspace".to_string()];
+    args.extend_from_slice(cargo_args);
+    cargo_update(manifest, &args)
+}
+
 /// Versions of registry packages in `lock` that are newer than all versions of the same
 /// package in `new`, and semver compatible with one of them: candidates to carry forward.
 pub fn newer_than(
@@ -152,90 +193,5 @@ fn compatible(a: &semver::Version, b: &semver::Version) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const LOCK_A: &str = r#"
-version = 3
-
-[[package]]
-name = "tool"
-version = "1.0.0"
-dependencies = ["dep", "gone"]
-
-[[package]]
-name = "dep"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-
-[[package]]
-name = "gone"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-"#;
-
-    const LOCK_B: &str = r#"
-version = 3
-
-[[package]]
-name = "tool"
-version = "1.0.0"
-dependencies = ["dep", "new"]
-
-[[package]]
-name = "dep"
-version = "1.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-
-[[package]]
-name = "new"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-"#;
-
-    #[test]
-    fn root_check() {
-        let lock = parse(LOCK_A).unwrap();
-        check_root(&lock, "tool", "1.0.0").unwrap();
-        assert!(check_root(&lock, "tool", "1.0.1").is_err());
-        assert!(check_root(&lock, "other", "1.0.0").is_err());
-    }
-
-    #[test]
-    fn diffs_locks() {
-        let changes = diff(&parse(LOCK_A).unwrap(), &parse(LOCK_B).unwrap());
-        assert_eq!(
-            changes,
-            vec![
-                Change::Updated(
-                    "dep".into(),
-                    "1.0.0".parse().unwrap(),
-                    "1.0.5".parse().unwrap()
-                ),
-                Change::Removed("gone".into(), "0.1.0".parse().unwrap()),
-                Change::Added("new".into(), "2.0.0".parse().unwrap()),
-            ]
-        );
-    }
-
-    #[test]
-    fn carry_forward_candidates() {
-        let out = newer_than(&parse(LOCK_B).unwrap(), &parse(LOCK_A).unwrap());
-        assert_eq!(
-            out,
-            vec![(
-                "dep".into(),
-                "1.0.0".parse().unwrap(),
-                "1.0.5".parse().unwrap()
-            )]
-        );
-    }
-
-    #[test]
-    fn semver_compat() {
-        let v = |s: &str| semver::Version::parse(s).unwrap();
-        assert!(compatible(&v("1.0.0"), &v("1.9.0")));
-        assert!(!compatible(&v("0.1.0"), &v("0.2.0")));
-        assert!(compatible(&v("0.2.1"), &v("0.2.9")));
-    }
-}
+#[path = "lock_test.rs"]
+mod tests;

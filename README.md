@@ -24,7 +24,7 @@ cargo install --git https://github.com/osseco/cargo-project-tools --locked
 
 ```bash
 cargo project-tools init                 # create project-tools.toml and .project-tools/
-cargo project-tools add cargo-nextest    # starts from the lock the tool ships with
+cargo project-tools add cargo-nextest    # starts from the lock the tool ships with, or generates one
 cargo project-tools audit                # needs cargo-audit
 cargo project-tools update cargo-nextest <dep>@<old> --precise <new>   # as suggested by audit
 cargo project-tools install              # builds into .project-tools/bin

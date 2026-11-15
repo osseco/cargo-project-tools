@@ -41,7 +41,7 @@ cargo project-tools init
 cargo project-tools add cargo-nextest
 ```
 
-`init` creates `project-tools.toml` and `.project-tools/`. `add` records the tool and copies the `Cargo.lock` it ships with into `.project-tools/crates/cargo-nextest/`. That lock is now yours.
+`init` creates `project-tools.toml` and `.project-tools/`. `add` records the tool and copies the `Cargo.lock` it ships with (or generates one, if it ships none) into `.project-tools/crates/cargo-nextest/`. That lock is now yours.
 
 ## Audit and fix
 

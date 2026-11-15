@@ -36,7 +36,7 @@ cargo project-tools add my-tool --git https://github.com/org/my-tool --tag v1.2.
 | `--no-default-features` | Turn off default features |
 | `--bin <name>` | Binaries to install (repeatable; default: all) |
 
-Copies the lock the tool ships with into `.project-tools/crates/<tool>/` and adds a `[tool.<name>]` entry.
+Copies the lock the tool ships with into `.project-tools/crates/<tool>/` and adds a `[tool.<name>]` entry. A tool that ships no lock gets one from `cargo generate-lockfile`, which only reads the index: nothing is compiled and no build script runs.
 
 ## remove
 
@@ -49,7 +49,7 @@ cargo project-tools upgrade cargo-nextest
 cargo project-tools upgrade cargo-nextest --version 0.9.90
 ```
 
-Moves to the latest stable version, or the one matching `--version`. Starts from the new release's lock, then reapplies every dependency you had bumped past it, as long as cargo still resolves. A git tool follows its tag or branch again.
+Moves to the latest stable version, or the one matching `--version`. Starts from the new release's lock, then reapplies every dependency you had bumped past it, as long as cargo still resolves. If the new release ships no lock, it starts from yours instead: cargo keeps every pinned version that still fits and only resolves what the new version needs. A git tool follows its tag or branch again.
 
 ## update
 
