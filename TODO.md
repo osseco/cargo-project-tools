@@ -30,7 +30,7 @@ Needed before the workflows work as intended:
 
 ## Open decisions
 
-- [ ] License (`Cargo.toml` has none; `deny.toml` skips the private crate).
+- [x] License: MIT OR Apache-2.0.
 
 ## First release
 

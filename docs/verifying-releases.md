@@ -7,6 +7,7 @@ Every release asset carries a build provenance attestation and a cosign signatur
 - A binary per platform (see [Getting started](getting-started.md#install)).
 - `SHA256SUMS` for the binaries.
 - CycloneDX and SPDX SBOMs.
+- `LICENSE-MIT` and `LICENSE-APACHE`.
 - A `<asset>.sigstore.json` cosign bundle for every asset.
 
 Releases are immutable: an asset never changes after publishing.
