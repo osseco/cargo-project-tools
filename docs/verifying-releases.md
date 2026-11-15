@@ -37,3 +37,13 @@ sha256sum --check --ignore-missing SHA256SUMS
 ```
 
 On macOS, use `shasum -a 256 --check --ignore-missing SHA256SUMS`.
+
+## Embedded dependency list
+
+The binaries are built with [cargo-auditable](https://github.com/rust-secure-code/cargo-auditable), so each one carries the exact crate versions it was built from. Scan a downloaded binary for known vulnerabilities:
+
+```bash
+cargo audit bin cargo-project-tools-x86_64-unknown-linux-musl
+```
+
+syft and other scanners that support cargo-auditable read the same data.
