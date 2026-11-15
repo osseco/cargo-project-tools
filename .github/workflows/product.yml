@@ -41,11 +41,6 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check bans licenses sources
-      # cargo-audit stays outside sfw: its TLS verifier rejects the sfw CA.
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
-        with:
-          tool: cargo-audit
-      - run: cargo audit
 
   codeql:
     uses: $/.github/workflows/codeql.yml
@@ -154,11 +149,11 @@ jobs:
           tool: zizmor
       - name: Apply version
         run: python3 .github/update_version_in_cargo.py "$PRODUCT_VERSION"
-      # cargo-deny and cargo-audit run in vuln-check, tests in test, actionlint in
-      # actionlint.yml. The cargo hooks call sfw themselves; nesting it is fine.
+      # cargo-deny runs in vuln-check, tests in test, actionlint in actionlint.yml.
+      # The cargo hooks call sfw themselves; nesting it is fine.
       - name: pre-commit
         env:
-          SKIP: cargo-deny,cargo-audit,cargo-test,actionlint
+          SKIP: cargo-deny,cargo-test,actionlint
         run: sfw uv tool run --with pre-commit-uv pre-commit run --all-files --show-diff-on-failure
 
   build:
