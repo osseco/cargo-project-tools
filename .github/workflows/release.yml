@@ -109,6 +109,7 @@ jobs:
           )
           cp sbom/cargo-project-tools.cdx.json "staged/cargo-project-tools-${NEXT_VERSION}.cdx.json"
           cp sbom/cargo-project-tools.spdx.json "staged/cargo-project-tools-${NEXT_VERSION}.spdx.json"
+          cp LICENSE-MIT LICENSE-APACHE staged/
           for f in staged/*; do
             cosign sign-blob "$f" --bundle "$f.sigstore.json" --yes
           done

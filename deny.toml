@@ -19,10 +19,6 @@ allow = [
 ]
 confidence-threshold = 0.9
 
-[licenses.private]
-# This crate isn't published and has no license field yet.
-ignore = true
-
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"

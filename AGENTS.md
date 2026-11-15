@@ -56,9 +56,9 @@ type(scope): imperative subject
 
 ## Checks
 
-Run `pre-commit run --all-files` before staging a chunk. It runs fmt, clippy, test, cargo-deny, cargo-audit, zizmor, actionlint, the version-script checks and basic file checks.
+Run `pre-commit run --all-files` before staging a chunk. It runs fmt, clippy, test, cargo-deny, zizmor, actionlint, the version-script checks and basic file checks.
 
-It needs these on PATH: `sfw`, `cargo-deny`, `cargo-audit`, `zizmor`, `actionlint`, `uv`, `pre-commit`.
+It needs these on PATH: `sfw`, `cargo-deny`, `zizmor`, `actionlint`, `uv`, `pre-commit`.
 
 Unit tests sit next to the code and must not touch the network.
 
