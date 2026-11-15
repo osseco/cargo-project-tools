@@ -61,6 +61,8 @@ Package downloads (`add`, `upgrade`, `update`, `install`) can run through [Socke
 
 `--no-sfw` turns it off for one run. When you already run `sfw cargo project-tools …`, the tool detects the outer sfw and doesn't start a second one. `audit` never runs through sfw: cargo-audit's TLS verifier doesn't trust sfw's certificate, and the advisory database isn't a package.
 
+On Windows, cargo checks certificate revocation through schannel, and sfw's local certificate has no revocation endpoint, so downloads fail with `the revocation status is unknown`. Turn the check off for cargo with `CARGO_HTTP_CHECK_REVOKE=false`, or `http.check-revoke = false` in your [cargo config](https://doc.rust-lang.org/cargo/reference/config.html#httpcheck-revoke). Certificate and hostname checks stay on.
+
 ## audit-ignore
 
 `.project-tools/crates/<tool>/audit-ignore.toml` lists advisories you accept for that tool:
