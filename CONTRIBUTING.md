@@ -41,19 +41,4 @@ A push to `main` that changes the product runs `release.yml`. When the version c
 
 ## Verifying a release
 
-```bash
-gh attestation verify cargo-project-tools-x86_64-unknown-linux-musl --repo osseco/cargo-project-tools
-```
-
-```bash
-cosign verify-blob cargo-project-tools-x86_64-unknown-linux-musl \
-  --bundle cargo-project-tools-x86_64-unknown-linux-musl.sigstore.json \
-  --certificate-identity https://github.com/osseco/cargo-project-tools/.github/workflows/release.yml@refs/heads/main \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
-```
-
-```bash
-sha256sum --check --ignore-missing SHA256SUMS
-```
-
-Renaming `release.yml` or releasing from another branch changes the signing identity.
+See [docs/verifying-releases.md](docs/verifying-releases.md). Renaming `release.yml` or releasing from another branch changes the signing identity.

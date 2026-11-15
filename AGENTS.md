@@ -1,6 +1,6 @@
 # AGENTS.md
 
-How AI agents work in this repository. What the tool does, and how to use it: [README.md](README.md).
+How AI agents work in this repository. What the tool does, and how to use it: [README.md](README.md) and the user docs in [docs/](docs/), indexed by [llms.txt](llms.txt).
 
 ## Socket Firewall
 
@@ -51,7 +51,7 @@ type(scope): imperative subject
 - Scopes when useful: `cli`, `audit`, `install`, `lock`, `source`, `site`, `ci`.
 - The subject is lowercase imperative, with no trailing period.
 - Breaking changes use `!` or a `BREAKING CHANGE:` footer.
-- The `ci` type and scope are only for this project's own CI, not for the CI guidance in the README.
+- The `ci` type and scope are only for this project's own CI, not for the CI guidance in `docs/ci.md`.
 - Commit types decide the next release version (see [CONTRIBUTING.md](CONTRIBUTING.md#versions)). Pick them deliberately: `feat` bumps minor, `!` or `BREAKING CHANGE:` bumps major, everything else bumps patch.
 
 ## Checks
@@ -76,6 +76,7 @@ Unit tests sit next to the code and must not touch the network.
 - `src/audit.rs`: runs cargo-audit, our own yanked check, ignore list, fix suggestions.
 - `src/sfw.rs`: re-executes package-downloading commands under sfw.
 - `src/net.rs`: ureq agent (honours `HTTPS_PROXY` and `SSL_CERT_FILE`).
+- `docs/`: user docs. A change to a command or setting updates them in the same commit. Adding, renaming or removing a doc also updates `llms.txt` and the list in `README.md`.
 
 ## Security rules
 
@@ -91,7 +92,7 @@ Unit tests sit next to the code and must not touch the network.
 
 How CI and releases work: [CONTRIBUTING.md](CONTRIBUTING.md#ci).
 
-- Pin every action to a full commit SHA with a version comment, in workflows and in README examples alike.
+- Pin every action to a full commit SHA with a version comment, in workflows and in README and `docs/` examples alike.
 - Start each workflow with `permissions: {}`, and grant per job only what it needs.
 - Set `persist-credentials: false` on checkout.
 - Pass `${{ }}` values to `run:` through `env:`, never inline.
