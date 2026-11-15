@@ -36,13 +36,14 @@ Commit `project-tools.toml` and `.project-tools/crates/`. Everything else is git
 
 ## Where a lock comes from
 
-- **crates.io**: `add` downloads the `.crate` from the sparse index, checks it against the index checksum, and takes the `Cargo.lock` inside it. A crate that ships no `Cargo.lock` can't be added.
+- **crates.io**: `add` downloads the `.crate` from the sparse index, checks it against the index checksum, and takes the `Cargo.lock` inside it.
 - **git**: `add --git <https-url>` clones the repository (https only) at the given tag, rev or branch.
+- **No `Cargo.lock` shipped**: `add` runs `cargo generate-lockfile`. It only queries the index, so nothing is compiled and no build script runs. Versions are the newest that fit; with resolver 3 (or `incompatible-rust-versions = "fallback"`) cargo also honours `rust-version`, so the result depends on your cargo.
 
 ## Changing a lock
 
 - `update` runs `cargo update` against the tool's manifest with your lock. The new lock is only saved if cargo resolves it.
-- `upgrade` moves the tool to a new version. It starts from the new release's lock and carries your dependency bumps forward where they still resolve.
+- `upgrade` moves the tool to a new version. It starts from the new release's lock and carries your dependency bumps forward where they still resolve. If the new release ships no lock, it starts from yours.
 
 ## Installing
 
