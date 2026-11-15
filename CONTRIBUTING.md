@@ -12,7 +12,9 @@ Conventions for commits, branches and sfw are in [AGENTS.md](AGENTS.md). This pa
 
 | Workflow | When | What |
 | --- | --- | --- |
-| `pr.yml` | every pull request | calculates the next version, runs `product.yml` with `<next>-pr.<number>.<run>.<attempt>`, then `Merge gate` |
+| `pr.yml` | every pull request | calculates the next version, runs `product.yml` with `<next>-pr.<number>.<run>.<attempt>` and `site.yml`, then `Merge gate` |
+| `site.yml` | called by `pr.yml` and `pages.yml` | audit, lint, typecheck, test and build the Pages site in `site/` |
+| `pages.yml` | push to `main` touching `site/`, `docs/` or `llms.txt` | runs `site.yml`, builds with the Pages base path, deploys to GitHub Pages |
 | `product.yml` | called by `pr.yml` and `release.yml` | cargo-deny, cargo-audit, tests, pre-commit, SBOMs, builds; calls CodeQL, zizmor, actionlint and Socket |
 | `release.yml` | push to `main` touching the product | the same product run for every target, then publishes the release |
 | `codeql.yml`, `zizmor.yml`, `actionlint.yml`, `socket.yml` | also weekly | report findings to code scanning |
@@ -41,19 +43,4 @@ A push to `main` that changes the product runs `release.yml`. When the version c
 
 ## Verifying a release
 
-```bash
-gh attestation verify cargo-project-tools-x86_64-unknown-linux-musl --repo osseco/cargo-project-tools
-```
-
-```bash
-cosign verify-blob cargo-project-tools-x86_64-unknown-linux-musl \
-  --bundle cargo-project-tools-x86_64-unknown-linux-musl.sigstore.json \
-  --certificate-identity https://github.com/osseco/cargo-project-tools/.github/workflows/release.yml@refs/heads/main \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
-```
-
-```bash
-sha256sum --check --ignore-missing SHA256SUMS
-```
-
-Renaming `release.yml` or releasing from another branch changes the signing identity.
+See [docs/verifying-releases.md](docs/verifying-releases.md). Renaming `release.yml` or releasing from another branch changes the signing identity.

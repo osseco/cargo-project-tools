@@ -1,6 +1,6 @@
 # AGENTS.md
 
-How AI agents work in this repository. What the tool does, and how to use it: [README.md](README.md).
+How AI agents work in this repository. What the tool does, and how to use it: [README.md](README.md) and the user docs in [docs/](docs/), indexed by [llms.txt](llms.txt).
 
 ## Socket Firewall
 
@@ -51,7 +51,7 @@ type(scope): imperative subject
 - Scopes when useful: `cli`, `audit`, `install`, `lock`, `source`, `site`, `ci`.
 - The subject is lowercase imperative, with no trailing period.
 - Breaking changes use `!` or a `BREAKING CHANGE:` footer.
-- The `ci` type and scope are only for this project's own CI, not for the CI guidance in the README.
+- The `ci` type and scope are only for this project's own CI, not for the CI guidance in `docs/ci.md`.
 - Commit types decide the next release version (see [CONTRIBUTING.md](CONTRIBUTING.md#versions)). Pick them deliberately: `feat` bumps minor, `!` or `BREAKING CHANGE:` bumps major, everything else bumps patch.
 
 ## Checks
@@ -61,6 +61,18 @@ Run `pre-commit run --all-files` before staging a chunk. It runs fmt, clippy, te
 It needs these on PATH: `sfw`, `cargo-deny`, `cargo-audit`, `zizmor`, `actionlint`, `uv`, `pre-commit`.
 
 Unit tests sit next to the code and must not touch the network.
+
+pre-commit doesn't cover `site/`. After changing `site/`, `docs/` or `llms.txt`, run in `site/`:
+
+```bash
+sfw pnpm install --frozen-lockfile
+sfw pnpm run lint
+sfw pnpm run typecheck
+sfw pnpm test
+sfw pnpm run build
+```
+
+Never stage `site/dist/` or `site/node_modules/`.
 
 ## Code map
 
@@ -76,6 +88,8 @@ Unit tests sit next to the code and must not touch the network.
 - `src/audit.rs`: runs cargo-audit, our own yanked check, ignore list, fix suggestions.
 - `src/sfw.rs`: re-executes package-downloading commands under sfw.
 - `src/net.rs`: ureq agent (honours `HTTPS_PROXY` and `SSL_CERT_FILE`).
+- `site/`: the GitHub Pages site (Vite + React, built from the [osseco web design guide](https://github.com/osseco/web-design-guide) templates). It renders `docs/*.md` and publishes them raw with `llms.txt`. Follow the guide's `AGENTS.md` and `docs/checklist.md` when changing it.
+- `docs/`: user docs. A change to a command or setting updates them in the same commit. Adding, renaming or removing a doc also updates `llms.txt` and the list in `README.md`.
 
 ## Security rules
 
@@ -91,7 +105,7 @@ Unit tests sit next to the code and must not touch the network.
 
 How CI and releases work: [CONTRIBUTING.md](CONTRIBUTING.md#ci).
 
-- Pin every action to a full commit SHA with a version comment, in workflows and in README examples alike.
+- Pin every action to a full commit SHA with a version comment, in workflows and in README and `docs/` examples alike.
 - Start each workflow with `permissions: {}`, and grant per job only what it needs.
 - Set `persist-credentials: false` on checkout.
 - Pass `${{ }}` values to `run:` through `env:`, never inline.

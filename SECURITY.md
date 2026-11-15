@@ -12,4 +12,4 @@ Only the latest release gets fixes. Releases are immutable, so a fix always ship
 
 ## Verifying a release
 
-Every release asset is signed with cosign (keyless) and attested by GitHub. See [CONTRIBUTING.md](CONTRIBUTING.md#verifying-a-release).
+Every release asset is signed with cosign (keyless) and attested by GitHub. See [Verifying a release](docs/verifying-releases.md).

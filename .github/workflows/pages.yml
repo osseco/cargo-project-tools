@@ -1,0 +1,72 @@
+# Publishes site/ to GitHub Pages. Settings → Pages → Source: GitHub Actions.
+# Pull requests run the same checks through pr.yml.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - site/**
+      - docs/**
+      - llms.txt
+      - .github/workflows/pages.yml
+      - .github/workflows/site.yml
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  check:
+    uses: $/.github/workflows/site.yml
+    permissions:
+      contents: read
+
+  build:
+    needs: [check]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
+        with:
+          working-directory: site
+          cache-dependency-path: site/pnpm-lock.yaml
+          install: false
+          cache: true
+      - uses: osseco/setup-sfw-free@e1cbeae80920eb20b289196bb420d5f45a45ead1 # v1.15.6-0.2.0
+        with:
+          cache: ${{ github.ref == 'refs/heads/main' && 'true' || 'restore' }}
+          job-summary: errors
+      - run: sfw pnpm install --frozen-lockfile
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+        id: pages
+      - name: Build
+        run: sfw pnpm run build
+        env:
+          PAGES_BASE: ${{ steps.pages.outputs.base_path }}
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site/dist
+
+  deploy:
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+        id: deployment

@@ -1,0 +1,14 @@
+# cargo-project-tools
+
+> A cargo subcommand that installs a project's cargo tools from Cargo.lock files kept in the project's own repository, so you can audit them and bump vulnerable dependencies without waiting for a tool release.
+
+Source: https://github.com/osseco/cargo-project-tools
+
+## Docs
+
+- [Getting started](https://osseco.github.io/cargo-project-tools/docs/getting-started.md): install, verify, add, audit and install a first tool
+- [How it works](https://osseco.github.io/cargo-project-tools/docs/how-it-works.md): why own locks, the .project-tools layout, what to commit
+- [Commands](https://osseco.github.io/cargo-project-tools/docs/commands.md): every command and option
+- [Configuration](https://osseco.github.io/cargo-project-tools/docs/configuration.md): project-tools.toml, audit-ignore.toml, sfw
+- [CI](https://osseco.github.io/cargo-project-tools/docs/ci.md): GitHub Actions caching and auditing
+- [Verifying a release](https://osseco.github.io/cargo-project-tools/docs/verifying-releases.md): attestations, cosign, checksums

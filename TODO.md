@@ -18,6 +18,7 @@ Needed before the workflows work as intended:
 - [ ] **Security → Code scanning**: on, so CodeQL, zizmor and actionlint SARIF uploads show up.
 - [ ] **Secrets → Actions**: add `SOCKET_SECURITY_API_KEY`.
 - [ ] **Environments**: create `release`, limit deployment branches to `main`, add required reviewers.
+- [ ] **Pages**: Source: GitHub Actions. The `github-pages` environment it creates: limit deployment branches to `main`.
 - [ ] **Ruleset for `main`**: require pull requests and the `Merge gate` status check; block force pushes and deletion; require signed commits; require linear history; no bypass actors.
 - [ ] **Ruleset for tags `v*`**: block updates and deletion.
 - [ ] **Actions → General**:

@@ -31,11 +31,18 @@ jobs:
       issues: write
       pull-requests: write
 
+  # Runs on every pull request, without a paths filter: Merge gate fails on a
+  # skipped job.
+  site:
+    uses: $/.github/workflows/site.yml
+    permissions:
+      contents: read
+
   # Always runs, so a failure shows as a failed check and not a skipped one.
   # This is the single required status check for main.
   merge-gate:
     name: Merge gate
-    needs: [version, product]
+    needs: [version, product, site]
     if: always()
     runs-on: ubuntu-latest
     permissions: {}
