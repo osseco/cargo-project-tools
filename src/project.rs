@@ -13,6 +13,8 @@ const IGNORED: &[&str] = &[
     "/bin/",
     "/targets/",
     "/advisory-db/",
+    // Left behind if a database download is interrupted.
+    "/.advisory-db-*/",
     "/.crates.toml",
     "/.crates2.json",
 ];
@@ -105,11 +107,6 @@ impl Project {
         let dir = self.tools_dir().join("targets").join(".tmp");
         fs::create_dir_all(&dir)?;
         Ok(dir)
-    }
-
-    /// Working directory for cargo-audit (holds our `.cargo/audit.toml`).
-    pub fn audit_dir(&self) -> PathBuf {
-        self.tools_dir().join("targets").join(".audit")
     }
 
     pub fn advisory_db(&self) -> PathBuf {

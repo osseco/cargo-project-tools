@@ -46,7 +46,7 @@ jobs:
 
 ## Audit the locks
 
-Use a separate job that installs cargo-project-tools and `cargo-audit`, and caches `.project-tools/advisory-db` with a weekly key. `audit` only fetches the database when it's missing or you pass `--update-db`:
+Use a separate job that installs cargo-project-tools and runs `audit`. It needs no other tools and builds nothing. Caching `.project-tools/advisory-db` is optional: a cached copy is revalidated with its ETag, so an unchanged database isn't downloaded again.
 
 ```yaml
       - id: week
@@ -55,14 +55,11 @@ Use a separate job that installs cargo-project-tools and `cargo-audit`, and cach
         with:
           path: .project-tools/advisory-db
           key: advisory-db-${{ steps.week.outputs.week }}
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
-        with:
-          tool: cargo-audit
       - run: cargo install --git https://github.com/osseco/cargo-project-tools --locked
       - run: cargo project-tools audit
 ```
 
-Add `--deny-warnings` to also fail on unmaintained, unsound and yanked dependencies.
+Add `--deny-warnings` to also fail on unmaintained, unsound, yanked and git-source warnings. `install` runs the same audit before it builds, so a separate audit job is only needed when the job doesn't install.
 
 ## Socket Firewall in CI
 

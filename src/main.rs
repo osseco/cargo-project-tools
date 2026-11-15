@@ -1,3 +1,4 @@
+mod advisory_db;
 mod audit;
 mod cli;
 mod config;
@@ -15,7 +16,7 @@ use std::process::ExitCode;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 
-use cli::{AddArgs, AuditArgs, AuditDbCommand, Cli, Command, UpdateArgs, UpgradeArgs};
+use cli::{AddArgs, AuditArgs, AuditDbCommand, Cli, Command, InstallArgs, UpdateArgs, UpgradeArgs};
 use config::{AuditIgnore, Config, ConfigEditor, SfwMode};
 use project::Project;
 use source::{Dest, Origin, git::GitRef};
@@ -61,17 +62,13 @@ fn run() -> Result<ExitCode> {
         Command::Remove { name } => remove(&project, &config, &name)?,
         Command::Upgrade(args) => upgrade(&project, &config, args)?,
         Command::Update(args) => update(&project, &config, args)?,
-        Command::Install(args) => {
-            for (name, tool) in config.select(&args.names)? {
-                let build = config.build.merged(tool.build.as_ref());
-                install::install(&project, name, tool, &build, &args)?;
-            }
-        }
+        Command::Install(args) => install(&project, &config, &args)?,
         Command::Audit(args) => return audit(&project, &config, args),
         Command::AuditDb(AuditDbCommand::Update) => {
-            audit::Auditor::new(project.advisory_db(), project.audit_dir(), true)?.update_db()?;
+            let max_age = config.settings.advisory_db_max_age()?;
+            advisory_db::ensure(&project.advisory_db(), advisory_db::Policy::Force, max_age)?;
             println!(
-                "Advisory database updated in {}",
+                "Advisory database is up to date in {}",
                 project.advisory_db().display()
             );
         }
@@ -311,20 +308,52 @@ fn update(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
     Ok(())
 }
 
+/// Load the advisory database and report advisories against this binary itself. Returns
+/// the auditor and how many such advisories there are.
+fn load_auditor(
+    project: &Project,
+    config: &Config,
+    policy: advisory_db::Policy,
+) -> Result<(audit::Auditor, usize)> {
+    let max_age = config.settings.advisory_db_max_age()?;
+    let db = advisory_db::ensure(&project.advisory_db(), policy, max_age)?;
+    let auditor = audit::Auditor::new(db);
+    let own = auditor.self_check();
+    for msg in &own {
+        println!("error: {msg}");
+    }
+    Ok((auditor, own.len()))
+}
+
+fn audit_tool(
+    project: &Project,
+    auditor: &mut audit::Auditor,
+    name: &str,
+    tool: &config::Tool,
+    today: &str,
+) -> Result<audit::Outcome> {
+    println!("{name}:");
+    let report = auditor.audit(&project.lock_path(name), name, tool.git.is_some())?;
+    let ignore = AuditIgnore::load(&project.audit_ignore_path(name))?;
+    let outcome = audit::evaluate(name, &report, &ignore, today, &mut auditor.index);
+    if outcome.vulnerabilities == 0 && outcome.warnings == 0 {
+        println!("  ok");
+    }
+    Ok(outcome)
+}
+
 fn audit(project: &Project, config: &Config, args: AuditArgs) -> Result<ExitCode> {
     let tools = config.select(&args.names)?;
-    let mut auditor =
-        audit::Auditor::new(project.advisory_db(), project.audit_dir(), args.update_db)?;
+    let policy = if args.update_db {
+        advisory_db::Policy::Force
+    } else {
+        advisory_db::Policy::Auto
+    };
+    let (mut auditor, own) = load_auditor(project, config, policy)?;
     let today = audit::today();
-    let (mut vulns, mut warns) = (0, 0);
-    for (name, _) in tools {
-        println!("{name}:");
-        let report = auditor.audit(&project.lock_path(name))?;
-        let ignore = AuditIgnore::load(&project.audit_ignore_path(name))?;
-        let outcome = audit::evaluate(name, &report, &ignore, &today, &mut auditor.index);
-        if outcome.vulnerabilities == 0 && outcome.warnings == 0 {
-            println!("  ok");
-        }
+    let (mut vulns, mut warns) = (own, 0);
+    for (name, tool) in tools {
+        let outcome = audit_tool(project, &mut auditor, name, tool, &today)?;
         vulns += outcome.vulnerabilities;
         warns += outcome.warnings;
     }
@@ -335,6 +364,62 @@ fn audit(project: &Project, config: &Config, args: AuditArgs) -> Result<ExitCode
     } else {
         ExitCode::SUCCESS
     })
+}
+
+/// Audit every selected tool's lock first, so nothing is built when one of them fails.
+fn install(project: &Project, config: &Config, args: &InstallArgs) -> Result<()> {
+    let tools = config.select(&args.names)?;
+    if !args.no_audit {
+        let policy = if args.offline {
+            advisory_db::Policy::Offline
+        } else {
+            advisory_db::Policy::Auto
+        };
+        let (mut auditor, own) = load_auditor(project, config, policy)?;
+        if own > 0 {
+            bail!(
+                "{} itself has open advisories; upgrade it, or pass --no-audit",
+                cli::SUBCOMMAND
+            );
+        }
+        audit_before_install(
+            project,
+            &mut auditor,
+            &tools,
+            args.deny_warnings,
+            &audit::today(),
+        )?;
+    }
+    for (name, tool) in tools {
+        let build = config.build.merged(tool.build.as_ref());
+        install::install(project, name, tool, &build, args)?;
+    }
+    Ok(())
+}
+
+/// Fails, naming every tool that didn't pass, when a lock has a vulnerability that isn't
+/// ignored, or with `deny_warnings` any warning.
+fn audit_before_install(
+    project: &Project,
+    auditor: &mut audit::Auditor,
+    tools: &[(&str, &config::Tool)],
+    deny_warnings: bool,
+    today: &str,
+) -> Result<()> {
+    let mut failed = Vec::new();
+    for (name, tool) in tools {
+        let outcome = audit_tool(project, auditor, name, tool, today)?;
+        if outcome.vulnerabilities > 0 || (deny_warnings && outcome.warnings > 0) {
+            failed.push(*name);
+        }
+    }
+    if !failed.is_empty() {
+        bail!(
+            "audit failed for {}; nothing was installed. Fix or ignore the findings, or pass --no-audit",
+            failed.join(", ")
+        );
+    }
+    Ok(())
 }
 
 fn list(project: &Project, config: &Config) -> Result<()> {
@@ -358,3 +443,7 @@ fn list(project: &Project, config: &Config) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "main_test.rs"]
+mod tests;

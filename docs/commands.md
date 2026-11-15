@@ -9,9 +9,9 @@ Every command runs as `cargo project-tools <command>`. Apart from `init`, it wor
 | `remove <crate>` | Remove a tool, its lock, build dir and binaries |
 | `upgrade <crate>` | Move to a new tool version, keeping your dependency bumps where they still resolve |
 | `update <crate> [deps…]` | Update dependencies in the tool's lock |
-| `install [crates…]` | Build and install; skipped when nothing changed |
-| `audit [crates…]` | cargo-audit every lock, apply `audit-ignore.toml`, suggest fixes |
-| `audit-db update` | Refresh the advisory database |
+| `install [crates…]` | Audit, then build and install; skipped when nothing changed |
+| `audit [crates…]` | Check every lock against the RustSec advisory database, apply `audit-ignore.toml`, suggest fixes |
+| `audit-db update` | Fetch or revalidate the advisory database |
 | `list` | Show tools and their state |
 
 `--no-sfw` works with every command and turns off [sfw](configuration.md#sfw) for that run.
@@ -74,11 +74,13 @@ cargo project-tools install
 cargo project-tools install cargo-nextest --force
 ```
 
-Builds each tool with `cargo install --path … --locked` and installs it into `.project-tools/bin`. A tool whose version, lock and build settings haven't changed since the last install is skipped.
+First it [audits](#audit) the lock of every selected tool. If any of them has a vulnerability that isn't ignored, nothing is built. Then it builds each tool with `cargo install --path … --locked` and installs it into `.project-tools/bin`. A tool whose version, lock and build settings haven't changed since the last install is skipped.
 
 | Option | Meaning |
 | --- | --- |
 | `--force` | Rebuild even when nothing changed |
+| `--no-audit` | Skip the audit |
+| `--deny-warnings` | Also refuse to build on warnings that aren't ignored |
 | `--profile <name>`, `--debug` | Override `[build].profile` |
 | `--target <triple>` | Override `[build].target` |
 | `--config <value>` | Extra cargo `--config` values |
@@ -91,22 +93,29 @@ cargo project-tools audit
 cargo project-tools audit --update-db --deny-warnings
 ```
 
-Runs [cargo-audit](https://crates.io/crates/cargo-audit) (must be on `PATH`) on every tool's lock, and checks every dependency against the index for yanked versions. Then it:
+Checks every tool's lock against the [RustSec advisory database](https://rustsec.org), the same database cargo-audit uses, and checks every crates.io package against the index for yanked versions. No cargo-audit is needed. It checks:
+
+- crates.io packages, including the tool itself. A vulnerability is an error. An unmaintained, unsound or notice advisory is a warning.
+- git packages, and tools installed from git, by name and version. Advisories are written for crates.io releases, so a match only means "possibly affected" and is a `git-source` warning.
+
+Path packages and other registries aren't checked. Then it:
 
 - drops advisories listed in the tool's [`audit-ignore.toml`](configuration.md#audit-ignore),
 - warns about ignores that no longer match anything, and about expired ones,
-- prints an `update … --precise …` command for each vulnerability that has a patched version.
+- prints an `update … --precise …` command for each vulnerability that has a patched version, or `upgrade <tool>` when the tool itself is affected.
+
+It also reports advisories against cargo-project-tools itself, and fails on them.
 
 | Option | Meaning |
 | --- | --- |
-| `--update-db` | Fetch the advisory database first |
-| `--deny-warnings` | Fail on unmaintained, unsound and yanked warnings that aren't ignored |
+| `--update-db` | Revalidate the advisory database first, whatever its age |
+| `--deny-warnings` | Fail on unmaintained, unsound, notice, yanked and git-source warnings that aren't ignored |
 
-The database lives in `.project-tools/advisory-db`. It is fetched when missing or with `--update-db`.
+The database lives in `.project-tools/advisory-db`. It is fetched when missing, and revalidated when it was last checked longer ago than [`advisory-db-max-age`](configuration.md#advisory-db-max-age) (one day by default). Revalidating sends the stored ETag, so an unchanged database isn't downloaded again. If revalidating fails, `audit` warns and uses the copy it has.
 
 ## audit-db update
 
-Fetches or refreshes the advisory database without auditing.
+Fetches or revalidates the advisory database without auditing.
 
 ## list
 

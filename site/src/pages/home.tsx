@@ -18,7 +18,7 @@ const FEATURES = [
   },
   {
     title: "Audit and fix",
-    body: "cargo-audit checks every lock. When a fix exists, you get the update command and don't wait for a tool release.",
+    body: "Every lock, the tool itself included, is checked against the RustSec advisory database before anything is built. When a fix exists, you get the update command and don't wait for a tool release.",
   },
   {
     title: "Built into the project",
@@ -42,7 +42,8 @@ const LAYOUT = `
     │       ├── Cargo.lock          # your lock for this tool
     │       └── audit-ignore.toml   # accepted advisories, with reasons
     ├── bin                   # installed binaries
-    └── targets               # build directories, one per tool
+    ├── targets               # build directories, one per tool
+    └── advisory-db           # RustSec advisory database
 `;
 
 /** Inline code outside prose, styled like prose-osseco's. */
@@ -97,11 +98,7 @@ export function HomePage() {
       </div>
 
       <Section id="quick-start" title="Quick start" className="mt-12 max-w-3xl">
-        <p>
-          In your project's root, with{" "}
-          <a href="https://crates.io/crates/cargo-audit">cargo-audit</a> on your{" "}
-          <code>PATH</code>:
-        </p>
+        <p>In your project's root:</p>
         <CodeBlock>{QUICK_START}</CodeBlock>
         <div className="not-prose">
           <Button asChild variant="outline" size="sm">
