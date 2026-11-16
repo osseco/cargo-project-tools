@@ -195,9 +195,10 @@ fn remove(project: &Project, config: &Config, name: &str) -> Result<()> {
             fs::remove_dir_all(&dir).with_context(|| format!("removing {}", dir.display()))?;
         }
     }
-    let sums = checksum::path(project, name);
-    if sums.exists() {
-        fs::remove_file(&sums).with_context(|| format!("removing {}", sums.display()))?;
+    for file in [checksum::path(project, name), project.stamp_path(name)] {
+        if file.exists() {
+            fs::remove_file(&file).with_context(|| format!("removing {}", file.display()))?;
+        }
     }
     let mut editor = ConfigEditor::open(&project.config_path())?;
     editor.remove_tool(name);
@@ -327,11 +328,14 @@ fn load_auditor(
     let max_age = config.settings.advisory_db_max_age()?;
     let db = advisory_db::ensure(&project.advisory_db(), policy, max_age)?;
     let auditor = audit::Auditor::new(db);
-    let own = auditor.self_check();
-    for msg in &own {
-        println!("error: {msg}");
+    let found = auditor.self_check();
+    let ignore = AuditIgnore::load_self(&project.self_audit_ignore_path())?;
+    if found.is_empty() && ignore.ignore.is_empty() {
+        return Ok((auditor, 0));
     }
-    Ok((auditor, own.len()))
+    println!("cargo-{}:", cli::SUBCOMMAND);
+    let open = audit::evaluate_self(&found, &ignore, &audit::today());
+    Ok((auditor, open))
 }
 
 fn audit_tool(
@@ -478,8 +482,9 @@ fn audit_gate(
     let (mut auditor, own) = load_auditor(project, config, policy)?;
     if own > 0 {
         bail!(
-            "{} itself has open advisories; upgrade it, or pass --no-audit",
-            cli::SUBCOMMAND
+            "cargo-{} itself has open advisories; upgrade it, ignore them in .project-tools/{}, or pass --no-audit",
+            cli::SUBCOMMAND,
+            config::SELF_AUDIT_IGNORE
         );
     }
     audit_before_install(project, &mut auditor, tools, deny_warnings, &audit::today())
@@ -514,10 +519,7 @@ fn list(project: &Project, config: &Config) -> Result<()> {
     for (name, tool) in &config.tool {
         let source = tool.git.as_deref().unwrap_or("crates.io");
         let has_lock = project.lock_path(name).is_file();
-        let built = project
-            .target_dir(name)
-            .join(".install-stamp.json")
-            .is_file();
+        let built = project.stamp_path(name).is_file();
         println!(
             "{name} {} ({source}){}{}",
             tool.version,

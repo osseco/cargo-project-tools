@@ -14,7 +14,8 @@ use crate::project::Project;
 use crate::source::registry::sha256_hex as registry_hash;
 use crate::source::{self, Dest, Origin};
 
-const STAMP: &str = ".install-stamp.json";
+/// Where stamps lived before they moved to `bin/.stamps`.
+const OLD_STAMP: &str = ".install-stamp.json";
 
 /// What an installation was built from; a different stamp means rebuild.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -102,8 +103,30 @@ fn affects_output(arg: &str) -> bool {
 }
 
 fn stamp_key(name: &str, tool: &Tool, lock_text: &str, cargo_args: &[String]) -> String {
+    stamp_key_on(
+        name,
+        tool,
+        lock_text,
+        cargo_args,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    )
+}
+
+/// The stamp sits in `bin/`, which may be restored from a cache built elsewhere, so the
+/// platform is part of the key.
+fn stamp_key_on(
+    name: &str,
+    tool: &Tool,
+    lock_text: &str,
+    cargo_args: &[String],
+    os: &str,
+    arch: &str,
+) -> String {
     let mut parts = vec![
         name.to_string(),
+        os.to_string(),
+        arch.to_string(),
         tool.version.clone(),
         tool.git.clone().unwrap_or_default(),
         tool.rev.clone().unwrap_or_default(),
@@ -178,7 +201,7 @@ pub fn install(
     let cargo_args = cargo_args(tool, build, args);
     let key = stamp_key(name, tool, &lock_text, &cargo_args);
     let target_dir = project.target_dir(name);
-    let stamp_path = target_dir.join(STAMP);
+    let stamp_path = project.stamp_path(name);
     if !force
         && let Some(stamp) = read_stamp(&stamp_path)
         && stamp.key == key
@@ -228,10 +251,17 @@ pub fn install(
         Checksums::Write => checksum::write(project, name, &bins)?,
         Checksums::Expect => expect_recorded(project, name, &bins)?,
     }
+    if let Some(dir) = stamp_path.parent() {
+        fs::create_dir_all(dir)?;
+    }
     fs::write(
         &stamp_path,
         serde_json::to_string_pretty(&Stamp { key, bins })?,
     )?;
+    let old = target_dir.join(OLD_STAMP);
+    if old.exists() {
+        fs::remove_file(&old).with_context(|| format!("removing {}", old.display()))?;
+    }
     Ok(())
 }
 

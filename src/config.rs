@@ -287,7 +287,25 @@ pub const AUDIT_IGNORE_TEMPLATE: &str = r#"# Advisories to ignore when running `
 # expires = "2027-01-01"
 "#;
 
+/// File name of the ignore list for advisories against cargo-project-tools itself.
+pub const SELF_AUDIT_IGNORE: &str = "self-audit-ignore.toml";
+
 impl AuditIgnore {
+    /// Like `load`, but every entry needs `expires`, so an ignored advisory against the tool
+    /// itself can't be forgotten.
+    pub fn load_self(path: &Path) -> Result<AuditIgnore> {
+        let file = AuditIgnore::load(path)?;
+        if let Some(e) = file.ignore.iter().find(|e| e.expires.is_none()) {
+            bail!(
+                "{}: ignore for {} needs an `expires` date; ignores for cargo-{} itself must end",
+                path.display(),
+                e.id,
+                crate::cli::SUBCOMMAND
+            );
+        }
+        Ok(file)
+    }
+
     pub fn load(path: &Path) -> Result<AuditIgnore> {
         match fs::read_to_string(path) {
             Ok(text) => {

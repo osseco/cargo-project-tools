@@ -78,3 +78,23 @@ fn advisory_db_max_age() {
         DEFAULT_ADVISORY_DB_MAX_AGE
     );
 }
+
+#[test]
+fn self_ignores_need_an_expiry() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(SELF_AUDIT_IGNORE);
+    assert!(AuditIgnore::load_self(&path).unwrap().ignore.is_empty());
+    fs::write(
+        &path,
+        "[[ignore]]\nid = \"RUSTSEC-2020-0001\"\nreason = \"x\"\n",
+    )
+    .unwrap();
+    let err = AuditIgnore::load_self(&path).unwrap_err().to_string();
+    assert!(err.contains("needs an `expires` date"), "{err}");
+    fs::write(
+        &path,
+        "[[ignore]]\nid = \"RUSTSEC-2020-0001\"\nreason = \"x\"\nexpires = \"2027-01-01\"\n",
+    )
+    .unwrap();
+    assert_eq!(AuditIgnore::load_self(&path).unwrap().ignore.len(), 1);
+}

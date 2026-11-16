@@ -75,7 +75,7 @@ cargo project-tools install
 cargo project-tools install cargo-nextest --force
 ```
 
-First it [audits](#audit) the lock of every selected tool. If any of them has a vulnerability that isn't ignored, nothing is built. Then it builds each tool with `cargo install --path … --locked` and installs it into `.project-tools/bin`. A tool whose version, lock and build settings haven't changed since the last install, and whose binaries still match their checksums, is skipped.
+First it [audits](#audit) the lock of every selected tool. If any of them has a vulnerability that isn't ignored, nothing is built. Then it builds each tool with `cargo install --path … --locked` and installs it into `.project-tools/bin`. A tool whose version, lock and build settings haven't changed since the last install, and whose binaries still match their checksums, is skipped. What it was built from is recorded in `.project-tools/bin/.stamps`, so restoring `.project-tools/bin` alone is enough to skip it.
 
 After building, it writes the sha256 of each of the tool's binaries to `.project-tools/bin/<tool>.sha256`, in `sha256sum` format, for [`verify`](#verify).
 
@@ -140,7 +140,7 @@ Path packages and other registries aren't checked. Then it:
 - warns about ignores that no longer match anything, and about expired ones,
 - prints an `update … --precise …` command for each vulnerability that has a patched version, or `upgrade <tool>` when the tool itself is affected.
 
-It also reports advisories against cargo-project-tools itself, and fails on them.
+It also reports advisories against cargo-project-tools itself, and fails on them unless they're accepted in [`self-audit-ignore.toml`](configuration.md#advisories-against-cargo-project-tools-itself).
 
 | Option | Meaning |
 | --- | --- |

@@ -53,3 +53,11 @@ fn stamp_ignores_noise_flags() {
         stamp_key("t", &tool(), "lock2", &a)
     );
 }
+
+#[test]
+fn stamp_depends_on_platform() {
+    let args = cargo_args(&tool(), &Build::default(), &install_args(&[]));
+    let key = |os, arch| stamp_key_on("t", &tool(), "lock", &args, os, arch);
+    assert_ne!(key("macos", "x86_64"), key("macos", "aarch64"));
+    assert_ne!(key("linux", "x86_64"), key("macos", "x86_64"));
+}

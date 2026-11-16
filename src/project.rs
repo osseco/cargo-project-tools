@@ -83,6 +83,12 @@ impl Project {
         self.tools_dir().join("bin")
     }
 
+    /// What `name` was last installed from; next to the binaries, so restoring `bin` from a
+    /// cache is enough to skip a build.
+    pub fn stamp_path(&self, name: &str) -> PathBuf {
+        self.bin_dir().join(".stamps").join(format!("{name}.json"))
+    }
+
     pub fn crate_dir(&self, name: &str) -> PathBuf {
         self.tools_dir().join("crates").join(name)
     }
@@ -93,6 +99,10 @@ impl Project {
 
     pub fn audit_ignore_path(&self, name: &str) -> PathBuf {
         self.crate_dir(name).join("audit-ignore.toml")
+    }
+
+    pub fn self_audit_ignore_path(&self) -> PathBuf {
+        self.tools_dir().join(crate::config::SELF_AUDIT_IGNORE)
     }
 
     pub fn target_dir(&self, name: &str) -> PathBuf {
