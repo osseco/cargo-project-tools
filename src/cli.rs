@@ -33,7 +33,7 @@ pub enum Command {
     Update(UpdateArgs),
     /// Build and install tools into .project-tools/bin using the project's locks.
     Install(InstallArgs),
-    /// Audit every tool's Cargo.lock with cargo-audit.
+    /// Audit every tool's Cargo.lock against the RustSec advisory database.
     Audit(AuditArgs),
     /// Manage the advisory database used by `audit`.
     #[command(subcommand)]
@@ -94,6 +94,13 @@ pub struct InstallArgs {
     /// Rebuild even if the install stamp is up to date.
     #[arg(long)]
     pub force: bool,
+    /// Don't audit the locks before building.
+    #[arg(long)]
+    pub no_audit: bool,
+    /// Also refuse to build on warnings (unmaintained, unsound, yanked, git-source) that
+    /// aren't ignored.
+    #[arg(long, conflicts_with = "no_audit")]
+    pub deny_warnings: bool,
     #[arg(long, short = 'j')]
     pub jobs: Option<String>,
     #[arg(long)]
@@ -127,24 +134,23 @@ pub struct InstallArgs {
 pub struct AuditArgs {
     /// Tools to audit (default: all).
     pub names: Vec<String>,
-    /// Fail on warnings (unmaintained, unsound, yanked) that aren't ignored.
+    /// Fail on warnings (unmaintained, unsound, yanked, git-source) that aren't ignored.
     #[arg(long)]
     pub deny_warnings: bool,
-    /// Fetch the advisory database before auditing.
+    /// Revalidate the advisory database before auditing, whatever its age.
     #[arg(long)]
     pub update_db: bool,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum AuditDbCommand {
-    /// Fetch or refresh the advisory database.
+    /// Fetch or revalidate the advisory database.
     Update,
 }
 
 impl Command {
-    /// Commands that download packages and should run through sfw. `audit` stays outside:
-    /// cargo-audit uses the platform TLS verifier, which doesn't trust sfw's CA, and the
-    /// advisory DB isn't a package.
+    /// Commands that download packages and should run through sfw. `audit` and `audit-db`
+    /// only fetch the advisory database, which isn't a package.
     pub fn downloads_packages(&self) -> bool {
         matches!(
             self,

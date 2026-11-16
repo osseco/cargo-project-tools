@@ -7,6 +7,7 @@
 ```toml
 [settings]
 sfw = "auto"                 # "auto", "require" or "off"
+advisory-db-max-age = "1d"   # optional; hours ("12h") or days ("1d")
 
 [build]
 profile = "release"
@@ -59,9 +60,13 @@ Package downloads (`add`, `upgrade`, `update`, `install`) can run through [Socke
 | `"require"` | Fail when `sfw` isn't on `PATH` |
 | `"off"` | Never use `sfw` |
 
-`--no-sfw` turns it off for one run. When you already run `sfw cargo project-tools …`, the tool detects the outer sfw and doesn't start a second one. `audit` never runs through sfw: cargo-audit's TLS verifier doesn't trust sfw's certificate, and the advisory database isn't a package.
+`--no-sfw` turns it off for one run. When you already run `sfw cargo project-tools …`, the tool detects the outer sfw and doesn't start a second one. `audit` and `audit-db` don't start sfw: the advisory database isn't a package. `install` fetches the database under sfw, and trusts sfw's certificate through `SSL_CERT_FILE`.
 
 On Windows, cargo checks certificate revocation through schannel, and sfw's local certificate has no revocation endpoint, so downloads fail with `the revocation status is unknown`. Turn the check off for cargo with `CARGO_HTTP_CHECK_REVOKE=false`, or `http.check-revoke = false` in your [cargo config](https://doc.rust-lang.org/cargo/reference/config.html#httpcheck-revoke). Certificate and hostname checks stay on.
+
+## advisory-db-max-age
+
+How long `audit` and `install` use the advisory database before they check it again. It takes hours (`"12h"`) or days (`"1d"`), and defaults to `"1d"`. A check sends the stored ETag, so it costs one small request when nothing changed. `--update-db` and `audit-db update` check whatever the age. `install --offline` never checks.
 
 ## audit-ignore
 
@@ -73,6 +78,8 @@ id = "RUSTSEC-2024-0001"     # or a CVE/GHSA alias
 reason = "only affects a feature we don't enable"
 expires = "2027-01-01"       # optional
 ```
+
+`id` matches any advisory, including unmaintained, unsound and `git-source` warnings.
 
 - `reason` is required.
 - After `expires`, the ignore stops applying and `audit` reports the advisory again.

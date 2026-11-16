@@ -49,7 +49,7 @@ cargo project-tools add cargo-nextest
 cargo project-tools audit
 ```
 
-`audit` needs [cargo-audit](https://crates.io/crates/cargo-audit) on `PATH`. For each vulnerable dependency it suggests an `update` command, for example:
+`audit` checks every lock against the RustSec advisory database, which it downloads to `.project-tools/advisory-db` and keeps up to date. For each vulnerable dependency it suggests an `update` command, for example:
 
 ```bash
 cargo project-tools update cargo-nextest <dep>@<old> --precise <new>

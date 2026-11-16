@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -26,6 +27,8 @@ pub const TEMPLATE: &str = r#"# Tools managed by `cargo project-tools`.
 [settings]
 # Run network commands through sfw (Socket Firewall Free): "auto", "require" or "off".
 sfw = "auto"
+# Revalidate the advisory database when it was last checked longer ago than this.
+# advisory-db-max-age = "1d"
 
 [build]
 profile = "release"
@@ -51,10 +54,37 @@ pub struct Config {
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Settings {
     #[serde(default)]
     pub sfw: SfwMode,
+    /// How old the advisory database may get before it's revalidated, e.g. `"12h"`, `"1d"`.
+    pub advisory_db_max_age: Option<String>,
+}
+
+const DEFAULT_ADVISORY_DB_MAX_AGE: Duration = Duration::from_secs(86_400);
+
+impl Settings {
+    pub fn advisory_db_max_age(&self) -> Result<Duration> {
+        self.advisory_db_max_age
+            .as_deref()
+            .map_or(Ok(DEFAULT_ADVISORY_DB_MAX_AGE), parse_max_age)
+    }
+}
+
+/// `<n>h` or `<n>d`.
+pub fn parse_max_age(s: &str) -> Result<Duration> {
+    let (num, secs) = if let Some(n) = s.strip_suffix('h') {
+        (n, 3600)
+    } else if let Some(n) = s.strip_suffix('d') {
+        (n, 86_400)
+    } else {
+        bail!("advisory-db-max-age `{s}`: use hours or days, like \"12h\" or \"1d\"");
+    };
+    let n: u64 = num
+        .parse()
+        .with_context(|| format!("advisory-db-max-age `{s}`: not a number of hours or days"))?;
+    Ok(Duration::from_secs(n * secs))
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -132,6 +162,7 @@ impl Config {
             fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let config: Config =
             toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        config.settings.advisory_db_max_age()?;
         config.build.validate("[build]")?;
         for (name, tool) in &config.tool {
             if let Some(build) = &tool.build {

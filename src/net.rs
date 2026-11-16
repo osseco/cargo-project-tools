@@ -47,9 +47,40 @@ pub fn get_bytes(url: &str) -> Result<Vec<u8>> {
         .get(url)
         .call()
         .with_context(|| format!("GET {url}"))?;
+    read_body(url, &mut resp)
+}
+
+fn read_body(url: &str, resp: &mut ureq::http::Response<ureq::Body>) -> Result<Vec<u8>> {
     resp.body_mut()
         .with_config()
         .limit(200 * 1024 * 1024)
         .read_to_vec()
         .with_context(|| format!("reading body of {url}"))
+}
+
+pub enum Fetched {
+    NotModified,
+    Body {
+        bytes: Vec<u8>,
+        etag: Option<String>,
+    },
+}
+
+/// GET with `If-None-Match` when an ETag from an earlier response is known.
+pub fn get_conditional(url: &str, etag: Option<&str>) -> Result<Fetched> {
+    let mut req = agent()?.get(url);
+    if let Some(etag) = etag {
+        req = req.header("If-None-Match", etag);
+    }
+    let mut resp = req.call().with_context(|| format!("GET {url}"))?;
+    if resp.status() == ureq::http::StatusCode::NOT_MODIFIED {
+        return Ok(Fetched::NotModified);
+    }
+    let etag = resp
+        .headers()
+        .get("etag")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let bytes = read_body(url, &mut resp)?;
+    Ok(Fetched::Body { bytes, etag })
 }

@@ -54,3 +54,27 @@ fn editor_keeps_comments() {
     ed.save().unwrap();
     assert!(Config::load(&path).unwrap().tool.is_empty());
 }
+
+#[test]
+fn advisory_db_max_age() {
+    assert_eq!(
+        parse_max_age("12h").unwrap(),
+        Duration::from_secs(12 * 3600)
+    );
+    assert_eq!(
+        parse_max_age("7d").unwrap(),
+        Duration::from_secs(7 * 86_400)
+    );
+    for bad in ["", "d", "1w", "1.5d", "-1d", "1é"] {
+        assert!(parse_max_age(bad).is_err(), "{bad}");
+    }
+    let config: Config = toml::from_str("[settings]\nadvisory-db-max-age = \"2d\"\n").unwrap();
+    assert_eq!(
+        config.settings.advisory_db_max_age().unwrap(),
+        Duration::from_secs(2 * 86_400)
+    );
+    assert_eq!(
+        Settings::default().advisory_db_max_age().unwrap(),
+        DEFAULT_ADVISORY_DB_MAX_AGE
+    );
+}

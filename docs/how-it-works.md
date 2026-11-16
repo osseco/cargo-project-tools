@@ -10,7 +10,7 @@ Why each tool gets a Cargo.lock in your repository, and what lives where.
 
 `cargo project-tools` keeps a Cargo.lock per tool in your repository. You own it, so you can:
 
-- audit it with cargo-audit, like your own project's lock,
+- audit it against the RustSec advisory database, like your own project's lock,
 - bump a vulnerable dependency yourself, without waiting for a release,
 - review every change to it in a pull request,
 - install the tools into the project, built from exactly that lock.
@@ -29,7 +29,7 @@ Why each tool gets a Cargo.lock in your repository, and what lives where.
     │       └── audit-ignore.toml   # accepted advisories, with reasons
     ├── bin                   # installed binaries
     ├── targets               # build directories, one per tool
-    └── advisory-db           # cargo-audit's database
+    └── advisory-db           # RustSec advisory database
 ```
 
 Commit `project-tools.toml` and `.project-tools/crates/`. Everything else is git-ignored; the tool keeps `.project-tools/.gitignore` up to date.
@@ -47,7 +47,13 @@ Commit `project-tools.toml` and `.project-tools/crates/`. Everything else is git
 
 ## Installing
 
-`install` builds each tool with `cargo install --path … --locked`, using your lock and the build settings from `project-tools.toml`. It writes a stamp per tool. When the version, lock and settings match the stamp, the tool is skipped.
+`install` first audits the locks of the tools it's about to build, and builds nothing if one of them has a vulnerability you haven't ignored. Then it builds each tool with `cargo install --path … --locked`, using your lock and the build settings from `project-tools.toml`. It writes a stamp per tool. When the version, lock and settings match the stamp, the tool is skipped.
+
+## Auditing
+
+`audit` reads the [RustSec advisory database](https://github.com/rustsec/advisory-db) with the [rustsec](https://crates.io/crates/rustsec) library, which cargo-audit is built on. It downloads the database as a `git archive` tarball of the default branch over https, and keeps the ETag, the commit and the time of the last check in `.project-tools/advisory-db/.fetch.json`. A new download is unpacked next to the old copy, checked, and only then swapped in. As with cargo-audit's git fetch, the database is trusted because it comes from GitHub over https; there's no checksum to check it against.
+
+Unlike cargo-audit, it also checks the root package of each lock, which is the tool itself, and git packages by name and version.
 
 ## Supply chain
 

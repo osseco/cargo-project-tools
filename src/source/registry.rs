@@ -137,6 +137,12 @@ impl IndexCache {
         self.entries.extend(fetched);
     }
 
+    /// Seed a lookup, so tests never reach the index.
+    #[cfg(test)]
+    pub fn insert(&mut self, name: &str, entries: Vec<IndexEntry>) {
+        self.entries.insert(name.to_string(), entries);
+    }
+
     pub fn get(&mut self, name: &str) -> &[IndexEntry] {
         self.prefetch([name]);
         &self.entries[name]
@@ -190,39 +196,44 @@ fn archive(crate_file: &Path) -> Result<tar::Archive<flate2::read::GzDecoder<fs:
     Ok(tar::Archive::new(flate2::read::GzDecoder::new(file)))
 }
 
-/// Relative path inside the `<name>-<version>/` prefix, rejecting anything that could escape it.
+/// Relative path inside the `<prefix>/` directory, rejecting anything that could escape it.
 fn inner_path(path: &Path, prefix: &str) -> Result<Option<PathBuf>> {
     let mut comps = path.components();
     match comps.next() {
         Some(Component::Normal(first)) if first == prefix => {}
-        _ => bail!("unexpected path in crate archive: {}", path.display()),
+        _ => bail!("unexpected path in archive: {}", path.display()),
     }
     let rest: PathBuf = comps.collect();
     if rest
         .components()
         .any(|c| !matches!(c, Component::Normal(_)))
     {
-        bail!("unsafe path in crate archive: {}", path.display());
+        bail!("unsafe path in archive: {}", path.display());
     }
     Ok((!rest.as_os_str().is_empty()).then_some(rest))
 }
 
 /// Extract the whole crate into `dest` (which is replaced). Returns `dest`.
 pub fn extract(crate_file: &Path, entry: &IndexEntry, dest: &Path) -> Result<PathBuf> {
+    let prefix = format!("{}-{}", entry.name, entry.vers);
+    extract_prefixed(archive(crate_file)?, &prefix, dest)?;
+    Ok(dest.to_path_buf())
+}
+
+/// Extract everything under `<prefix>/` into `dest` (which is replaced). Only files and
+/// directories are written; links and specials are skipped.
+pub fn extract_prefixed<R: Read>(mut ar: tar::Archive<R>, prefix: &str, dest: &Path) -> Result<()> {
     if dest.exists() {
         fs::remove_dir_all(dest)?;
     }
     fs::create_dir_all(dest)?;
-    let prefix = format!("{}-{}", entry.name, entry.vers);
-    let mut ar = archive(crate_file)?;
     for item in ar.entries()? {
         let mut item = item?;
         let kind = item.header().entry_type();
         if !(kind.is_file() || kind.is_dir()) {
-            // Crates only contain files and directories; skip links and specials.
             continue;
         }
-        let Some(rel) = inner_path(&item.path()?, &prefix)? else {
+        let Some(rel) = inner_path(&item.path()?, prefix)? else {
             continue;
         };
         let target = dest.join(&rel);
@@ -236,7 +247,7 @@ pub fn extract(crate_file: &Path, entry: &IndexEntry, dest: &Path) -> Result<Pat
         item.unpack(&target)
             .with_context(|| format!("extracting {}", rel.display()))?;
     }
-    Ok(dest.to_path_buf())
+    Ok(())
 }
 
 /// Read a single top-level file (e.g. `Cargo.toml`) from a crate archive.
