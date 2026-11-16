@@ -140,7 +140,7 @@ Path packages and other registries aren't checked. Then it:
 - warns about ignores that no longer match anything, and about expired ones,
 - prints an `update … --precise …` command for each vulnerability that has a patched version, or `upgrade <tool>` when the tool itself is affected.
 
-It also reports advisories against cargo-project-tools itself, and fails on them.
+It also reports advisories against cargo-project-tools itself, and fails on them unless they're accepted in [`self-audit-ignore.toml`](configuration.md#advisories-against-cargo-project-tools-itself).
 
 | Option | Meaning |
 | --- | --- |

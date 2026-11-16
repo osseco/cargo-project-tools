@@ -27,12 +27,13 @@ Why each tool gets a Cargo.lock in your repository, and what lives where.
     │   └── <tool>
     │       ├── Cargo.lock          # your lock for this tool
     │       └── audit-ignore.toml   # accepted advisories, with reasons
+    ├── self-audit-ignore.toml  # accepted advisories against cargo-project-tools (optional)
     ├── bin                   # installed binaries, <tool>.sha256 checksums, .stamps/
     ├── targets               # build directories, one per tool
     └── advisory-db           # RustSec advisory database
 ```
 
-Commit `project-tools.toml` and `.project-tools/crates/`. Everything else is git-ignored; the tool keeps `.project-tools/.gitignore` up to date.
+Commit `project-tools.toml`, `.project-tools/crates/` and `.project-tools/self-audit-ignore.toml` if you have one. Everything else is git-ignored; the tool keeps `.project-tools/.gitignore` up to date.
 
 ## Where a lock comes from
 

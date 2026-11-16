@@ -7,7 +7,7 @@ use rustsec::{Collection, Database, Lockfile, SourceId};
 use semver::{Version, VersionReq};
 
 use crate::cli::SUBCOMMAND;
-use crate::config::{AuditIgnore, IgnoreEntry};
+use crate::config::{AuditIgnore, IgnoreEntry, SELF_AUDIT_IGNORE};
 use crate::source::registry::{self, IndexCache};
 
 /// Kind of the warning for an advisory matched on a git package by name and version only.
@@ -154,7 +154,7 @@ pub fn scan(db: &Database, lock: &Lockfile, root: &str, git_tool: bool) -> Repor
 }
 
 /// Advisories against this binary itself, as cargo-audit checks its own version.
-pub fn self_check(db: &Database) -> Vec<String> {
+pub fn self_check(db: &Database) -> Vec<(Package, Advisory)> {
     let mut out = Vec::new();
     for (name, version) in [
         (env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")),
@@ -165,14 +165,43 @@ pub fn self_check(db: &Database) -> Vec<String> {
         };
         for a in query(db, name, &version, Scope::Registry) {
             if a.metadata.informational.is_none() {
-                out.push(format!(
-                    "{name} {version} is affected by {}: {}",
-                    a.metadata.id, a.metadata.title
-                ));
+                let package = Package {
+                    name: name.to_string(),
+                    version: version.clone(),
+                };
+                out.push((package, a.into()));
             }
         }
     }
     out
+}
+
+/// Print the self-check findings, applying `self-audit-ignore.toml`. Returns how many are
+/// left.
+pub fn evaluate_self(found: &[(Package, Advisory)], ignore: &AuditIgnore, today: &str) -> usize {
+    let mut ignores = Ignores::new(ignore, today, &format!("cargo-{SUBCOMMAND}"));
+    let mut open = 0;
+    for (package, advisory) in found {
+        if let Some(entry) = ignores.matches(advisory) {
+            println!(
+                "  ignored  {} {}@{}: {}",
+                advisory.id, package.name, package.version, entry.reason
+            );
+            continue;
+        }
+        open += 1;
+        println!(
+            "  error    {} {}@{}: {}\n           fix: upgrade cargo-{SUBCOMMAND}, or ignore it in .project-tools/{SELF_AUDIT_IGNORE}",
+            advisory.id, package.name, package.version, advisory.title
+        );
+    }
+    for entry in ignores.unused() {
+        println!(
+            "  warning: unused ignore {} in {SELF_AUDIT_IGNORE}; remove it",
+            entry.id
+        );
+    }
+    open
 }
 
 /// Audits locks against one loaded database.
@@ -189,7 +218,7 @@ impl Auditor {
         }
     }
 
-    pub fn self_check(&self) -> Vec<String> {
+    pub fn self_check(&self) -> Vec<(Package, Advisory)> {
         self_check(&self.db)
     }
 

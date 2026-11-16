@@ -334,14 +334,33 @@ fn self_check_reports_vulnerabilities_only() {
     ]);
     let found = self_check(&db);
     assert_eq!(found.len(), 1);
-    assert!(
-        found[0].starts_with(&format!(
-            "{} {} is affected by RUSTSEC-2020-0030",
-            env!("CARGO_PKG_NAME"),
-            env!("CARGO_PKG_VERSION")
-        )),
-        "{found:?}"
+    assert_eq!(found[0].0.name, env!("CARGO_PKG_NAME"));
+    assert_eq!(found[0].0.version.to_string(), env!("CARGO_PKG_VERSION"));
+    assert_eq!(found[0].1.id, "RUSTSEC-2020-0030");
+}
+
+#[test]
+fn self_findings_can_be_ignored_until_they_expire() {
+    let (_dir, db) = db(&[(
+        "RUSTSEC-2020-0030",
+        env!("CARGO_PKG_NAME"),
+        "aliases = [\"CVE-2020-0030\"]",
+        "\">= 999.0.0\"",
+    )]);
+    let found = self_check(&db);
+    let today = "2026-01-01";
+    assert_eq!(evaluate_self(&found, &AuditIgnore::default(), today), 1);
+    let by_id = ignores(
+        "[[ignore]]\nid = \"RUSTSEC-2020-0030\"\nreason = \"x\"\nexpires = \"2026-02-01\"\n",
     );
+    assert_eq!(evaluate_self(&found, &by_id, today), 0);
+    let by_alias =
+        ignores("[[ignore]]\nid = \"CVE-2020-0030\"\nreason = \"x\"\nexpires = \"2026-02-01\"\n");
+    assert_eq!(evaluate_self(&found, &by_alias, today), 0);
+    let expired = ignores(
+        "[[ignore]]\nid = \"RUSTSEC-2020-0030\"\nreason = \"x\"\nexpires = \"2025-12-31\"\n",
+    );
+    assert_eq!(evaluate_self(&found, &expired, today), 1);
 }
 
 /// The full `Auditor::audit` path with a lock on disk and a seeded index.

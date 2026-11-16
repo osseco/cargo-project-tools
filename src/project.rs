@@ -101,6 +101,10 @@ impl Project {
         self.crate_dir(name).join("audit-ignore.toml")
     }
 
+    pub fn self_audit_ignore_path(&self) -> PathBuf {
+        self.tools_dir().join(crate::config::SELF_AUDIT_IGNORE)
+    }
+
     pub fn target_dir(&self, name: &str) -> PathBuf {
         self.tools_dir().join("targets").join(name)
     }

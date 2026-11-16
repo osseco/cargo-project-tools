@@ -1,6 +1,6 @@
 # Configuration
 
-`project-tools.toml` at the project root, and an `audit-ignore.toml` per tool. When the tool edits `project-tools.toml`, your comments stay.
+`project-tools.toml` at the project root, an `audit-ignore.toml` per tool, and optionally a [`self-audit-ignore.toml`](#advisories-against-cargo-project-tools-itself). When the tool edits `project-tools.toml`, your comments stay.
 
 ## project-tools.toml
 
@@ -84,3 +84,16 @@ expires = "2027-01-01"       # optional
 - `reason` is required.
 - After `expires`, the ignore stops applying and `audit` reports the advisory again.
 - `audit` warns about ignores that no longer match anything, so the list doesn't grow stale.
+
+### Advisories against cargo-project-tools itself
+
+`audit`, and the audit `install` runs first, also check cargo-project-tools and the `rustsec` library it's built with, and fail on a vulnerability in either. To keep CI running until you can move to a fixed release, accept it in `.project-tools/self-audit-ignore.toml`, in the same format:
+
+```toml
+[[ignore]]
+id = "RUSTSEC-2027-0001"
+reason = "we don't fetch untrusted advisory databases; upgrading after the next release"
+expires = "2027-02-01"       # required here
+```
+
+`expires` is required in this file, so an ignore for the tool itself always ends. Commit the file with the rest of `.project-tools`.
