@@ -38,8 +38,47 @@ fn reject_option_like(value: &str) -> Result<()> {
 }
 
 /// Clone `url` into `dest` (replaced), check out the requested ref and find package `name`.
+/// A `dest` already at the pinned `rev` is reused instead.
 pub fn clone(url: &str, reference: &GitRef, name: &str, dest: &Path) -> Result<Clone> {
     ensure_https(url)?;
+    if !reference.rev.as_deref().is_some_and(|rev| reuse(dest, rev)) {
+        fresh_clone(url, reference, dest)?;
+    }
+    let commit = process::output(git().arg("-C").arg(dest).args(["rev-parse", "HEAD"]))?
+        .trim()
+        .to_string();
+
+    let (workspace_root, package_dir, version) = locate_package(dest, name)?;
+    Ok(Clone {
+        commit,
+        workspace_root,
+        package_dir,
+        version,
+    })
+}
+
+/// Reset an existing clone that's already at commit `rev`, rewriting only files that differ
+/// from it, so unchanged files keep their mtimes and cargo's fingerprints stay fresh. False
+/// when there's nothing to reuse or git fails.
+fn reuse(dest: &Path, rev: &str) -> bool {
+    if rev.len() != 40 || !rev.bytes().all(|b| b.is_ascii_hexdigit()) || !dest.join(".git").exists()
+    {
+        return false;
+    }
+    let at_rev = process::output(git().arg("-C").arg(dest).args(["rev-parse", "HEAD"]))
+        .is_ok_and(|head| head.trim().eq_ignore_ascii_case(rev));
+    at_rev
+        && process::output(
+            git()
+                .arg("-C")
+                .arg(dest)
+                .args(["reset", "--quiet", "--hard"]),
+        )
+        .is_ok()
+        && process::output(git().arg("-C").arg(dest).args(["clean", "-ffdxq"])).is_ok()
+}
+
+fn fresh_clone(url: &str, reference: &GitRef, dest: &Path) -> Result<()> {
     if dest.exists() {
         fs::remove_dir_all(dest)?;
     }
@@ -66,17 +105,7 @@ pub fn clone(url: &str, reference: &GitRef, name: &str, dest: &Path) -> Result<C
                 .arg(rev),
         )?;
     }
-    let commit = process::output(git().arg("-C").arg(dest).args(["rev-parse", "HEAD"]))?
-        .trim()
-        .to_string();
-
-    let (workspace_root, package_dir, version) = locate_package(dest, name)?;
-    Ok(Clone {
-        commit,
-        workspace_root,
-        package_dir,
-        version,
-    })
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -120,3 +149,7 @@ fn locate_package(dir: &Path, name: &str) -> Result<(PathBuf, PathBuf, String)> 
         .to_path_buf();
     Ok((meta.workspace_root, package_dir, pkg.version))
 }
+
+#[cfg(test)]
+#[path = "git_test.rs"]
+mod tests;

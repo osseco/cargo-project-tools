@@ -10,6 +10,7 @@ Every command runs as `cargo project-tools <command>`. Apart from `init`, it wor
 | `upgrade <crate>` | Move to a new tool version, keeping your dependency bumps where they still resolve |
 | `update <crate> [deps…]` | Update dependencies in the tool's lock |
 | `install [crates…]` | Audit, then build and install; skipped when nothing changed |
+| `verify [crates…]` | Check installed binaries against their recorded checksums; `--repair` rebuilds |
 | `audit [crates…]` | Check every lock against the RustSec advisory database, apply `audit-ignore.toml`, suggest fixes |
 | `audit-db update` | Fetch or revalidate the advisory database |
 | `list` | Show tools and their state |
@@ -74,7 +75,9 @@ cargo project-tools install
 cargo project-tools install cargo-nextest --force
 ```
 
-First it [audits](#audit) the lock of every selected tool. If any of them has a vulnerability that isn't ignored, nothing is built. Then it builds each tool with `cargo install --path … --locked` and installs it into `.project-tools/bin`. A tool whose version, lock and build settings haven't changed since the last install is skipped.
+First it [audits](#audit) the lock of every selected tool. If any of them has a vulnerability that isn't ignored, nothing is built. Then it builds each tool with `cargo install --path … --locked` and installs it into `.project-tools/bin`. A tool whose version, lock and build settings haven't changed since the last install, and whose binaries still match their checksums, is skipped.
+
+After building, it writes the sha256 of each of the tool's binaries to `.project-tools/bin/<tool>.sha256`, in `sha256sum` format, for [`verify`](#verify).
 
 | Option | Meaning |
 | --- | --- |
@@ -85,6 +88,39 @@ First it [audits](#audit) the lock of every selected tool. If any of them has a 
 | `--target <triple>` | Override `[build].target` |
 | `--config <value>` | Extra cargo `--config` values |
 | `-j`, `--offline`, `--frozen`, `-q`, `-v`, `--color`, `--keep-going`, `--timings` | Passed through to cargo |
+
+## verify
+
+```bash
+cargo project-tools verify
+cargo project-tools verify cargo-nextest --repair
+```
+
+Checks each selected tool's binaries in `.project-tools/bin` against the `<tool>.sha256` that `install` wrote. It fails when a binary is missing or differs, or when a tool has no checksum file. It needs only `.project-tools/bin` and reads nothing from the network. The files are in `sha256sum` format, so `sha256sum -c *.sha256` inside `bin` checks the same thing without cargo-project-tools.
+
+With `--repair`, every tool that fails is audited like in [`install`](#install), rebuilt, and checked against its recorded checksum. A repair never writes a new checksum. If the rebuild doesn't match, the tool's binaries are removed, so nothing unverified stays on `PATH`, and `verify` fails. A tool without a checksum file can't be repaired; run `install` for it.
+
+The checksum sits next to the binaries. It catches corruption, partial cache restores and accidental changes, not someone who can write to `bin`.
+
+| Option | Meaning |
+| --- | --- |
+| `--repair` | Rebuild tools that fail, and require the rebuild to match |
+| `--no-audit`, `--deny-warnings` | As for `install`; only with `--repair` |
+| `--profile <name>`, `--debug`, `--target <triple>`, `--config <value>`, `-j`, `--offline`, … | The build options of `install`. Use the ones you installed with, or the rebuild won't match |
+
+### When a repair can match
+
+| State | `install` | `verify --repair` |
+| --- | --- | --- |
+| `bin` gone, `targets/<tool>` present | Cargo copies the binary it already built, and the same checksum is written again | Fails: no checksum file. Run `install` |
+| Binary missing or changed, `targets/<tool>` present | Rebuilds the same way and writes the checksum again | Cargo copies the binary it already built, which matches, even for builds that aren't reproducible |
+| Binary changed, `targets/<tool>` gone | Full rebuild, new checksum | Full rebuild; matches only if the build is reproducible |
+
+A full rebuild gives the same binary when the toolchain, target, flags and project path are the same, unless a build script embeds the time or similar (crates like `vergen` or `built`). For such a tool, in this order:
+
+1. Keep `.project-tools/targets/<tool>` with `.project-tools/bin`, so a repair copies the binary cargo already built.
+2. Make the build reproducible: set `SOURCE_DATE_EPOCH`, which many of these crates honour, and keep toolchain, target and flags the same.
+3. Accept the new build on purpose with `install --force`, which records a new checksum. That trusts the new binary; it isn't a repair.
 
 ## audit
 

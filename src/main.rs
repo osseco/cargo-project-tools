@@ -1,5 +1,6 @@
 mod advisory_db;
 mod audit;
+mod checksum;
 mod cli;
 mod config;
 mod install;
@@ -16,7 +17,10 @@ use std::process::ExitCode;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 
-use cli::{AddArgs, AuditArgs, AuditDbCommand, Cli, Command, InstallArgs, UpdateArgs, UpgradeArgs};
+use cli::{
+    AddArgs, AuditArgs, AuditDbCommand, Cli, Command, InstallArgs, UpdateArgs, UpgradeArgs,
+    VerifyArgs,
+};
 use config::{AuditIgnore, Config, ConfigEditor, SfwMode};
 use project::Project;
 use source::{Dest, Origin, git::GitRef};
@@ -63,6 +67,7 @@ fn run() -> Result<ExitCode> {
         Command::Upgrade(args) => upgrade(&project, &config, args)?,
         Command::Update(args) => update(&project, &config, args)?,
         Command::Install(args) => install(&project, &config, &args)?,
+        Command::Verify(args) => return verify(&project, &config, &args),
         Command::Audit(args) => return audit(&project, &config, args),
         Command::AuditDb(AuditDbCommand::Update) => {
             let max_age = config.settings.advisory_db_max_age()?;
@@ -189,6 +194,10 @@ fn remove(project: &Project, config: &Config, name: &str) -> Result<()> {
         if dir.exists() {
             fs::remove_dir_all(&dir).with_context(|| format!("removing {}", dir.display()))?;
         }
+    }
+    let sums = checksum::path(project, name);
+    if sums.exists() {
+        fs::remove_file(&sums).with_context(|| format!("removing {}", sums.display()))?;
     }
     let mut editor = ConfigEditor::open(&project.config_path())?;
     editor.remove_tool(name);
@@ -370,31 +379,110 @@ fn audit(project: &Project, config: &Config, args: AuditArgs) -> Result<ExitCode
 fn install(project: &Project, config: &Config, args: &InstallArgs) -> Result<()> {
     let tools = config.select(&args.names)?;
     if !args.no_audit {
-        let policy = if args.offline {
-            advisory_db::Policy::Offline
-        } else {
-            advisory_db::Policy::Auto
-        };
-        let (mut auditor, own) = load_auditor(project, config, policy)?;
-        if own > 0 {
-            bail!(
-                "{} itself has open advisories; upgrade it, or pass --no-audit",
-                cli::SUBCOMMAND
-            );
-        }
-        audit_before_install(
+        audit_gate(
             project,
-            &mut auditor,
+            config,
             &tools,
+            args.build.offline,
             args.deny_warnings,
-            &audit::today(),
         )?;
     }
     for (name, tool) in tools {
         let build = config.build.merged(tool.build.as_ref());
-        install::install(project, name, tool, &build, args)?;
+        install::install(
+            project,
+            name,
+            tool,
+            &build,
+            &args.build,
+            args.force,
+            install::Checksums::Write,
+        )?;
     }
     Ok(())
+}
+
+/// Check every selected tool's binaries; with `--repair`, rebuild the ones that don't match
+/// and require the rebuild to match the recorded checksum.
+fn verify(project: &Project, config: &Config, args: &VerifyArgs) -> Result<ExitCode> {
+    let tools = config.select(&args.names)?;
+    let mut failed = Vec::new();
+    let mut repairable = Vec::new();
+    for (name, tool) in tools {
+        match checksum::check(project, name) {
+            Ok(mismatches) if mismatches.is_empty() => println!("{name}: ok"),
+            Ok(mismatches) => {
+                println!("{name}:");
+                for m in &mismatches {
+                    println!("  {m}");
+                }
+                failed.push(name);
+                repairable.push((name, tool));
+            }
+            Err(e) => {
+                println!("{name}: {e:#}");
+                failed.push(name);
+            }
+        }
+    }
+    if args.repair && !repairable.is_empty() {
+        if !args.no_audit {
+            audit_gate(
+                project,
+                config,
+                &repairable,
+                args.build.offline,
+                args.deny_warnings,
+            )?;
+        }
+        for (name, tool) in repairable {
+            let build = config.build.merged(tool.build.as_ref());
+            let repaired = install::install(
+                project,
+                name,
+                tool,
+                &build,
+                &args.build,
+                true,
+                install::Checksums::Expect,
+            );
+            match repaired {
+                Ok(()) => {
+                    println!("{name}: repaired");
+                    failed.retain(|f| *f != name);
+                }
+                Err(e) => eprintln!("error: {e:#}"),
+            }
+        }
+    }
+    if failed.is_empty() {
+        return Ok(ExitCode::SUCCESS);
+    }
+    println!("verification failed for {}", failed.join(", "));
+    Ok(ExitCode::FAILURE)
+}
+
+/// Audit the selected tools' locks before building them.
+fn audit_gate(
+    project: &Project,
+    config: &Config,
+    tools: &[(&str, &config::Tool)],
+    offline: bool,
+    deny_warnings: bool,
+) -> Result<()> {
+    let policy = if offline {
+        advisory_db::Policy::Offline
+    } else {
+        advisory_db::Policy::Auto
+    };
+    let (mut auditor, own) = load_auditor(project, config, policy)?;
+    if own > 0 {
+        bail!(
+            "{} itself has open advisories; upgrade it, or pass --no-audit",
+            cli::SUBCOMMAND
+        );
+    }
+    audit_before_install(project, &mut auditor, tools, deny_warnings, &audit::today())
 }
 
 /// Fails, naming every tool that didn't pass, when a lock has a vulnerability that isn't

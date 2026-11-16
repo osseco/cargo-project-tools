@@ -33,6 +33,8 @@ pub enum Command {
     Update(UpdateArgs),
     /// Build and install tools into .project-tools/bin using the project's locks.
     Install(InstallArgs),
+    /// Check installed binaries against the checksums `install` recorded.
+    Verify(VerifyArgs),
     /// Audit every tool's Cargo.lock against the RustSec advisory database.
     Audit(AuditArgs),
     /// Manage the advisory database used by `audit`.
@@ -101,6 +103,31 @@ pub struct InstallArgs {
     /// aren't ignored.
     #[arg(long, conflicts_with = "no_audit")]
     pub deny_warnings: bool,
+    #[command(flatten)]
+    pub build: BuildArgs,
+}
+
+#[derive(Debug, Args)]
+pub struct VerifyArgs {
+    /// Tools to verify (default: all).
+    pub names: Vec<String>,
+    /// Rebuild tools that don't match; fail if the rebuild doesn't match the recorded checksum.
+    #[arg(long)]
+    pub repair: bool,
+    /// Don't audit the locks before repairing.
+    #[arg(long, requires = "repair")]
+    pub no_audit: bool,
+    /// Also refuse to repair on warnings (unmaintained, unsound, yanked, git-source) that
+    /// aren't ignored.
+    #[arg(long, requires = "repair", conflicts_with = "no_audit")]
+    pub deny_warnings: bool,
+    #[command(flatten)]
+    pub build: BuildArgs,
+}
+
+/// Flags passed on to `cargo install`.
+#[derive(Debug, Args)]
+pub struct BuildArgs {
     #[arg(long, short = 'j')]
     pub jobs: Option<String>,
     #[arg(long)]
@@ -150,11 +177,15 @@ pub enum AuditDbCommand {
 
 impl Command {
     /// Commands that download packages and should run through sfw. `audit` and `audit-db`
-    /// only fetch the advisory database, which isn't a package.
+    /// only fetch the advisory database, which isn't a package. `verify` only builds when
+    /// repairing.
     pub fn downloads_packages(&self) -> bool {
-        matches!(
-            self,
-            Command::Add(_) | Command::Upgrade(_) | Command::Update(_) | Command::Install(_)
-        )
+        match self {
+            Command::Verify(args) => args.repair,
+            _ => matches!(
+                self,
+                Command::Add(_) | Command::Upgrade(_) | Command::Update(_) | Command::Install(_)
+            ),
+        }
     }
 }

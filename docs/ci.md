@@ -41,8 +41,15 @@ jobs:
           cargo install --git https://github.com/osseco/cargo-project-tools --locked
           cargo project-tools install
 
+      - name: Verify cached tools
+        if: steps.tools.outputs.cache-hit == 'true'
+        working-directory: .project-tools/bin
+        run: sha256sum -c -- *.sha256
+
       - run: echo "$GITHUB_WORKSPACE/.project-tools/bin" >> "$GITHUB_PATH"
 ```
+
+`install` writes a `<tool>.sha256` for every tool into `.project-tools/bin`, so the restored binaries can be checked with `sha256sum` without installing cargo-project-tools. [`cargo project-tools verify`](commands.md#verify) does the same check. With `--repair` it rebuilds a tool that fails and requires the rebuild to match; that only works reliably when `.project-tools/targets` is restored too (see [When a repair can match](commands.md#when-a-repair-can-match)).
 
 ## Audit the locks
 

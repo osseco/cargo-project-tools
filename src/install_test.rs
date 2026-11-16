@@ -1,11 +1,11 @@
 use super::*;
 use clap::Parser;
 
-fn install_args(extra: &[&str]) -> InstallArgs {
+fn install_args(extra: &[&str]) -> BuildArgs {
     let mut argv = vec!["cargo-project-tools", "install"];
     argv.extend(extra);
     match crate::cli::Cli::parse_from(argv).command {
-        crate::cli::Command::Install(a) => a,
+        crate::cli::Command::Install(a) => a.build,
         _ => unreachable!(),
     }
 }

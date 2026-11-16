@@ -5,7 +5,8 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::cli::InstallArgs;
+use crate::checksum;
+use crate::cli::BuildArgs;
 use crate::config::{Build, Tool};
 use crate::lock;
 use crate::process;
@@ -22,8 +23,17 @@ struct Stamp {
     bins: Vec<String>,
 }
 
+/// What to do with `bin/<tool>.sha256` after building.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Checksums {
+    /// Record the new binaries.
+    Write,
+    /// The new binaries must match what's recorded (`verify --repair`).
+    Expect,
+}
+
 /// `cargo install` arguments derived from the tool, its build settings and CLI flags.
-pub fn cargo_args(tool: &Tool, build: &Build, args: &InstallArgs) -> Vec<String> {
+pub fn cargo_args(tool: &Tool, build: &Build, args: &BuildArgs) -> Vec<String> {
     let mut out = Vec::new();
     for f in &tool.features {
         out.extend(["--features".into(), f.clone()]);
@@ -152,7 +162,9 @@ pub fn install(
     name: &str,
     tool: &Tool,
     build: &Build,
-    args: &InstallArgs,
+    args: &BuildArgs,
+    force: bool,
+    checksums: Checksums,
 ) -> Result<()> {
     let lock_path = project.lock_path(name);
     let lock_text = fs::read_to_string(&lock_path).with_context(|| {
@@ -167,7 +179,7 @@ pub fn install(
     let key = stamp_key(name, tool, &lock_text, &cargo_args);
     let target_dir = project.target_dir(name);
     let stamp_path = target_dir.join(STAMP);
-    if !args.force
+    if !force
         && let Some(stamp) = read_stamp(&stamp_path)
         && stamp.key == key
         && !stamp.bins.is_empty()
@@ -175,6 +187,7 @@ pub fn install(
             .bins
             .iter()
             .all(|b| project.bin_dir().join(b).is_file())
+        && checksum::check(project, name).is_ok_and(|m| m.is_empty())
     {
         println!("{name} {} is up to date", tool.version);
         return Ok(());
@@ -211,11 +224,49 @@ pub fn install(
     )?;
 
     let bins = installed_bins(project, name, &tool.version);
+    match checksums {
+        Checksums::Write => checksum::write(project, name, &bins)?,
+        Checksums::Expect => expect_recorded(project, name, &bins)?,
+    }
     fs::write(
         &stamp_path,
         serde_json::to_string_pretty(&Stamp { key, bins })?,
     )?;
     Ok(())
+}
+
+/// Fails, removing the tool's binaries so nothing unverified stays on PATH, when the
+/// rebuilt binaries aren't the recorded ones.
+fn expect_recorded(project: &Project, name: &str, bins: &[String]) -> Result<()> {
+    let recorded = checksum::read(project, name)?;
+    let mut problems: Vec<String> = checksum::check(project, name)?
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    let mut built = bins.to_vec();
+    built.sort();
+    let mut expected: Vec<String> = recorded.iter().map(|(b, _)| b.clone()).collect();
+    expected.sort();
+    if built != expected {
+        problems.push(format!(
+            "built {} but {} were recorded",
+            built.join(", "),
+            expected.join(", ")
+        ));
+    }
+    if problems.is_empty() {
+        return Ok(());
+    }
+    for bin in built.iter().chain(&expected) {
+        let path = project.bin_dir().join(bin);
+        if path.is_file() {
+            fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
+        }
+    }
+    anyhow::bail!(
+        "rebuild of {name} does not match its recorded checksum ({}); its binaries were removed",
+        problems.join("; ")
+    )
 }
 
 #[cfg(test)]

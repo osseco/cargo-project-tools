@@ -110,3 +110,30 @@ fn install_flags() {
     assert!(args.no_audit && !args.deny_warnings);
     assert_eq!(args.names, vec!["x".to_string()]);
 }
+
+#[test]
+fn verify_flags() {
+    let parse = |args: &[&str]| {
+        Cli::try_parse_from(
+            ["cargo-project-tools"]
+                .iter()
+                .chain(args)
+                .copied()
+                .collect::<Vec<_>>(),
+        )
+    };
+    // Audit and build flags only make sense when repairing.
+    assert!(parse(&["verify", "--no-audit"]).is_err());
+    assert!(parse(&["verify", "--deny-warnings"]).is_err());
+    let plain = parse(&["verify"]).unwrap().command;
+    assert!(!plain.downloads_packages());
+    let repair = parse(&["verify", "--repair", "--profile", "dist", "x"])
+        .unwrap()
+        .command;
+    assert!(repair.downloads_packages());
+    let Command::Verify(args) = repair else {
+        panic!("not verify");
+    };
+    assert_eq!(args.build.profile.as_deref(), Some("dist"));
+    assert_eq!(args.names, vec!["x".to_string()]);
+}
