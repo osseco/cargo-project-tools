@@ -18,6 +18,8 @@ jobs:
       issues: write
       contents: read
       pull-requests: write
+      security-events: write
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -43,8 +45,26 @@ jobs:
           # --pr-number is 0, and "0" turns a push into a PR diff.
           PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number || 0 }}
         run: |
+          case "$GITHUB_EVENT_NAME" in
+            pull_request)
+              args=(--scm github --pr-number "$PULL_REQUEST_NUMBER")
+              ;;
+            *)
+              # Code scanning closes alerts missing from an upload, so the
+              # SARIF must hold every alert: --strict-blocking adds the
+              # existing ones in diff mode. socketcli's GitHub integration
+              # also skips schedule runs, so no --scm here.
+              args=(--ignore-commit-files --sarif-file socket.sarif)
+              ;;
+          esac
+          # The weekly run only reports; release runs block.
+          if [ "$GITHUB_EVENT_NAME" = schedule ]; then
+            args+=(--disable-blocking)
+          fi
           uv run --locked --offline --project .github/socket socketcli \
-            --target-path "$GITHUB_WORKSPACE" \
-            --scm github \
-            --pr-number "$PULL_REQUEST_NUMBER" \
-            --strict-blocking
+            --target-path "$GITHUB_WORKSPACE" --strict-blocking "${args[@]}"
+      - if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: socket.sarif
+          category: socket
