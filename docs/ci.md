@@ -4,7 +4,7 @@ Install the project's tools in GitHub Actions, and audit their locks.
 
 ## Install the tools
 
-Binaries and build directories are cached separately. When the bin cache key matches, nothing is built. The key covers `project-tools.toml` and every lock, so any change to a tool's version, lock or build settings rebuilds it.
+Binaries and build directories are cached separately. `install` runs on every run: it audits the locks, then skips each tool whose stamp and checksums in `.project-tools/bin` still match, so a restored bin cache is enough to build nothing. The bin cache falls back to an older entry with `restore-keys`, and then only the tools that changed are rebuilt.
 
 ```yaml
 jobs:
@@ -26,6 +26,7 @@ jobs:
             .project-tools/.crates.toml
             .project-tools/.crates2.json
           key: tools-bin-${{ runner.os }}-${{ hashFiles('project-tools.toml', '.project-tools/crates/**/Cargo.lock') }}
+          restore-keys: tools-bin-${{ runner.os }}-
 
       - name: Cache tool builds
         if: steps.tools.outputs.cache-hit != 'true'
@@ -36,20 +37,16 @@ jobs:
           restore-keys: tools-targets-${{ runner.os }}-
 
       - name: Install tools
-        if: steps.tools.outputs.cache-hit != 'true'
         run: |
           cargo install --git https://github.com/osseco/cargo-project-tools --locked
           cargo project-tools install
 
-      - name: Verify cached tools
-        if: steps.tools.outputs.cache-hit == 'true'
-        working-directory: .project-tools/bin
-        run: sha256sum -c -- *.sha256
-
       - run: echo "$GITHUB_WORKSPACE/.project-tools/bin" >> "$GITHUB_PATH"
 ```
 
-`install` writes a `<tool>.sha256` for every tool into `.project-tools/bin`, so the restored binaries can be checked with `sha256sum` without installing cargo-project-tools. [`cargo project-tools verify`](commands.md#verify) does the same check. With `--repair` it rebuilds a tool that fails and requires the rebuild to match; that only works reliably when `.project-tools/targets` is restored too (see [When a repair can match](commands.md#when-a-repair-can-match)).
+The build directories are only restored when the bin cache isn't an exact hit, because only then can something need building.
+
+`install` keeps a stamp (`bin/.stamps/<tool>.json`) and a `<tool>.sha256` for every tool in `.project-tools/bin`. The stamp includes the OS and architecture, so a bin cache restored on the wrong platform is rebuilt rather than used. A job that doesn't want to install can check restored binaries with [`cargo project-tools verify`](commands.md#verify), or with `sha256sum -c *.sha256` inside `bin`, but then the locks aren't audited.
 
 ## Audit the locks
 

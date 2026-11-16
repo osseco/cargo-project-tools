@@ -83,6 +83,12 @@ impl Project {
         self.tools_dir().join("bin")
     }
 
+    /// What `name` was last installed from; next to the binaries, so restoring `bin` from a
+    /// cache is enough to skip a build.
+    pub fn stamp_path(&self, name: &str) -> PathBuf {
+        self.bin_dir().join(".stamps").join(format!("{name}.json"))
+    }
+
     pub fn crate_dir(&self, name: &str) -> PathBuf {
         self.tools_dir().join("crates").join(name)
     }

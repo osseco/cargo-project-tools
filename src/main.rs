@@ -195,9 +195,10 @@ fn remove(project: &Project, config: &Config, name: &str) -> Result<()> {
             fs::remove_dir_all(&dir).with_context(|| format!("removing {}", dir.display()))?;
         }
     }
-    let sums = checksum::path(project, name);
-    if sums.exists() {
-        fs::remove_file(&sums).with_context(|| format!("removing {}", sums.display()))?;
+    for file in [checksum::path(project, name), project.stamp_path(name)] {
+        if file.exists() {
+            fs::remove_file(&file).with_context(|| format!("removing {}", file.display()))?;
+        }
     }
     let mut editor = ConfigEditor::open(&project.config_path())?;
     editor.remove_tool(name);
@@ -514,10 +515,7 @@ fn list(project: &Project, config: &Config) -> Result<()> {
     for (name, tool) in &config.tool {
         let source = tool.git.as_deref().unwrap_or("crates.io");
         let has_lock = project.lock_path(name).is_file();
-        let built = project
-            .target_dir(name)
-            .join(".install-stamp.json")
-            .is_file();
+        let built = project.stamp_path(name).is_file();
         println!(
             "{name} {} ({source}){}{}",
             tool.version,
