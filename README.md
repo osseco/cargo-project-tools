@@ -20,6 +20,15 @@ Or build from source:
 cargo install --git https://github.com/osseco/cargo-project-tools --locked
 ```
 
+Then, on macOS and Linux, it keeps itself up to date under `~/.cargo-project-tools/bin` (signatures checked with cosign):
+
+```bash
+cargo project-tools self-check          # is a newer version installed or released?
+cargo project-tools self-update         # install the latest and switch to it
+cargo project-tools self-update 1.2.0   # install a given version and switch to it
+cargo project-tools self-list           # installed versions, * marks the active one
+```
+
 ## Quick start
 
 ```bash

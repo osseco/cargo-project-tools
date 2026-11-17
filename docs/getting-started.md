@@ -29,6 +29,22 @@ cargo install --git https://github.com/osseco/cargo-project-tools --locked
 
 Cargo runs it as a subcommand: `cargo project-tools …`.
 
+### Keep it up to date
+
+On macOS and Linux, cargo-project-tools can install its own releases into `~/.cargo-project-tools/bin`, checking the checksum and the cosign signature of each (it needs [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)):
+
+```bash
+cargo project-tools self-update
+```
+
+Put `~/.cargo-project-tools/bin` first on your `PATH`, then check for new releases now and then:
+
+```bash
+cargo project-tools self-check
+```
+
+See [the self-* commands](commands.md#managing-cargo-project-tools-itself).
+
 ## First tool
 
 In your project's root:
