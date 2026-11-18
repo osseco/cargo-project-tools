@@ -8,6 +8,7 @@ on:
       - Cargo.toml
       - Cargo.lock
       - rust-toolchain.toml
+      - scripts/install.sh
       - deny.toml
       - .syft.yaml
       - .github/calculate-version.sh
@@ -110,6 +111,7 @@ jobs:
           cp sbom/cargo-project-tools.cdx.json "staged/cargo-project-tools-${NEXT_VERSION}.cdx.json"
           cp sbom/cargo-project-tools.spdx.json "staged/cargo-project-tools-${NEXT_VERSION}.spdx.json"
           cp LICENSE-MIT LICENSE-APACHE staged/
+          install -m 755 scripts/install.sh staged/install.sh
           for f in staged/*; do
             cosign sign-blob "$f" --bundle "$f.sigstore.json" --yes
           done

@@ -42,6 +42,55 @@ pub enum Command {
     AuditDb(AuditDbCommand),
     /// List configured tools.
     List,
+    /// Install a release of cargo-project-tools under `~/.cargo-project-tools` and make it active.
+    ///
+    /// Without a version, installs the latest release. Each version is kept as
+    /// `~/.cargo-project-tools/bin/cargo-project-tools-X.Y.Z`, and
+    /// `~/.cargo-project-tools/bin/cargo-project-tools` is a symlink to the active one, so put
+    /// `~/.cargo-project-tools/bin` first on `PATH`. A version that is already installed is
+    /// only switched to.
+    ///
+    /// Releases come from the `repo` in `~/.cargo-project-tools/config.toml` (default
+    /// `osseco/cargo-project-tools`). Each download must match the release's `SHA256SUMS`,
+    /// carry a cosign signature by the `signer` in the same file (default the `release.yml`
+    /// workflow on `main` of `repo`), and report the version it was downloaded as. Needs
+    /// `cosign`.
+    ///
+    /// `CARGO_PROJECT_TOOLS_HOME` replaces `~/.cargo-project-tools`. macOS and Linux only.
+    #[command(name = "self-update")]
+    SelfUpdate {
+        /// Version to install: `X.Y.Z`, `vX.Y.Z` or `latest`.
+        version: Option<String>,
+        /// Install without making it the active version.
+        #[arg(long)]
+        no_switch: bool,
+    },
+    /// Make an installed version of cargo-project-tools the active one.
+    ///
+    /// Nothing is downloaded; install a version first with `cargo project-tools self-update`.
+    #[command(name = "self-use")]
+    SelfUse {
+        /// Installed version: `X.Y.Z` or `vX.Y.Z`.
+        version: String,
+    },
+    /// List the versions of cargo-project-tools installed under `~/.cargo-project-tools`.
+    ///
+    /// The active one is marked `*`. Also prints the repository and signer `self-update` uses.
+    #[command(name = "self-list")]
+    SelfList,
+    /// List the ten latest releases of the configured repository.
+    ///
+    /// Newest first, with the publish date, and which are installed or active. Drafts and
+    /// prereleases are left out. Asks the GitHub API without a token; nothing is downloaded.
+    #[command(name = "self-available")]
+    SelfAvailable,
+    /// Tell whether a newer cargo-project-tools than the active one exists.
+    ///
+    /// Compares the active version with the newest one installed and with the latest release
+    /// of the configured repository, and names the command that switches or installs it.
+    /// Asks the GitHub API without a token; nothing is downloaded.
+    #[command(name = "self-check")]
+    SelfCheck,
 }
 
 #[derive(Debug, Args)]

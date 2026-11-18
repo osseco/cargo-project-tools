@@ -1,6 +1,6 @@
 # Commands
 
-Every command runs as `cargo project-tools <command>`. Apart from `init`, it works from any folder inside the project: it looks for `project-tools.toml` in the current folder and its parents.
+Every command runs as `cargo project-tools <command>`. Apart from `init` and the [`self-*` commands](#managing-cargo-project-tools-itself), it works from any folder inside the project: it looks for `project-tools.toml` in the current folder and its parents. The `self-*` commands work from any folder.
 
 | Command | What it does |
 | --- | --- |
@@ -14,6 +14,11 @@ Every command runs as `cargo project-tools <command>`. Apart from `init`, it wor
 | `audit [crates…]` | Check every lock against the RustSec advisory database, apply `audit-ignore.toml`, suggest fixes |
 | `audit-db update` | Fetch or revalidate the advisory database |
 | `list` | Show tools and their state |
+| `self-update [<version>]` | Install a release of cargo-project-tools and make it active |
+| `self-use <version>` | Make an installed version active |
+| `self-list` | List installed versions |
+| `self-available` | List the latest releases |
+| `self-check` | Tell whether a newer version is installed or released |
 
 `--no-sfw` works with every command and turns off [sfw](configuration.md#sfw) for that run.
 
@@ -156,3 +161,51 @@ Fetches or revalidates the advisory database without auditing.
 ## list
 
 Shows every configured tool with its version and source, and flags a missing `Cargo.lock` or an installed build.
+
+## Managing cargo-project-tools itself
+
+The `self-*` commands keep versioned copies of cargo-project-tools under `~/.cargo-project-tools`. Each version is kept as `bin/cargo-project-tools-X.Y.Z`, and `bin/cargo-project-tools` is a symlink to the active one, so put `~/.cargo-project-tools/bin` first on your `PATH`. `CARGO_PROJECT_TOOLS_HOME` replaces `~/.cargo-project-tools`.
+
+Switching versions needs symlinks, so `self-update` and `self-use` work on macOS and Linux only. On Windows, download releases by hand.
+
+### self-update
+
+```bash
+cargo project-tools self-update
+cargo project-tools self-update 1.2.0
+cargo project-tools self-update --no-switch
+```
+
+Installs the latest release, or the given version (`X.Y.Z`, `vX.Y.Z` or `latest`), and makes it active. A version that is already installed is only switched to.
+
+Releases come from the `repo` in [`~/.cargo-project-tools/config.toml`](configuration.md#self-update-source). Each download must:
+
+- match its hash in the release's `SHA256SUMS`,
+- carry a cosign signature by the configured `signer`,
+- report, with `--version`, the version it was downloaded as.
+
+It needs [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) on `PATH`. Downloads don't go through sfw: release assets aren't packages.
+
+| Option | Meaning |
+| --- | --- |
+| `--no-switch` | Install without making it the active version |
+
+### self-use
+
+```bash
+cargo project-tools self-use 1.1.0
+```
+
+Points `bin/cargo-project-tools` at an installed version. Nothing is downloaded.
+
+### self-list
+
+Lists the installed versions, newest first, with `*` on the active one. Also prints the repository and signer `self-update` uses.
+
+### self-available
+
+Lists the ten latest releases of the configured repository, newest first, with the publish date, and which are installed or active. Drafts and prereleases are left out. It asks the GitHub API without a token; nothing is downloaded.
+
+### self-check
+
+Compares the active version with the newest one installed and with the latest release, and names the command that switches to it or installs it. It asks the GitHub API without a token; nothing is downloaded. It exits 0 unless the check itself fails.

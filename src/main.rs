@@ -8,6 +8,7 @@ mod lock;
 mod net;
 mod process;
 mod project;
+mod selfinstall;
 mod sfw;
 mod source;
 
@@ -23,6 +24,7 @@ use cli::{
 };
 use config::{AuditIgnore, Config, ConfigEditor, SfwMode};
 use project::Project;
+use selfinstall::SelfEnv;
 use source::{Dest, Origin, git::GitRef};
 
 fn main() -> ExitCode {
@@ -45,6 +47,25 @@ fn run() -> Result<ExitCode> {
 
     if let Command::Init = cli.command {
         return init().map(|()| ExitCode::SUCCESS);
+    }
+    // Self-management works outside a project.
+    let self_out = match &cli.command {
+        Command::SelfUpdate { version, no_switch } => Some(selfinstall::self_update(
+            &SelfEnv::from_env()?,
+            version.as_deref(),
+            *no_switch,
+        )?),
+        Command::SelfUse { version } => {
+            Some(selfinstall::self_use(&SelfEnv::from_env()?, version)?)
+        }
+        Command::SelfList => Some(selfinstall::self_list(&SelfEnv::from_env()?)?),
+        Command::SelfAvailable => Some(selfinstall::self_available(&SelfEnv::from_env()?)?),
+        Command::SelfCheck => Some(selfinstall::self_check(&SelfEnv::from_env()?)?),
+        _ => None,
+    };
+    if let Some(out) = self_out {
+        println!("{out}");
+        return Ok(ExitCode::SUCCESS);
     }
     let project = Project::discover()?;
     let config = Config::load(&project.config_path())?;
@@ -78,6 +99,11 @@ fn run() -> Result<ExitCode> {
             );
         }
         Command::List => list(&project, &config)?,
+        Command::SelfUpdate { .. }
+        | Command::SelfUse { .. }
+        | Command::SelfList
+        | Command::SelfAvailable
+        | Command::SelfCheck => unreachable!(),
     }
     Ok(ExitCode::SUCCESS)
 }

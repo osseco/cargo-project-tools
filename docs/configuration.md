@@ -1,6 +1,6 @@
 # Configuration
 
-`project-tools.toml` at the project root, an `audit-ignore.toml` per tool, and optionally a [`self-audit-ignore.toml`](#advisories-against-cargo-project-tools-itself). When the tool edits `project-tools.toml`, your comments stay.
+`project-tools.toml` at the project root, an `audit-ignore.toml` per tool, and optionally a [`self-audit-ignore.toml`](#advisories-against-cargo-project-tools-itself). When the tool edits `project-tools.toml`, your comments stay. Outside the project, `~/.cargo-project-tools/config.toml` sets where [`self-update`](#self-update-source) gets releases.
 
 ## project-tools.toml
 
@@ -97,3 +97,19 @@ expires = "2027-02-01"       # required here
 ```
 
 `expires` is required in this file, so an ignore for the tool itself always ends. Commit the file with the rest of `.project-tools`.
+
+## self-update source
+
+`~/.cargo-project-tools/config.toml` (under `CARGO_PROJECT_TOOLS_HOME` when set) tells the [`self-*` commands](commands.md#managing-cargo-project-tools-itself) where releases come from and who must have signed them. It's optional; without it, releases come from this repository.
+
+```toml
+repo = "acme/cargo-project-tools"
+# signer = "https://github.com/acme/cargo-project-tools/.github/workflows/release.yml@refs/heads/main"
+```
+
+| Key | Meaning |
+| --- | --- |
+| `repo` | GitHub repository as `owner/name`. Default: `osseco/cargo-project-tools` |
+| `signer` | The cosign certificate identity every download must be signed by (https only). Default: `release.yml` on `main` of `repo` |
+
+A fork sets `repo`, and `signer` only when its release workflow isn't `release.yml` on `main`. `self-list` prints the values in use.
