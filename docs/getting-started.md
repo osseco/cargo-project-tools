@@ -4,7 +4,20 @@ Install cargo-project-tools, then add your first tool to a project.
 
 ## Install
 
-Download a binary for your platform from the [latest release](https://github.com/osseco/cargo-project-tools/releases/latest), check it, and put it on your `PATH`:
+On macOS or Linux, install into `~/.cargo-project-tools` with the signed `install.sh` from the latest release. It needs `curl` and [cosign](https://docs.sigstore.dev/cosign/system_config/installation/):
+
+```bash
+curl -fsSLO https://github.com/osseco/cargo-project-tools/releases/latest/download/install.sh
+curl -fsSLO https://github.com/osseco/cargo-project-tools/releases/latest/download/install.sh.sigstore.json
+cosign verify-blob install.sh --bundle install.sh.sigstore.json \
+  --certificate-identity https://github.com/osseco/cargo-project-tools/.github/workflows/release.yml@refs/heads/main \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+sh install.sh
+```
+
+It checks the binary the same way [`self-update`](commands.md#self-update) does, installs it as `~/.cargo-project-tools/bin/cargo-project-tools-X.Y.Z`, links `~/.cargo-project-tools/bin/cargo-project-tools` to it, and tells you how to put that folder on your `PATH`. `sh install.sh 1.2.0` installs a given version; `--repo owner/name` installs from a fork and records it in [`config.toml`](configuration.md#self-update-source).
+
+Or download a binary for your platform from the [latest release](https://github.com/osseco/cargo-project-tools/releases/latest), check it, and put it on your `PATH`:
 
 ```bash
 gh attestation verify cargo-project-tools-x86_64-unknown-linux-musl --repo osseco/cargo-project-tools
@@ -31,7 +44,7 @@ Cargo runs it as a subcommand: `cargo project-tools …`.
 
 ### Keep it up to date
 
-On macOS and Linux, cargo-project-tools can install its own releases into `~/.cargo-project-tools/bin`, checking the checksum and the cosign signature of each (it needs [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)):
+On macOS and Linux, cargo-project-tools can install its own releases into `~/.cargo-project-tools/bin`, checking the checksum and the cosign signature of each (it needs [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)). After `install.sh`, or from a binary you installed another way:
 
 ```bash
 cargo project-tools self-update

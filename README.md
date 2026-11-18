@@ -8,7 +8,18 @@ Docs: <https://osseco.github.io/cargo-project-tools/>
 
 ## Install
 
-Download a binary for your platform from the [latest release](https://github.com/osseco/cargo-project-tools/releases/latest), check it, and put it on your `PATH`:
+On macOS or Linux, install into `~/.cargo-project-tools` with the signed `install.sh` from the latest release. It needs `curl` and [cosign](https://docs.sigstore.dev/cosign/system_config/installation/):
+
+```bash
+curl -fsSLO https://github.com/osseco/cargo-project-tools/releases/latest/download/install.sh
+curl -fsSLO https://github.com/osseco/cargo-project-tools/releases/latest/download/install.sh.sigstore.json
+cosign verify-blob install.sh --bundle install.sh.sigstore.json \
+  --certificate-identity https://github.com/osseco/cargo-project-tools/.github/workflows/release.yml@refs/heads/main \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+sh install.sh
+```
+
+Or download a binary for your platform from the [latest release](https://github.com/osseco/cargo-project-tools/releases/latest), check it, and put it on your `PATH`:
 
 ```bash
 gh attestation verify cargo-project-tools-x86_64-unknown-linux-musl --repo osseco/cargo-project-tools
