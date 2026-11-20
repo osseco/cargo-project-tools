@@ -15,11 +15,11 @@ Conventions for commits, branches and sfw are in [AGENTS.md](AGENTS.md). This pa
 | `pr.yml` | every pull request | calculates the next version, runs `product.yml` with `<next>-pr.<number>.<run>.<attempt>` and `site.yml`, then `Merge gate` |
 | `site.yml` | called by `pr.yml` and `pages.yml` | audit, lint, typecheck, test and build the Pages site in `site/` |
 | `pages.yml` | push to `main` touching `site/`, `docs/` or `llms.txt` | runs `site.yml`, builds with the Pages base path, deploys to GitHub Pages |
-| `product.yml` | called by `pr.yml` and `release.yml` | cargo-deny, tests, pre-commit, SBOMs, builds; calls CodeQL, zizmor, actionlint and Socket |
+| `product.yml` | called by `pr.yml` and `release.yml` | cargo-deny, tests on Linux, macOS and Windows, pre-commit, SBOMs, builds; calls CodeQL, zizmor, actionlint and Socket |
 | `release.yml` | push to `main` touching the product | the same product run for every target, then publishes the release |
 | `codeql.yml`, `zizmor.yml`, `actionlint.yml`, `socket.yml` | also weekly | report findings to code scanning |
 
-Every job that installs crates runs behind sfw. `cross` builds fetch through sfw first, then build offline inside the container. Release binaries are built with cargo-auditable, and the build fails if a binary has no embedded dependency list. Jobs whose output is released use no `actions/cache`, so a poisoned cache entry can't end up in a signed binary. The exception is the sfw binary, installed by `osseco/setup-sfw-free`: only `main` saves it to the cache, other runs restore it, and every restore is checked against the sha256 pinned in the action.
+Every job that installs crates runs behind sfw. `cross` builds fetch through sfw first, then build offline inside the container. Release binaries are built with cargo-auditable, and the build fails if a binary has no embedded dependency list. Jobs whose output is released use no `actions/cache`, so a poisoned cache entry can't end up in a signed binary. The exception is the sfw binary, installed by `osseco/setup-sfw-free`: only `main` saves it to the cache, other runs restore it, and every restore is checked against the sha256 pinned in the action. The test jobs, whose output isn't released, cache their cargo registry and `target/` by the same rule: `main` always builds from scratch and saves once per `Cargo.lock` and toolchain, pull requests only restore. Tests run on Linux, macOS and Windows without debug info, so the pricier runners compile less.
 
 ## Versions
 
