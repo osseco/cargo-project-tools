@@ -188,6 +188,7 @@ impl Config {
         config.build.validate("[build]")?;
         validate_targets(config.settings.targets.as_deref(), "[settings]")?;
         for (name, tool) in &config.tool {
+            validate_tool_name(name)?;
             if let Some(build) = &tool.build {
                 build.validate(&format!("[tool.{name}.build]"))?;
             }
@@ -226,6 +227,22 @@ impl Config {
             })
             .collect()
     }
+}
+
+/// A crate name as cargo allows it. Tool names become directory names under
+/// `.project-tools`, so anything else, like `..` or `/`, is refused.
+pub fn validate_tool_name(name: &str) -> Result<()> {
+    let valid = name
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if !valid {
+        bail!("`{name}` is not a valid crate name");
+    }
+    Ok(())
 }
 
 fn validate_targets(targets: Option<&[String]>, context: &str) -> Result<()> {

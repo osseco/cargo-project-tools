@@ -198,6 +198,7 @@ fn write_new_lock(project: &Project, name: &str, lock_text: &str) -> Result<()> 
 
 fn add(project: &Project, config: &Config, args: AddArgs) -> Result<()> {
     let (name, req) = split_spec(&args.spec);
+    config::validate_tool_name(name)?;
     let mut editor = ConfigEditor::open(&project.config_path())?;
     if editor.has_tool(name) {
         bail!("`{name}` is already in project-tools.toml; use `upgrade` to change its version");

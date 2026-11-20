@@ -154,3 +154,18 @@ fn template_with_targets() {
     let config: Config = toml::from_str(&text).unwrap();
     assert_eq!(config.settings.targets.unwrap(), ["a-b-c", "d-e-f"]);
 }
+
+#[test]
+fn tool_names_are_crate_names() {
+    for good in ["cargo-nextest", "x", "_x", "a_b-1"] {
+        validate_tool_name(good).unwrap();
+    }
+    for bad in ["", "-x", "../x", "a/b", "a\\b", ".", "..", "a b", "é"] {
+        assert!(validate_tool_name(bad).is_err(), "{bad}");
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("project-tools.toml");
+    fs::write(&path, "[tool.\"../x\"]\nversion = \"1.0.0\"\n").unwrap();
+    let err = format!("{:#}", Config::load(&path).unwrap_err());
+    assert!(err.contains("not a valid crate name"), "{err}");
+}

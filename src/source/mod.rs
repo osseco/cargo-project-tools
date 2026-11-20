@@ -185,22 +185,28 @@ pub fn scratch(project: &Project, name: &str, origin: &Origin) -> Result<Checkou
 }
 
 /// Directories cargo and rustup search for config when building the package: the package
-/// directory and its parents up to the checkout root. Parents above it are the user's.
-pub fn search_dirs(checkout: &Checkout) -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    for dir in checkout.package_dir.ancestors() {
-        dirs.push(dir.to_path_buf());
-        if dir == checkout.root {
-            break;
-        }
+/// directory and its parents up to the checkout root. Parents above it are the user's, so
+/// nothing outside the root is ever returned.
+pub fn search_dirs(checkout: &Checkout) -> Result<Vec<PathBuf>> {
+    if !checkout.package_dir.starts_with(&checkout.root) {
+        bail!(
+            "package directory {} is outside the checkout {}",
+            checkout.package_dir.display(),
+            checkout.root.display()
+        );
     }
-    dirs
+    Ok(checkout
+        .package_dir
+        .ancestors()
+        .take_while(|dir| dir.starts_with(&checkout.root))
+        .map(Path::to_path_buf)
+        .collect())
 }
 
 /// Remove toolchain files the source ships: `cargo install <crate>` ignores them too, and a
 /// `path` toolchain would run local binaries.
 fn strip_toolchain(checkout: &Checkout) -> Result<()> {
-    for dir in search_dirs(checkout) {
+    for dir in search_dirs(checkout)? {
         for name in ["rust-toolchain", "rust-toolchain.toml"] {
             let path = dir.join(name);
             if path.symlink_metadata().is_ok() {

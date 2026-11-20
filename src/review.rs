@@ -284,11 +284,23 @@ fn script_hash(pkg_dir: &Path, script: &Path) -> Result<String> {
     }
 }
 
+/// Fail when `path` is a link. Registry archives and `cargo vendor` have none, but a git
+/// repository can point a file anywhere.
+fn refuse_link(path: &Path) -> Result<()> {
+    let meta = path
+        .symlink_metadata()
+        .with_context(|| format!("reading {}", path.display()))?;
+    if meta.file_type().is_symlink() {
+        bail!("{} is a link; refusing to build with it", path.display());
+    }
+    Ok(())
+}
+
 /// Cargo config files a build of the checkout would read. Links are refused, and so is
 /// `include`, which would pull in files nobody reviewed.
 fn shipped_configs(checkout: &Checkout) -> Result<Vec<Item>> {
     let mut items = Vec::new();
-    for dir in source::search_dirs(checkout) {
+    for dir in source::search_dirs(checkout)? {
         let cargo_dir = dir.join(".cargo");
         let Ok(meta) = cargo_dir.symlink_metadata() else {
             continue;
@@ -414,6 +426,9 @@ pub fn collect(
                 let rel = t.src_path.strip_prefix(&pkg_dir).with_context(|| {
                     format!("build script of {} is outside its package", pkg.name)
                 })?;
+                // An override or strip writes these; through a link that would be elsewhere.
+                refuse_link(&t.src_path)?;
+                refuse_link(&pkg.manifest_path)?;
                 items.push(Item {
                     kind: Kind::BuildScript,
                     package: pkg.name.clone(),

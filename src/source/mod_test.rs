@@ -33,7 +33,7 @@ fn member_checkout(root: &Path) -> Checkout {
 #[test]
 fn search_dirs_stop_at_checkout_root() {
     let root = Path::new("/x/src");
-    let dirs = search_dirs(&member_checkout(root));
+    let dirs = search_dirs(&member_checkout(root)).unwrap();
     assert_eq!(
         dirs,
         [
@@ -43,6 +43,16 @@ fn search_dirs_stop_at_checkout_root() {
             root.to_path_buf(),
         ]
     );
+}
+
+#[test]
+fn search_dirs_never_leave_the_checkout() {
+    // A package path spelled differently from the root (e.g. through a link) must not walk
+    // up into the user's directories.
+    let mut checkout = member_checkout(Path::new("/x/src"));
+    checkout.package_dir = PathBuf::from("/private/x/src/ws/crates/tool");
+    assert!(search_dirs(&checkout).is_err());
+    assert!(strip_toolchain(&checkout).is_err());
 }
 
 #[test]

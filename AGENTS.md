@@ -101,6 +101,7 @@ Never stage `site/dist/` or `site/node_modules/`.
 - https only for downloads and git. `GIT_ALLOW_PROTOCOL=https` is set for clones.
 - Verify every `.crate` against the index checksum before use.
 - Reject archive paths that escape the crate directory.
+- Tool names must be crate names (they become directory names), and files we rewrite in a tool's source must not be links.
 - Start processes with `Command::arg`, never a shell.
 - Cargo runs from the project root, never from inside a tool's source: config and toolchain files are found from the working directory up. A tool's shipped `rust-toolchain*` files are removed.
 - Reject user values that start with `-` where they're passed as git refs.

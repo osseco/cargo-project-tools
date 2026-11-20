@@ -540,3 +540,21 @@ fn settled_vendor_dir_rebuilds_nothing() {
         .collect();
     assert!(rebuilt.is_empty(), "rebuilt: {rebuilt:#?}");
 }
+
+#[cfg(unix)]
+#[test]
+fn linked_build_scripts_are_refused() {
+    let f = Fixture::new();
+    let build = f.checkout.package_dir.join("build.rs");
+    let elsewhere = f.tmp.path().join("elsewhere.rs");
+    fs::rename(&build, &elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &build).unwrap();
+    let selection = crate::graph::Selection {
+        features: &[],
+        targets: None,
+    };
+    let err = collect("tool", selection, &f.checkout, &f.vendored, true)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("is a link"), "{err}");
+}
