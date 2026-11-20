@@ -288,7 +288,11 @@ fn remove(project: &Project, config: &Config, name: &str) -> Result<()> {
             fs::remove_dir_all(&dir).with_context(|| format!("removing {}", dir.display()))?;
         }
     }
-    for file in [checksum::path(project, name), project.stamp_path(name)] {
+    for file in [
+        checksum::path(project, name),
+        project.stamp_path(name),
+        project.built_path(name),
+    ] {
         if file.exists() {
             fs::remove_file(&file).with_context(|| format!("removing {}", file.display()))?;
         }

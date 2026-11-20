@@ -89,6 +89,13 @@ impl Project {
         self.bin_dir().join(".stamps").join(format!("{name}.json"))
     }
 
+    /// The packages `name` builds, remembered next to its stamp (`graph::built_packages`).
+    pub fn built_path(&self, name: &str) -> PathBuf {
+        self.bin_dir()
+            .join(".stamps")
+            .join(format!("{name}.built.json"))
+    }
+
     pub fn crate_dir(&self, name: &str) -> PathBuf {
         self.tools_dir().join("crates").join(name)
     }

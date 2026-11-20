@@ -60,6 +60,8 @@ The source of each tool is kept in `.project-tools/targets/<tool>/src`. A `.crat
 
 Unlike cargo-audit, it also checks the root package of each lock, which is the tool itself, and git packages by name and version.
 
+Which packages a tool builds comes from `cargo tree` and is kept in `bin/.stamps/<tool>.built.json`, keyed by the tool's version, lock, features and targets. A file that doesn't match is computed again. Like the install stamps, it's trusted as found in `bin`, so restore `bin` only from caches your own runs wrote.
+
 ## Supply chain
 
 - Downloads and git clones are https only, with normal TLS verification.
