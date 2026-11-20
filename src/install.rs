@@ -33,8 +33,8 @@ pub enum Checksums {
     Expect,
 }
 
-/// `cargo install` arguments derived from the tool, its build settings and CLI flags.
-pub fn cargo_args(tool: &Tool, build: &Build, args: &BuildArgs) -> Vec<String> {
+/// The tool's feature selection as cargo arguments.
+pub fn feature_args(tool: &Tool) -> Vec<String> {
     let mut out = Vec::new();
     for f in &tool.features {
         out.extend(["--features".into(), f.clone()]);
@@ -42,6 +42,12 @@ pub fn cargo_args(tool: &Tool, build: &Build, args: &BuildArgs) -> Vec<String> {
     if tool.default_features == Some(false) {
         out.push("--no-default-features".into());
     }
+    out
+}
+
+/// `cargo install` arguments derived from the tool, its build settings and CLI flags.
+pub fn cargo_args(tool: &Tool, build: &Build, args: &BuildArgs) -> Vec<String> {
+    let mut out = feature_args(tool);
     for b in &tool.bins {
         out.extend(["--bin".into(), b.clone()]);
     }

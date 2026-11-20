@@ -63,7 +63,23 @@ fn gate(names: &[&str], deny_warnings: bool, extra_ignore: Option<(&str, &str)>)
     }
     let names: Vec<String> = names.iter().map(ToString::to_string).collect();
     let tools = config.select(&names).unwrap();
-    audit_before_install(&project, &mut auditor, &tools, deny_warnings, "2026-01-01")
+    // Every locked package is built.
+    let mut built_of = |name: &str, _: &config::Tool| {
+        let lock = lock::load(&project.lock_path(name))?;
+        Ok(lock
+            .packages
+            .iter()
+            .map(|p| (p.name.as_str().to_string(), p.version.clone()))
+            .collect())
+    };
+    audit_before_install(
+        &project,
+        &mut auditor,
+        &tools,
+        deny_warnings,
+        "2026-01-01",
+        &mut built_of,
+    )
 }
 
 #[test]

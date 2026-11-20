@@ -3,6 +3,7 @@ mod audit;
 mod checksum;
 mod cli;
 mod config;
+mod graph;
 mod install;
 mod lock;
 mod net;
@@ -368,15 +369,26 @@ fn load_auditor(
     Ok((auditor, open))
 }
 
+/// The packages a tool builds with its features: `graph::built_packages` outside tests.
+type BuiltOf<'a> = dyn FnMut(&str, &config::Tool) -> Result<graph::Built> + 'a;
+
 fn audit_tool(
     project: &Project,
     auditor: &mut audit::Auditor,
     name: &str,
     tool: &config::Tool,
     today: &str,
+    built_of: &mut BuiltOf,
 ) -> Result<audit::Outcome> {
+    let built = built_of(name, tool)?;
     println!("{name}:");
-    let report = auditor.audit(&project.lock_path(name), name, tool.git.is_some())?;
+    let report = auditor.audit(&project.lock_path(name), name, tool.git.is_some(), &built)?;
+    if report.skipped > 0 {
+        println!(
+            "  skipped {} packages not built with these features",
+            report.skipped
+        );
+    }
     let ignore = AuditIgnore::load(&project.audit_ignore_path(name))?;
     let outcome = audit::evaluate(name, &report, &ignore, today, &mut auditor.index);
     if outcome.vulnerabilities == 0 && outcome.warnings == 0 {
@@ -395,8 +407,10 @@ fn audit(project: &Project, config: &Config, args: AuditArgs) -> Result<ExitCode
     let (mut auditor, own) = load_auditor(project, config, policy)?;
     let today = audit::today();
     let (mut vulns, mut warns) = (own, 0);
+    let mut built_of =
+        |name: &str, tool: &config::Tool| graph::built_packages(project, name, tool, false);
     for (name, tool) in tools {
-        let outcome = audit_tool(project, &mut auditor, name, tool, &today)?;
+        let outcome = audit_tool(project, &mut auditor, name, tool, &today, &mut built_of)?;
         vulns += outcome.vulnerabilities;
         warns += outcome.warnings;
     }
@@ -517,7 +531,16 @@ fn audit_gate(
             config::SELF_AUDIT_IGNORE
         );
     }
-    audit_before_install(project, &mut auditor, tools, deny_warnings, &audit::today())
+    let mut built_of =
+        |name: &str, tool: &config::Tool| graph::built_packages(project, name, tool, offline);
+    audit_before_install(
+        project,
+        &mut auditor,
+        tools,
+        deny_warnings,
+        &audit::today(),
+        &mut built_of,
+    )
 }
 
 /// Fails, naming every tool that didn't pass, when a lock has a vulnerability that isn't
@@ -528,10 +551,11 @@ fn audit_before_install(
     tools: &[(&str, &config::Tool)],
     deny_warnings: bool,
     today: &str,
+    built_of: &mut BuiltOf,
 ) -> Result<()> {
     let mut failed = Vec::new();
     for (name, tool) in tools {
-        let outcome = audit_tool(project, auditor, name, tool, today)?;
+        let outcome = audit_tool(project, auditor, name, tool, today, built_of)?;
         if outcome.vulnerabilities > 0 || (deny_warnings && outcome.warnings > 0) {
             failed.push(*name);
         }

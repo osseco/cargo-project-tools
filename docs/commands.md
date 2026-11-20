@@ -141,7 +141,11 @@ Checks every tool's lock against the [RustSec advisory database](https://rustsec
 - crates.io packages, including the tool itself. A vulnerability is an error. An unmaintained, unsound or notice advisory is a warning.
 - git packages, and tools installed from git, by name and version. Advisories are written for crates.io releases, so a match only means "possibly affected" and is a `git-source` warning.
 
-Path packages and other registries aren't checked. Then it:
+Path packages and other registries aren't checked.
+
+Only packages the tool actually builds are checked. A lock lists every optional dependency, whatever the features, so `audit` asks `cargo tree` what the tool's [`features` and `default-features`](configuration.md#toolname) build: normal and build dependencies, for every target. That resolves features without compiling anything or running build scripts, but cargo downloads the dependencies to do it. The rest is reported as `skipped N packages not built with these features`, and an ignore for one of them becomes unused.
+
+Then it:
 
 - drops advisories listed in the tool's [`audit-ignore.toml`](configuration.md#audit-ignore),
 - warns about ignores that no longer match anything, and about expired ones,

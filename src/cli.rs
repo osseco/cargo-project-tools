@@ -233,7 +233,11 @@ impl Command {
             Command::Verify(args) => args.repair,
             _ => matches!(
                 self,
-                Command::Add(_) | Command::Upgrade(_) | Command::Update(_) | Command::Install(_)
+                Command::Add(_)
+                    | Command::Upgrade(_)
+                    | Command::Update(_)
+                    | Command::Install(_)
+                    | Command::Audit(_)
             ),
         }
     }

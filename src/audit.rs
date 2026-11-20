@@ -8,6 +8,7 @@ use semver::{Version, VersionReq};
 
 use crate::cli::SUBCOMMAND;
 use crate::config::{AuditIgnore, IgnoreEntry, SELF_AUDIT_IGNORE};
+use crate::graph::Built;
 use crate::source::registry::{self, IndexCache};
 
 /// Kind of the warning for an advisory matched on a git package by name and version only.
@@ -19,6 +20,8 @@ pub struct Report {
     pub vulnerabilities: Vec<Vulnerability>,
     /// By kind: `unmaintained`, `unsound`, `notice`, `yanked`, `git-source`.
     pub warnings: BTreeMap<String, Vec<Warning>>,
+    /// Lock packages left out because the tool's features don't build them.
+    pub skipped: usize,
 }
 
 #[derive(Debug)]
@@ -222,12 +225,23 @@ impl Auditor {
         self_check(&self.db)
     }
 
-    /// `root` is the tool's package name; `git_tool` whether it's installed from git.
-    pub fn audit(&mut self, lock_path: &Path, root: &str, git_tool: bool) -> Result<Report> {
+    /// `root` is the tool's package name; `git_tool` whether it's installed from git. Only
+    /// the lock's packages in `built` are checked.
+    pub fn audit(
+        &mut self,
+        lock_path: &Path,
+        root: &str,
+        git_tool: bool,
+        built: &Built,
+    ) -> Result<Report> {
         let text = std::fs::read_to_string(lock_path)
             .with_context(|| format!("reading {}", lock_path.display()))?;
-        let lock = crate::lock::parse(&text)?;
+        let mut lock = crate::lock::parse(&text)?;
+        let total = lock.packages.len();
+        lock.packages
+            .retain(|p| built.contains(&(p.name.as_str().to_string(), p.version.clone())));
         let mut report = scan(&self.db, &lock, root, git_tool);
+        report.skipped = total - lock.packages.len();
         let yanked = yanked(&lock, root, git_tool, &mut self.index);
         if !yanked.is_empty() {
             report
