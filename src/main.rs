@@ -576,27 +576,26 @@ fn check_targets(
     approve: bool,
 ) -> Result<bool> {
     let host = targets::host()?;
-    let mut missing: Vec<(Option<&str>, Vec<String>)> = Vec::new();
+    let mut missing: Vec<(&str, Option<&str>, Vec<String>)> = Vec::new();
     for (name, tool) in tools {
         let build = config.build.merged(tool.build.as_ref());
         let build_target = build_args.target.as_deref().or(build.target.as_deref());
         let absent = targets::missing(&host, build_target, config.targets_for(tool));
-        if absent.is_empty() {
-            continue;
+        if !absent.is_empty() {
+            missing.push((name, tool.targets.is_some().then_some(*name), absent));
         }
-        if !approve {
-            bail!(
-                "{} isn't an approved target for {name}; rerun with --approve-target to add it",
-                absent.join(", ")
-            );
-        }
-        missing.push((tool.targets.is_some().then_some(*name), absent));
     }
     if missing.is_empty() {
         return Ok(false);
     }
+    if !approve {
+        for (name, _, absent) in &missing {
+            println!("  {name}: {} isn't an approved target", absent.join(", "));
+        }
+        bail!("rerun with --approve-target to add the missing targets");
+    }
     let mut editor = ConfigEditor::open(&project.config_path())?;
-    for (tool, absent) in &missing {
+    for (_, tool, absent) in &missing {
         editor.add_targets(*tool, absent);
         let place = tool.map_or("[settings]".to_string(), |t| format!("[tool.{t}]"));
         println!("Added {} to {place} targets", absent.join(", "));

@@ -63,3 +63,24 @@ fn anything_but_source_replacement_is_refused() {
     assert!(source_config("[source.crates-io]\nreplace-with = \"x\"\n", true).is_err());
     assert!(source_config("not toml [", true).is_err());
 }
+
+#[cfg(unix)]
+#[test]
+fn settle_handles_read_only_files() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("vendor");
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("ro.rs");
+    fs::write(&file, "").unwrap();
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o444)).unwrap();
+    settle(&Vendored {
+        dir,
+        config_args: Vec::new(),
+    })
+    .unwrap();
+    assert_eq!(
+        fs::metadata(&file).unwrap().modified().unwrap(),
+        SystemTime::UNIX_EPOCH + SETTLED
+    );
+}

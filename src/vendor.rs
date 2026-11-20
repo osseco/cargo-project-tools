@@ -78,15 +78,13 @@ pub fn settle(vendored: &Vendored) -> Result<()> {
             if kind.is_dir() {
                 walk(&path, time)?;
             } else if kind.is_file() {
-                fs::File::options()
-                    .write(true)
-                    .open(&path)
+                open_for_times(&path)
                     .and_then(|f| f.set_modified(time))
                     .with_context(|| format!("setting the time of {}", path.display()))?;
             }
         }
         // Build scripts also watch directories, whose time is when they were created.
-        open_dir(dir)
+        open_for_times(dir)
             .and_then(|d| d.set_modified(time))
             .with_context(|| format!("setting the time of {}", dir.display()))
     }
@@ -96,20 +94,21 @@ pub fn settle(vendored: &Vendored) -> Result<()> {
     walk(&vendored.dir, SystemTime::UNIX_EPOCH + SETTLED)
 }
 
-/// A directory handle that can have its times set.
+/// A handle to a file or directory that can have its times set. On Unix, owning it is
+/// enough, so read-only files work too.
 #[cfg(unix)]
-fn open_dir(dir: &Path) -> std::io::Result<fs::File> {
-    fs::File::open(dir)
+fn open_for_times(path: &Path) -> std::io::Result<fs::File> {
+    fs::File::open(path)
 }
 
 #[cfg(windows)]
-fn open_dir(dir: &Path) -> std::io::Result<fs::File> {
+fn open_for_times(path: &Path) -> std::io::Result<fs::File> {
     use std::os::windows::fs::OpenOptionsExt;
     const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
     fs::File::options()
         .write(true)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-        .open(dir)
+        .open(path)
 }
 
 /// The source replacement `cargo vendor` prints, checked to be only that. `None` when the
