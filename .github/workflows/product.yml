@@ -106,11 +106,23 @@ jobs:
           path: sbom-out/
           if-no-files-found: error
 
+  # Every OS the tool is released for: paths, file times and process handling differ.
   test:
     needs: vuln-check
+    name: Test (${{ matrix.os }})
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    env:
+      # sfw's local CA has no CRL/OCSP endpoint; schannel can't check revocation.
+      CARGO_HTTP_CHECK_REVOKE: ${{ startsWith(matrix.os, 'windows') && 'false' || 'true' }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
