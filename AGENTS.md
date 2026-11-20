@@ -38,7 +38,7 @@ Agents never commit. The maintainer reviews and signs every commit; the signing 
 
 - Never run `git commit`, `git tag`, `git push`, or anything that rewrites history (`rebase`, `reset --hard`, `commit --amend`, force pushes).
 - Work in reviewable chunks. At the end of each chunk, stage exactly that chunk's files with explicit paths (`git add <path>…`, never `git add -A` or `git add .`), show `git diff --cached --stat`, and propose a commit message. Staged means "commit this". Then wait until the maintainer has committed before starting the next chunk. On requested changes, edit and re-stage.
-- Staging is the only git write an agent does.
+- Staging is the only commit-related git write an agent does. Creating and switching branches is fine. Anything that makes a commit (`cherry-pick`, `merge`, `rebase`), and `fetch`, `pull` and `push`, is the maintainer's: give them the exact command.
 - Pull requests are squash-merged and the PR title becomes the commit on `main`, so PR titles follow the same format.
 
 Messages use [Conventional Commits](https://www.conventionalcommits.org/):
