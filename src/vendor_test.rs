@@ -31,6 +31,32 @@ fn missing_config_with_dependencies_fails() {
 }
 
 #[test]
+fn settle_gives_every_vendored_file_the_same_old_time() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("vendor");
+    fs::create_dir_all(dir.join("dep-1.0.0/src")).unwrap();
+    fs::write(dir.join("dep-1.0.0/build.rs"), "").unwrap();
+    fs::write(dir.join("dep-1.0.0/src/lib.rs"), "").unwrap();
+    let vendored = Vendored {
+        dir: dir.clone(),
+        config_args: Vec::new(),
+    };
+
+    settle(&vendored).unwrap();
+
+    let settled = SystemTime::UNIX_EPOCH + SETTLED;
+    for file in [
+        "dep-1.0.0/build.rs",
+        "dep-1.0.0/src/lib.rs",
+        "dep-1.0.0/src",
+        "",
+    ] {
+        let time = fs::metadata(dir.join(file)).unwrap().modified().unwrap();
+        assert_eq!(time, settled, "{file}");
+    }
+}
+
+#[test]
 fn anything_but_source_replacement_is_refused() {
     let extra = format!("{SNIPPET}\n[build]\nrustc-wrapper = \"x\"\n");
     assert!(source_config(&extra, true).is_err());

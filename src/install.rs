@@ -302,6 +302,7 @@ pub fn install(
         opts.approve_build,
     )?;
     clean_if_changed(&target_dir, &changes)?;
+    vendor::settle(&vendored)?;
     // `--approve-build` may have just written the review file.
     let key = stamp_key(
         name,

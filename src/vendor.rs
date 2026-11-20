@@ -1,5 +1,6 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result, bail};
 
@@ -58,6 +59,55 @@ pub fn vendor(
         None => Vec::new(),
     };
     Ok(Vendored { dir, config_args })
+}
+
+/// When every vendored file was last modified, as far as cargo can tell.
+const SETTLED: Duration = Duration::from_secs(946_684_800); // 2000-01-01
+
+/// Give every vendored file the same old modification time. Vendoring copies them afresh,
+/// so build scripts that watch their files would otherwise run again on every install and
+/// rebuild what depends on them. Content changes from the review clean the build instead.
+pub fn settle(vendored: &Vendored) -> Result<()> {
+    fn walk(dir: &Path, time: SystemTime) -> Result<()> {
+        for entry in fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            let path = entry.path();
+            if kind.is_dir() {
+                walk(&path, time)?;
+            } else if kind.is_file() {
+                fs::File::options()
+                    .write(true)
+                    .open(&path)
+                    .and_then(|f| f.set_modified(time))
+                    .with_context(|| format!("setting the time of {}", path.display()))?;
+            }
+        }
+        // Build scripts also watch directories, whose time is when they were created.
+        open_dir(dir)
+            .and_then(|d| d.set_modified(time))
+            .with_context(|| format!("setting the time of {}", dir.display()))
+    }
+    if !vendored.dir.exists() {
+        return Ok(());
+    }
+    walk(&vendored.dir, SystemTime::UNIX_EPOCH + SETTLED)
+}
+
+/// A directory handle that can have its times set.
+#[cfg(unix)]
+fn open_dir(dir: &Path) -> std::io::Result<fs::File> {
+    fs::File::open(dir)
+}
+
+#[cfg(windows)]
+fn open_dir(dir: &Path) -> std::io::Result<fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    fs::File::options()
+        .write(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(dir)
 }
 
 /// The source replacement `cargo vendor` prints, checked to be only that. `None` when the
