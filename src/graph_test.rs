@@ -40,6 +40,16 @@ fn unexpected_output_fails() {
 }
 
 #[test]
+fn every_target_or_the_chosen_ones() {
+    assert_eq!(target_args(None), ["--target", "all"]);
+    let chosen = ["a".to_string(), "b".to_string()];
+    assert_eq!(
+        target_args(Some(&chosen)),
+        ["--target", "a", "--target", "b"]
+    );
+}
+
+#[test]
 fn missing_root_fails() {
     assert!(parse_tree("", "mytool").is_err());
     assert!(parse_tree("serde v1.0.0\n", "mytool").is_err());

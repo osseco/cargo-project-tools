@@ -13,6 +13,7 @@ mod review;
 mod selfinstall;
 mod sfw;
 mod source;
+mod targets;
 #[cfg(test)]
 mod test_registry;
 mod vendor;
@@ -92,7 +93,7 @@ fn run() -> Result<ExitCode> {
 
     match cli.command {
         Command::Init => unreachable!(),
-        Command::Add(args) => add(&project, args)?,
+        Command::Add(args) => add(&project, &config, args)?,
         Command::Remove { name } => remove(&project, &config, &name)?,
         Command::Upgrade(args) => upgrade(&project, &config, args)?,
         Command::Update(args) => update(&project, &config, args)?,
@@ -148,7 +149,7 @@ fn write_new_lock(project: &Project, name: &str, lock_text: &str) -> Result<()> 
     Ok(())
 }
 
-fn add(project: &Project, args: AddArgs) -> Result<()> {
+fn add(project: &Project, config: &Config, args: AddArgs) -> Result<()> {
     let (name, req) = split_spec(&args.spec);
     let mut editor = ConfigEditor::open(&project.config_path())?;
     if editor.has_tool(name) {
@@ -181,7 +182,14 @@ fn add(project: &Project, args: AddArgs) -> Result<()> {
     };
     lock::check_root(&lock::parse(&lock_text)?, name, &checkout.version)?;
     let features = install::feature_flags(&args.features, !args.no_default_features);
-    review_build(project, name, &features, &checkout, args.approve_build)?;
+    review_build(
+        project,
+        name,
+        &features,
+        config.settings.targets.as_deref(),
+        &checkout,
+        args.approve_build,
+    )?;
     write_new_lock(project, name, &lock_text)?;
 
     let mut entries: Vec<(&str, toml_edit::Value)> =
@@ -309,6 +317,7 @@ fn upgrade(project: &Project, config: &Config, args: UpgradeArgs) -> Result<()> 
         project,
         name,
         &install::feature_args(tool),
+        config.targets_for(tool),
         &checkout,
         args.approve_build,
     )?;
@@ -362,6 +371,7 @@ fn update(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
             project,
             name,
             &install::feature_args(tool),
+            config.targets_for(tool),
             &checkout,
             args.approve_build,
         )?;
@@ -381,11 +391,15 @@ fn review_build(
     project: &Project,
     name: &str,
     features: &[String],
+    targets: Option<&[String]>,
     checkout: &source::Checkout,
     approve: bool,
 ) -> Result<()> {
     let vendored = vendor::vendor(project, name, checkout, false, &[])?;
-    review::review(project, name, features, checkout, &vendored, false, approve)?;
+    let selection = graph::Selection { features, targets };
+    review::review(
+        project, name, selection, checkout, &vendored, false, approve,
+    )?;
     Ok(())
 }
 
@@ -447,8 +461,9 @@ fn audit(project: &Project, config: &Config, args: AuditArgs) -> Result<ExitCode
     let (mut auditor, own) = load_auditor(project, config, policy)?;
     let today = audit::today();
     let (mut vulns, mut warns) = (own, 0);
-    let mut built_of =
-        |name: &str, tool: &config::Tool| graph::built_packages(project, name, tool, false);
+    let mut built_of = |name: &str, tool: &config::Tool| {
+        graph::built_packages(project, name, tool, config.targets_for(tool), false)
+    };
     for (name, tool) in tools {
         let outcome = audit_tool(project, &mut auditor, name, tool, &today, &mut built_of)?;
         vulns += outcome.vulnerabilities;
@@ -465,6 +480,14 @@ fn audit(project: &Project, config: &Config, args: AuditArgs) -> Result<ExitCode
 
 /// Audit every selected tool's lock first, so nothing is built when one of them fails.
 fn install(project: &Project, config: &Config, args: &InstallArgs) -> Result<()> {
+    let tools = config.select(&args.names)?;
+    let reloaded;
+    let config = if check_targets(project, config, &tools, &args.build, args.approve_target)? {
+        reloaded = Config::load(&project.config_path())?;
+        &reloaded
+    } else {
+        config
+    };
     let tools = config.select(&args.names)?;
     if !args.no_audit {
         audit_gate(
@@ -487,10 +510,51 @@ fn install(project: &Project, config: &Config, args: &InstallArgs) -> Result<()>
                 force: args.force,
                 approve_build: args.approve_build,
                 checksums: install::Checksums::Write,
+                targets: config.targets_for(tool),
             },
         )?;
     }
     Ok(())
+}
+
+/// Make sure this machine, and `--target` or `[build].target`, are among each tool's
+/// targets. Without `approve` a missing one is an error; with it, it's added to
+/// project-tools.toml, to the tool's own list when it has one. Returns whether it changed.
+fn check_targets(
+    project: &Project,
+    config: &Config,
+    tools: &[(&str, &config::Tool)],
+    build_args: &cli::BuildArgs,
+    approve: bool,
+) -> Result<bool> {
+    let host = targets::host()?;
+    let mut missing: Vec<(Option<&str>, Vec<String>)> = Vec::new();
+    for (name, tool) in tools {
+        let build = config.build.merged(tool.build.as_ref());
+        let build_target = build_args.target.as_deref().or(build.target.as_deref());
+        let absent = targets::missing(&host, build_target, config.targets_for(tool));
+        if absent.is_empty() {
+            continue;
+        }
+        if !approve {
+            bail!(
+                "{} isn't an approved target for {name}; rerun with --approve-target to add it",
+                absent.join(", ")
+            );
+        }
+        missing.push((tool.targets.is_some().then_some(*name), absent));
+    }
+    if missing.is_empty() {
+        return Ok(false);
+    }
+    let mut editor = ConfigEditor::open(&project.config_path())?;
+    for (tool, absent) in &missing {
+        editor.add_targets(*tool, absent);
+        let place = tool.map_or("[settings]".to_string(), |t| format!("[tool.{t}]"));
+        println!("Added {} to {place} targets", absent.join(", "));
+    }
+    editor.save()?;
+    Ok(true)
 }
 
 /// Check every selected tool's binaries; with `--repair`, rebuild the ones that don't match
@@ -517,6 +581,7 @@ fn verify(project: &Project, config: &Config, args: &VerifyArgs) -> Result<ExitC
         }
     }
     if args.repair && !repairable.is_empty() {
+        check_targets(project, config, &repairable, &args.build, false)?;
         if !args.no_audit {
             audit_gate(
                 project,
@@ -538,6 +603,7 @@ fn verify(project: &Project, config: &Config, args: &VerifyArgs) -> Result<ExitC
                     force: true,
                     approve_build: false,
                     checksums: install::Checksums::Expect,
+                    targets: config.targets_for(tool),
                 },
             );
             match repaired {
@@ -577,8 +643,9 @@ fn audit_gate(
             config::SELF_AUDIT_IGNORE
         );
     }
-    let mut built_of =
-        |name: &str, tool: &config::Tool| graph::built_packages(project, name, tool, offline);
+    let mut built_of = |name: &str, tool: &config::Tool| {
+        graph::built_packages(project, name, tool, config.targets_for(tool), offline)
+    };
     audit_before_install(
         project,
         &mut auditor,

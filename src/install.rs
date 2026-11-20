@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::checksum;
 use crate::cli::BuildArgs;
 use crate::config::{Build, Tool};
+use crate::graph;
 use crate::lock;
 use crate::process;
 use crate::project::Project;
@@ -37,12 +38,14 @@ pub enum Checksums {
 
 /// How `install` treats a tool beyond its build settings.
 #[derive(Debug, Clone, Copy)]
-pub struct Options {
+pub struct Options<'a> {
     /// Rebuild even when the stamp is up to date.
     pub force: bool,
     /// Record new or changed build-time code in the review file.
     pub approve_build: bool,
     pub checksums: Checksums,
+    /// The targets build-time code is reviewed for; all when `None`.
+    pub targets: Option<&'a [String]>,
 }
 
 /// Cargo only fingerprints files of path packages, so after an override or strip in vendored
@@ -263,7 +266,9 @@ pub fn install(
     let key = stamp_key(name, tool, &lock_text, &review_digest, &cargo_args);
     let target_dir = project.target_dir(name);
     let stamp_path = project.stamp_path(name);
+    // Approving reviews now, even when the binaries are current.
     if !opts.force
+        && !opts.approve_build
         && let Some(stamp) = read_stamp(&stamp_path)
         && stamp.key == key
         && !stamp.bins.is_empty()
@@ -292,10 +297,15 @@ pub fn install(
     );
     checkout.put_lock(&lock_path)?;
     let vendored = vendor::vendor(project, name, &checkout, args.offline, &[])?;
+    let features = feature_args(tool);
+    let selection = graph::Selection {
+        features: &features,
+        targets: opts.targets,
+    };
     let changes = review::review(
         project,
         name,
-        &feature_args(tool),
+        selection,
         &checkout,
         &vendored,
         args.offline,

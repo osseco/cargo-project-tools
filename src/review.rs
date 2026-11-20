@@ -356,19 +356,19 @@ struct MetaTarget {
     src_path: PathBuf,
 }
 
-/// Every build script and proc macro the tool builds with `features`, and the cargo config
+/// Every build script and proc macro the tool builds for `selection`, and the cargo config
 /// it ships. Uses `cargo tree` and `cargo metadata` on the vendored sources: nothing is
 /// compiled and nothing runs.
 pub fn collect(
     name: &str,
-    features: &[String],
+    selection: graph::Selection,
     checkout: &Checkout,
     vendored: &Vendored,
     offline: bool,
 ) -> Result<Vec<Item>> {
     let mut items = shipped_configs(checkout)?;
     let manifest = checkout.manifest_path();
-    let built = graph::tree(&manifest, features, &vendored.config_args, offline, name)?;
+    let built = graph::tree(&manifest, selection, &vendored.config_args, offline, name)?;
 
     let mut cmd = process::cargo();
     cmd.args([
@@ -713,13 +713,13 @@ fn drop_checksum(pkg_dir: &Path, rel: &str) -> Result<()> {
 pub fn review(
     project: &Project,
     name: &str,
-    features: &[String],
+    selection: graph::Selection,
     checkout: &Checkout,
     vendored: &Vendored,
     offline: bool,
     approve: bool,
 ) -> Result<String> {
-    let items = collect(name, features, checkout, vendored, offline)?;
+    let items = collect(name, selection, checkout, vendored, offline)?;
     let decided = check(&project.review_path(name), items, approve, &project.root)?;
     apply(&decided, &project.crate_dir(name))
 }

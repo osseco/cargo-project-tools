@@ -97,7 +97,8 @@ After building, it writes the sha256 of each of the tool's binaries to `.project
 | Option | Meaning |
 | --- | --- |
 | `--force` | Rebuild even when nothing changed |
-| `--approve-build` | Record new or changed build-time code in [`build-review.toml`](build-review.md) |
+| `--approve-build` | Record new or changed build-time code in [`build-review.toml`](build-review.md); reviews even when the tool is up to date |
+| `--approve-target` | Add this machine, and `--target`, to the tool's [`targets`](configuration.md#targets) when they aren't listed |
 | `--no-audit` | Skip the audit |
 | `--deny-warnings` | Also refuse to build on warnings that aren't ignored |
 | `--profile <name>`, `--debug` | Override `[build].profile` |

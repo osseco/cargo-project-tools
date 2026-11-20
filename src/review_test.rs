@@ -396,7 +396,15 @@ impl Fixture {
     }
 
     fn collect(&self) -> Vec<Item> {
-        collect("tool", &[], &self.checkout, &self.vendored, true).unwrap()
+        self.collect_for(None)
+    }
+
+    fn collect_for(&self, targets: Option<&[String]>) -> Vec<Item> {
+        let selection = crate::graph::Selection {
+            features: &[],
+            targets,
+        };
+        collect("tool", selection, &self.checkout, &self.vendored, true).unwrap()
     }
 
     fn marker(&self, name: &str) -> bool {
@@ -448,6 +456,28 @@ fn collect_finds_build_time_code_in_vendored_sources() {
             "build-script winonly true",
             "proc-macro macro true",
         ]
+    );
+}
+
+fn packages(items: &[Item]) -> Vec<&str> {
+    items.iter().map(|i| i.package.as_str()).collect()
+}
+
+#[test]
+fn chosen_targets_leave_out_code_for_other_platforms() {
+    let f = Fixture::new();
+    let mac_and_linux = [
+        "aarch64-apple-darwin".to_string(),
+        "x86_64-unknown-linux-gnu".to_string(),
+    ];
+    assert_eq!(
+        packages(&f.collect_for(Some(&mac_and_linux))),
+        ["scripted", "tool", "macro"]
+    );
+    let windows = ["x86_64-pc-windows-msvc".to_string()];
+    assert_eq!(
+        packages(&f.collect_for(Some(&windows))),
+        ["scripted", "tool", "winonly", "macro"]
     );
 }
 

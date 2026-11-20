@@ -161,6 +161,9 @@ pub struct InstallArgs {
     /// build-review.toml. Review them first.
     #[arg(long)]
     pub approve_build: bool,
+    /// Add this machine (and --target) to the tool's targets when it isn't one of them.
+    #[arg(long)]
+    pub approve_target: bool,
     /// Don't audit the locks before building.
     #[arg(long)]
     pub no_audit: bool,

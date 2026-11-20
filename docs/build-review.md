@@ -10,7 +10,7 @@ Building a tool runs code before the tool itself ever runs: build scripts and pr
 | `proc-macro` | Every proc-macro crate it builds | The crate checksum from `Cargo.lock`; for a git package its commit |
 | `cargo-config` | `.cargo/config.toml` and `.cargo/config` in the tool's source, from the package directory up to the root of the checkout | sha256 of the file |
 
-Only what the tool builds with its [`features` and `default-features`](configuration.md#toolname) counts, for every target, so one review holds on every platform. That includes Windows-only crates when you build on Linux.
+Only what the tool builds with its [`features` and `default-features`](configuration.md#toolname) counts, for the [`targets`](configuration.md#targets) you chose, so one review holds on each of them. Without `targets` that's every target, including Windows-only crates when you only build on Linux. Installing on a machine that isn't listed needs `--approve-target`, and then usually `--approve-build` for what that target adds.
 
 Cargo never reads config from inside dependencies, and a config with `include`, or one that is a link, is refused. A shipped `rust-toolchain` file is always removed instead.
 
@@ -63,7 +63,7 @@ When something isn't recorded, `add`, `upgrade`, `update` and `install` stop bef
 error: 1 piece of build-time code isn't recorded in .project-tools/crates/cargo-nextest/build-review.toml; review it, then rerun with --approve-build
 ```
 
-After reviewing, run the same command with `--approve-build`. New pieces are recorded as `approve`. A changed piece keeps its action and file, and its entry is updated in place, so comments next to it stay. Entries that no longer match anything are removed. Without the flag they're only reported.
+After reviewing, run the same command with `--approve-build`. New pieces are recorded as `approve`. A changed piece keeps its action and file, and its entry is updated in place, so comments next to it stay. Entries that no longer match anything are removed, for example after you narrow `targets`. Without the flag they're only reported. `install --approve-build` reviews even when the tool is up to date.
 
 To override or strip something, edit its `action` (and `file`) and run `install`. A changed decision makes `install` rebuild the tool from scratch, since cargo doesn't notice edits to vendored sources.
 
