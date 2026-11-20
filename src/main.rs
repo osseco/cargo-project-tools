@@ -9,6 +9,7 @@ mod lock;
 mod net;
 mod process;
 mod project;
+mod review;
 mod selfinstall;
 mod sfw;
 mod source;
@@ -169,7 +170,7 @@ fn add(project: &Project, args: AddArgs) -> Result<()> {
             version_req: req.map(str::to_string),
         },
     };
-    let checkout = source::checkout(project, name, &origin, Dest::Temp)?;
+    let checkout = source::checkout(project, name, &origin, review_dest(project, name))?;
     let (lock_text, start) =
         lock::shipped_or_generated(&checkout.manifest_path(), &checkout.lock_path(), &[])?;
     let kind = match start {
@@ -177,6 +178,8 @@ fn add(project: &Project, args: AddArgs) -> Result<()> {
         lock::Start::Generated => "a generated Cargo.lock (it ships none)",
     };
     lock::check_root(&lock::parse(&lock_text)?, name, &checkout.version)?;
+    let features = install::feature_flags(&args.features, !args.no_default_features);
+    review_build(project, name, &features, &checkout, args.approve_build)?;
     write_new_lock(project, name, &lock_text)?;
 
     let mut entries: Vec<(&str, toml_edit::Value)> =
@@ -252,7 +255,7 @@ fn upgrade(project: &Project, config: &Config, args: UpgradeArgs) -> Result<()> 
             Origin::Git { url, reference }
         }
     };
-    let checkout = source::checkout(project, name, &origin, Dest::Temp)?;
+    let checkout = source::checkout(project, name, &origin, review_dest(project, name))?;
     let ours = lock::load(&project.lock_path(name))?;
     let manifest = checkout.manifest_path();
     let lock_path = checkout.lock_path();
@@ -300,6 +303,13 @@ fn upgrade(project: &Project, config: &Config, args: UpgradeArgs) -> Result<()> 
     lock::check_root(&final_lock, name, &checkout.version)?;
     println!("Changes to {name}'s lock:");
     lock::print_diff(&lock::diff(&ours, &final_lock));
+    review_build(
+        project,
+        name,
+        &install::feature_args(tool),
+        &checkout,
+        args.approve_build,
+    )?;
     fs::copy(&lock_path, project.lock_path(name))?;
 
     let mut editor = ConfigEditor::open(&project.config_path())?;
@@ -324,8 +334,9 @@ fn update(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
     let ours = lock::load(&ours_path)?;
     lock::check_root(&ours, name, &tool.version)?;
 
-    let scratch = source::scratch(project, name, &Origin::of(tool))?;
-    scratch.put_lock(&ours_path)?;
+    // A full checkout rather than a scratch project: the review needs the real build scripts.
+    let checkout = source::checkout(project, name, &Origin::of(tool), review_dest(project, name))?;
+    checkout.put_lock(&ours_path)?;
     let mut cargo_args = Vec::new();
     for dep in &args.deps {
         cargo_args.extend(["-p".to_string(), dep.clone()]);
@@ -337,16 +348,42 @@ fn update(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
         cargo_args.push("--recursive".into());
     }
     // Only a successful resolve reaches the copy below, so a failure leaves our lock as is.
-    lock::cargo_update(&scratch.manifest_path(), &cargo_args)?;
+    lock::cargo_update(&checkout.manifest_path(), &cargo_args)?;
 
-    let updated = lock::load(&scratch.lock_path())?;
+    let updated = lock::load(&checkout.lock_path())?;
     lock::check_root(&updated, name, &tool.version)?;
     let changes = lock::diff(&ours, &updated);
     println!("Changes to {name}'s lock:");
     lock::print_diff(&changes);
     if !changes.is_empty() {
-        fs::copy(scratch.lock_path(), &ours_path)?;
+        review_build(
+            project,
+            name,
+            &install::feature_args(tool),
+            &checkout,
+            args.approve_build,
+        )?;
+        fs::copy(checkout.lock_path(), &ours_path)?;
     }
+    Ok(())
+}
+
+/// Where `add`, `upgrade` and `update` check out the tool: the place `install` builds from,
+/// so the files a review lists are still there afterwards.
+fn review_dest(project: &Project, name: &str) -> Dest {
+    Dest::Fixed(project.target_dir(name).join("src"))
+}
+
+/// Review the build-time code that the lock in `checkout` brings in, before it's recorded.
+fn review_build(
+    project: &Project,
+    name: &str,
+    features: &[String],
+    checkout: &source::Checkout,
+    approve: bool,
+) -> Result<()> {
+    let vendored = vendor::vendor(project, name, checkout, false)?;
+    review::review(project, name, features, checkout, &vendored, false, approve)?;
     Ok(())
 }
 
@@ -444,8 +481,11 @@ fn install(project: &Project, config: &Config, args: &InstallArgs) -> Result<()>
             tool,
             &build,
             &args.build,
-            args.force,
-            install::Checksums::Write,
+            install::Options {
+                force: args.force,
+                approve_build: args.approve_build,
+                checksums: install::Checksums::Write,
+            },
         )?;
     }
     Ok(())
@@ -492,8 +532,11 @@ fn verify(project: &Project, config: &Config, args: &VerifyArgs) -> Result<ExitC
                 tool,
                 &build,
                 &args.build,
-                true,
-                install::Checksums::Expect,
+                install::Options {
+                    force: true,
+                    approve_build: false,
+                    checksums: install::Checksums::Expect,
+                },
             );
             match repaired {
                 Ok(()) => {

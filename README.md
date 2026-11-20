@@ -58,6 +58,7 @@ Add `.project-tools/bin` to your `PATH`. Commit `project-tools.toml` and `.proje
 - [How it works](docs/how-it-works.md)
 - [Commands](docs/commands.md)
 - [Configuration](docs/configuration.md)
+- [Build review](docs/build-review.md)
 - [CI](docs/ci.md)
 - [Verifying a release](docs/verifying-releases.md)
 

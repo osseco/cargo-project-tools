@@ -7,6 +7,7 @@ export const ORDER = [
   "how-it-works",
   "commands",
   "configuration",
+  "build-review",
   "ci",
   "verifying-releases",
 ];

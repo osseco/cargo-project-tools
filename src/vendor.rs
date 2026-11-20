@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 
@@ -9,6 +10,7 @@ use crate::source::Checkout;
 
 /// A tool's dependencies, copied out of cargo's shared caches into a directory of our own.
 pub struct Vendored {
+    pub dir: PathBuf,
     /// Arguments that point cargo at the vendor directory instead of crates.io and git.
     pub config_args: Vec<String>,
 }
@@ -55,7 +57,7 @@ pub fn vendor(
         }
         None => Vec::new(),
     };
-    Ok(Vendored { config_args })
+    Ok(Vendored { dir, config_args })
 }
 
 /// The source replacement `cargo vendor` prints, checked to be only that. `None` when the

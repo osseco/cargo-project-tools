@@ -10,5 +10,6 @@ Source: https://github.com/osseco/cargo-project-tools
 - [How it works](https://osseco.github.io/cargo-project-tools/docs/how-it-works.md): why own locks, the .project-tools layout, what to commit
 - [Commands](https://osseco.github.io/cargo-project-tools/docs/commands.md): every command and option
 - [Configuration](https://osseco.github.io/cargo-project-tools/docs/configuration.md): project-tools.toml, audit-ignore.toml, sfw
+- [Build review](https://osseco.github.io/cargo-project-tools/docs/build-review.md): approving, overriding or stripping build scripts, proc macros and shipped cargo config
 - [CI](https://osseco.github.io/cargo-project-tools/docs/ci.md): GitHub Actions caching and auditing
 - [Verifying a release](https://osseco.github.io/cargo-project-tools/docs/verifying-releases.md): attestations, cosign, checksums

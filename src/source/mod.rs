@@ -47,6 +47,19 @@ pub struct Checkout {
 }
 
 impl Checkout {
+    /// A checkout of files already on disk.
+    #[cfg(test)]
+    pub fn at(root: PathBuf, workspace_root: PathBuf, package_dir: PathBuf) -> Checkout {
+        Checkout {
+            root,
+            workspace_root,
+            package_dir,
+            version: "1.0.0".into(),
+            commit: None,
+            _tmp: None,
+        }
+    }
+
     pub fn lock_path(&self) -> PathBuf {
         self.workspace_root.join("Cargo.lock")
     }

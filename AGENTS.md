@@ -85,6 +85,7 @@ Never stage `site/dist/` or `site/node_modules/`.
 - `src/source/mod.rs`: full checkouts and minimal scratch projects (manifest + target stubs).
 - `src/lock.rs`: lock parsing, root check, diff, `cargo update`.
 - `src/install.rs`: `cargo install --path` invocation, build settings → `--config`, install stamps.
+- `src/review.rs`: `build-review.toml`: collects build scripts, proc macros and shipped cargo config, checks them against the file, applies overrides and strips.
 - `src/vendor.rs`: `cargo vendor` into `targets/<tool>/vendor`; builds use it through source replacement.
 - `src/graph.rs`: which locked packages a tool builds with its features (`cargo tree` on a scratch copy).
 - `src/audit.rs`: matches locks against the advisory database with rustsec (root and git packages included), our own yanked check, ignore list, fix suggestions.
@@ -104,6 +105,7 @@ Never stage `site/dist/` or `site/node_modules/`.
 - Reject user values that start with `-` where they're passed as git refs.
 - Never weaken TLS verification. Extra trust comes only from `SSL_CERT_FILE` (set by sfw).
 - `install` always passes `--locked`, so cargo refuses a lock that doesn't fit the manifest.
+- Build-time code (build scripts, proc macros, a tool's shipped `.cargo/config*`) is built only when recorded in the tool's `build-review.toml`. Collecting it uses `cargo tree`, `cargo metadata` and `cargo vendor`, which compile and run nothing.
 
 ## GitHub Actions
 

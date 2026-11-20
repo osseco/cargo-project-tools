@@ -29,12 +29,21 @@ pub fn built_packages(project: &Project, name: &str, tool: &Tool, offline: bool)
     tree(
         &scratch.manifest_path(),
         &install::feature_args(tool),
+        &[],
         offline,
         name,
     )
 }
 
-fn tree(manifest: &Path, features: &[String], offline: bool, root: &str) -> Result<Built> {
+/// `cargo tree` for the package at `manifest`; `extra` goes to cargo as is (e.g. a vendored
+/// source config).
+pub fn tree(
+    manifest: &Path,
+    features: &[String],
+    extra: &[String],
+    offline: bool,
+    root: &str,
+) -> Result<Built> {
     let mut cmd = process::cargo();
     cmd.args([
         "tree",
@@ -51,7 +60,8 @@ fn tree(manifest: &Path, features: &[String], offline: bool, root: &str) -> Resu
         "--manifest-path",
     ])
     .arg(manifest)
-    .args(features);
+    .args(features)
+    .args(extra);
     if offline {
         cmd.arg("--offline");
     }

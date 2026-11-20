@@ -114,6 +114,10 @@ pub struct AddArgs {
     /// Binaries to install (default: all).
     #[arg(long = "bin")]
     pub bins: Vec<String>,
+    /// Record new or changed build scripts, proc macros and cargo config in
+    /// build-review.toml. Review them first.
+    #[arg(long)]
+    pub approve_build: bool,
 }
 
 #[derive(Debug, Args)]
@@ -122,6 +126,10 @@ pub struct UpgradeArgs {
     /// Version requirement (default: latest stable).
     #[arg(long)]
     pub version: Option<String>,
+    /// Record new or changed build scripts, proc macros and cargo config in
+    /// build-review.toml. Review them first.
+    #[arg(long)]
+    pub approve_build: bool,
 }
 
 #[derive(Debug, Args)]
@@ -136,6 +144,10 @@ pub struct UpdateArgs {
     /// Also update the dependencies of the given dependencies.
     #[arg(long)]
     pub recursive: bool,
+    /// Record new or changed build scripts, proc macros and cargo config in
+    /// build-review.toml. Review them first.
+    #[arg(long)]
+    pub approve_build: bool,
 }
 
 #[derive(Debug, Args)]
@@ -145,6 +157,10 @@ pub struct InstallArgs {
     /// Rebuild even if the install stamp is up to date.
     #[arg(long)]
     pub force: bool,
+    /// Record new or changed build scripts, proc macros and cargo config in
+    /// build-review.toml. Review them first.
+    #[arg(long)]
+    pub approve_build: bool,
     /// Don't audit the locks before building.
     #[arg(long)]
     pub no_audit: bool,
