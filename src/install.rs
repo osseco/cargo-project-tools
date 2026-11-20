@@ -13,6 +13,7 @@ use crate::process;
 use crate::project::Project;
 use crate::source::registry::sha256_hex as registry_hash;
 use crate::source::{self, Dest, Origin};
+use crate::vendor;
 
 /// Where stamps lived before they moved to `bin/.stamps`.
 const OLD_STAMP: &str = ".install-stamp.json";
@@ -236,6 +237,7 @@ pub fn install(
         tool.version
     );
     checkout.put_lock(&lock_path)?;
+    let vendored = vendor::vendor(project, name, &checkout, args.offline)?;
 
     // The tracking key contains the source path, so binaries from an earlier install are
     // owned by a "different" package: --force lets cargo replace them. Our stamp decides
@@ -249,6 +251,7 @@ pub fn install(
             .arg(project.install_root())
             .arg("--target-dir")
             .arg(&target_dir)
+            .args(&vendored.config_args)
             .args(&cargo_args),
     )?;
 

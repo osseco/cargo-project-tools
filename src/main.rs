@@ -12,6 +12,7 @@ mod project;
 mod selfinstall;
 mod sfw;
 mod source;
+mod vendor;
 
 use std::fs;
 use std::process::ExitCode;
