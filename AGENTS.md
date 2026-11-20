@@ -98,6 +98,7 @@ Never stage `site/dist/` or `site/node_modules/`.
 - Verify every `.crate` against the index checksum before use.
 - Reject archive paths that escape the crate directory.
 - Start processes with `Command::arg`, never a shell.
+- Cargo runs from the project root, never from inside a tool's source: config and toolchain files are found from the working directory up. A tool's shipped `rust-toolchain*` files are removed.
 - Reject user values that start with `-` where they're passed as git refs.
 - Never weaken TLS verification. Extra trust comes only from `SSL_CERT_FILE` (set by sfw).
 - `install` always passes `--locked`, so cargo refuses a lock that doesn't fit the manifest.

@@ -68,6 +68,10 @@ fn run() -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
     let project = Project::discover()?;
+    // Cargo and rustup look for config and toolchain files from the working directory up, so
+    // they must never start inside a tool's source.
+    std::env::set_current_dir(&project.root)
+        .with_context(|| format!("entering {}", project.root.display()))?;
     let config = Config::load(&project.config_path())?;
 
     if cli.command.downloads_packages() {
