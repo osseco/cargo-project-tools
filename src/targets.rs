@@ -7,6 +7,18 @@ use anyhow::{Context, Result, bail};
 
 use crate::process;
 
+/// Whether `s` looks like a target triple (`arch-vendor-os[-env]`): parts of ASCII letters,
+/// digits, `_` and `.`, joined by `-`. Enough to keep option-like or path-like values out.
+pub fn is_triple(s: &str) -> bool {
+    s.contains('-')
+        && s.split('-').all(|part| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+        })
+}
+
 /// The target triple of this machine, from `rustc -vV`.
 pub fn host() -> Result<String> {
     let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| OsString::from("rustc"));
@@ -169,7 +181,7 @@ pub fn parse_choice(answer: &str, suggestions: &[Suggestion]) -> Result<Option<V
                 .get(n.wrapping_sub(1))
                 .map(|s| s.triple.clone())
                 .with_context(|| format!("no suggestion {n}"))?,
-            Err(_) if part.contains('-') && !part.starts_with('-') => part.to_string(),
+            Err(_) if is_triple(part) => part.to_string(),
             Err(_) => bail!("`{part}` is neither a number from the list nor a target triple"),
         };
         if !out.contains(&triple) {

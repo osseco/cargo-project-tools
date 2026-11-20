@@ -252,10 +252,7 @@ fn validate_targets(targets: Option<&[String]>, context: &str) -> Result<()> {
                 "{context}: `targets` is empty; list at least one target triple, or remove it to allow all"
             );
         }
-        if let Some(t) = list
-            .iter()
-            .find(|t| t.is_empty() || t.starts_with('-') || t.contains(char::is_whitespace))
-        {
+        if let Some(t) = list.iter().find(|t| !crate::targets::is_triple(t)) {
             bail!("{context}: `{t}` is not a target triple");
         }
     }

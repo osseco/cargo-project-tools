@@ -102,11 +102,14 @@ fn self_ignores_need_an_expiry() {
 #[test]
 fn tool_targets_replace_the_project_list() {
     let config: Config = toml::from_str(
-        "[settings]\ntargets = [\"a\", \"b\"]\n[tool.x]\nversion = \"1.0.0\"\n[tool.y]\nversion = \"1.0.0\"\ntargets = [\"c\"]\n",
+        "[settings]\ntargets = [\"a-b\", \"c-d\"]\n[tool.x]\nversion = \"1.0.0\"\n[tool.y]\nversion = \"1.0.0\"\ntargets = [\"e-f\"]\n",
     )
     .unwrap();
-    assert_eq!(config.targets_for(&config.tool["x"]).unwrap(), ["a", "b"]);
-    assert_eq!(config.targets_for(&config.tool["y"]).unwrap(), ["c"]);
+    assert_eq!(
+        config.targets_for(&config.tool["x"]).unwrap(),
+        ["a-b", "c-d"]
+    );
+    assert_eq!(config.targets_for(&config.tool["y"]).unwrap(), ["e-f"]);
     let unset: Config = toml::from_str("[tool.x]\nversion = \"1.0.0\"\n").unwrap();
     assert!(unset.targets_for(&unset.tool["x"]).is_none());
 }
@@ -132,17 +135,17 @@ fn editor_adds_targets_where_they_apply() {
     let path = dir.path().join("project-tools.toml");
     fs::write(
         &path,
-        "[settings]\n# ours\ntargets = [\"a\"]\n\n[tool.y]\nversion = \"1.0.0\"\ntargets = [\"c\"]\n",
+        "[settings]\n# ours\ntargets = [\"a-b\"]\n\n[tool.y]\nversion = \"1.0.0\"\ntargets = [\"e-f\"]\n",
     )
     .unwrap();
     let mut ed = ConfigEditor::open(&path).unwrap();
-    ed.add_targets(None, &["b".into(), "a".into()]);
-    ed.add_targets(Some("y"), &["d".into()]);
+    ed.add_targets(None, &["c-d".into(), "a-b".into()]);
+    ed.add_targets(Some("y"), &["g-h".into()]);
     ed.save().unwrap();
     assert!(fs::read_to_string(&path).unwrap().contains("# ours"));
     let config = Config::load(&path).unwrap();
-    assert_eq!(config.settings.targets.unwrap(), ["a", "b"]);
-    assert_eq!(config.tool["y"].targets.as_deref().unwrap(), ["c", "d"]);
+    assert_eq!(config.settings.targets.unwrap(), ["a-b", "c-d"]);
+    assert_eq!(config.tool["y"].targets.as_deref().unwrap(), ["e-f", "g-h"]);
 }
 
 #[test]

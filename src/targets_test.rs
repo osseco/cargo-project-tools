@@ -138,3 +138,21 @@ fn prompt_answers() {
     assert!(parse_choice("mac", &s).is_err());
     assert!(parse_choice("--x", &s).is_err());
 }
+
+#[test]
+fn triples() {
+    for good in [
+        MAC,
+        LINUX,
+        WINDOWS,
+        "wasm32-unknown-unknown",
+        "thumbv7em-none-eabihf",
+    ] {
+        assert!(is_triple(good), "{good}");
+    }
+    for bad in [
+        "", "linux", "-x", "x-", "a--b", "a b-c", "../x-y", "a/b-c", "--target",
+    ] {
+        assert!(!is_triple(bad), "{bad}");
+    }
+}

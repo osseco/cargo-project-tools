@@ -485,6 +485,9 @@ pub struct Decided {
     pub file: Option<String>,
 }
 
+/// An item with no matching entry, and the entry for the same place whose content changed.
+type Pending<'a> = (Item, Option<&'a Entry>);
+
 /// Match `items` against the review file at `path`. Items without a matching entry are
 /// pending: without `approve` that's an error listing them; with it they're recorded, keeping
 /// the action of an entry for the same place whose content changed. Entries that match
@@ -496,7 +499,7 @@ pub fn check(path: &Path, items: Vec<Item>, approve: bool, root: &Path) -> Resul
         .filter(|e| !items.iter().any(|i| i.matches(e)))
         .collect();
     let mut decided = Vec::new();
-    let mut pending = Vec::new();
+    let mut pending: Vec<Pending> = Vec::new();
     for item in items {
         match entries.iter().find(|e| item.matches(e)) {
             Some(e) => decided.push(Decided {
@@ -510,49 +513,60 @@ pub fn check(path: &Path, items: Vec<Item>, approve: bool, root: &Path) -> Resul
             }
         }
     }
-    let shown = |p: &Path| p.strip_prefix(root).unwrap_or(p).display().to_string();
+    if approve {
+        decided.extend(record(path, pending, &stale)?);
+    } else {
+        report(path, &pending, &stale, root)?;
+    }
+    Ok(decided)
+}
 
-    if !approve {
-        for e in &stale {
-            if !pending.iter().any(|(_, prev)| *prev == Some(*e)) {
-                println!(
-                    "  warning: unused [[{}]] {}{} in {}; --approve-build removes it",
-                    e.kind,
-                    e.package,
-                    e.path,
-                    shown(path)
-                );
-            }
-        }
-        if !pending.is_empty() {
-            println!("  build-time code to review:");
-            for (item, previous) in &pending {
-                let note = match previous {
-                    Some(p) => format!(" (changed; was {})", p.action.as_str()),
-                    None => String::new(),
-                };
-                println!(
-                    "    {:<12} {}{}  {}",
-                    item.kind,
-                    item.describe(),
-                    note,
-                    shown(&item.location)
-                );
-            }
-            let what = match pending.len() {
-                1 => "1 piece of build-time code isn't".to_string(),
-                n => format!("{n} pieces of build-time code aren't"),
-            };
-            bail!(
-                "{what} recorded in {}; review it, then rerun with --approve-build",
+/// Warn about unused entries, and fail listing what's pending.
+fn report(path: &Path, pending: &[Pending], stale: &[&Entry], root: &Path) -> Result<()> {
+    let shown = |p: &Path| p.strip_prefix(root).unwrap_or(p).display().to_string();
+    for e in stale {
+        if !pending.iter().any(|(_, prev)| *prev == Some(*e)) {
+            println!(
+                "  warning: unused [[{}]] {}{} in {}; --approve-build removes it",
+                e.kind,
+                e.package,
+                e.path,
                 shown(path)
             );
         }
-        return Ok(decided);
     }
+    if pending.is_empty() {
+        return Ok(());
+    }
+    println!("  build-time code to review:");
+    for (item, previous) in pending {
+        let note = match previous {
+            Some(p) => format!(" (changed; was {})", p.action.as_str()),
+            None => String::new(),
+        };
+        println!(
+            "    {:<12} {}{}  {}",
+            item.kind,
+            item.describe(),
+            note,
+            shown(&item.location)
+        );
+    }
+    let what = match pending.len() {
+        1 => "1 piece of build-time code isn't".to_string(),
+        n => format!("{n} pieces of build-time code aren't"),
+    };
+    bail!(
+        "{what} recorded in {}; review it, then rerun with --approve-build",
+        shown(path)
+    )
+}
 
+/// Write `pending` into the review file and drop `stale` entries. Returns the decisions for
+/// the pending items.
+fn record(path: &Path, pending: Vec<Pending>, stale: &[&Entry]) -> Result<Vec<Decided>> {
     if pending.is_empty() && stale.is_empty() {
-        return Ok(decided);
+        return Ok(Vec::new());
     }
     // A new file gets the header; it's added after editing, as a comment-only document's
     // text would end up after the tables.
@@ -562,6 +576,7 @@ pub fn check(path: &Path, items: Vec<Item>, approve: bool, root: &Path) -> Resul
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
     let mut doc: toml_edit::DocumentMut = text.parse()?;
+    let mut decided = Vec::new();
     // An entry whose content changed is updated in place, so comments on it stay.
     let mut reused: Vec<&Entry> = Vec::new();
     for (item, previous) in pending {
@@ -742,13 +757,14 @@ pub fn review(
 /// Digest of the review file and its override files, for the install stamp.
 pub fn file_digest(project: &Project, name: &str) -> Result<String> {
     let path = project.review_path(name);
-    let mut parts = Vec::new();
-    match fs::read(&path) {
-        Ok(bytes) => parts.push(sha256_hex(&bytes)),
+    let text = match fs::read_to_string(&path) {
+        Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
-    }
-    for e in load(&path)? {
+    };
+    let mut parts = vec![sha256_hex(text.as_bytes())];
+    let entries = parse(&text).with_context(|| format!("parsing {}", path.display()))?;
+    for e in entries {
         if let Some(f) = e.file {
             let src = project.crate_dir(name).join(&f);
             let bytes =
