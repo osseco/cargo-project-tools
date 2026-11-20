@@ -60,7 +60,7 @@ Run `pre-commit run --all-files` before staging a chunk. It runs fmt, clippy, te
 
 It needs these on PATH: `sfw`, `cargo-deny`, `zizmor`, `actionlint`, `uv`, `pre-commit`.
 
-Unit tests go in a sibling `<module>_test.rs` file, pulled in at the end of the module with `#[cfg(test)] #[path = "<module>_test.rs"] mod tests;`. They must not touch the network.
+Unit tests go in a sibling `<module>_test.rs` file, pulled in at the end of the module with `#[cfg(test)] #[path = "<module>_test.rs"] mod tests;`. They must not touch the network. Tests that run cargo use the offline registry in `src/test_registry.rs`.
 
 pre-commit doesn't cover `site/`. After changing `site/`, `docs/` or `llms.txt`, run in `site/`:
 

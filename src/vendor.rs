@@ -19,12 +19,13 @@ pub struct Vendored {
 /// Vendor the dependencies of the tool in `checkout` (its lock already in place) into
 /// `.project-tools/targets/<tool>/vendor`. Cargo checks every package against the lock, and
 /// nothing is compiled. Builds then use these copies, which we can review and change, rather
-/// than `~/.cargo/registry`, which we must not touch.
+/// than `~/.cargo/registry`, which we must not touch. `extra` goes to cargo as is.
 pub fn vendor(
     project: &Project,
     name: &str,
     checkout: &Checkout,
     offline: bool,
+    extra: &[String],
 ) -> Result<Vendored> {
     let target = project.target_dir(name);
     let dir = target.join("vendor");
@@ -45,7 +46,8 @@ pub fn vendor(
         "--manifest-path",
     ])
     .arg(checkout.manifest_path())
-    .arg(&dir);
+    .arg(&dir)
+    .args(extra);
     if offline {
         cmd.arg("--offline");
     }

@@ -336,3 +336,177 @@ fn script_hash_covers_its_directory_when_not_at_the_root() {
     fs::write(pkg.join("build/util.rs"), "two").unwrap();
     assert_ne!(script_hash(pkg, &pkg.join("build/main.rs")).unwrap(), first);
 }
+
+#[test]
+fn slash_separates_with_forward_slashes() {
+    assert_eq!(slash(&Path::new("a").join("b").join("c.rs")), "a/b/c.rs");
+}
+
+/// A tool built from the test registry: `scripted` has a build script that leaves a
+/// marker, `macro` is a proc macro, and `winonly`, with a build script, is a Windows-only
+/// dependency.
+struct Fixture {
+    tmp: tempfile::TempDir,
+    registry: crate::test_registry::Registry,
+    project: Project,
+    checkout: Checkout,
+    vendored: Vendored,
+}
+
+impl Fixture {
+    fn new() -> Fixture {
+        use crate::test_registry::{Crate, Registry, tool_with, watching_marker_script};
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("markers")).unwrap();
+        let registry = Registry::with(vec![
+            // Watches a directory, as typenum's build script does.
+            Crate::new("scripted", "1.0.0").build(&watching_marker_script(
+                &tmp.path().join("markers/upstream"),
+                "src",
+            )),
+            Crate::new("macro", "1.0.0").proc_macro(),
+            Crate::new("winonly", "1.0.0").build("fn main() {}\n"),
+        ]);
+        let src = tmp.path().join("src");
+        let manifest = tool_with(
+            &src,
+            "1.0.0",
+            "[dependencies]\nscripted = \"1\"\nmacro = \"1\"\n\n[target.'cfg(windows)'.dependencies]\nwinonly = \"1\"\n",
+        );
+        crate::lock::shipped_or_generated(
+            &manifest,
+            &src.join("Cargo.lock"),
+            &registry.cargo_args(),
+        )
+        .unwrap();
+        let project = Project {
+            root: tmp.path().to_path_buf(),
+        };
+        let checkout = Checkout::at(src.clone(), src.clone(), src);
+        let vendored =
+            crate::vendor::vendor(&project, "tool", &checkout, false, &registry.cargo_args())
+                .unwrap();
+        Fixture {
+            tmp,
+            registry,
+            project,
+            checkout,
+            vendored,
+        }
+    }
+
+    fn collect(&self) -> Vec<Item> {
+        collect("tool", &[], &self.checkout, &self.vendored, true).unwrap()
+    }
+
+    fn marker(&self, name: &str) -> bool {
+        self.tmp.path().join("markers").join(name).exists()
+    }
+
+    /// `cargo build` of the tool from the vendored sources. Returns cargo's JSON messages.
+    fn build(&self) -> String {
+        crate::process::output_quiet(
+            crate::process::cargo()
+                .args(["build", "--offline", "--locked", "--message-format", "json"])
+                .arg("--manifest-path")
+                .arg(self.checkout.manifest_path())
+                .arg("--target-dir")
+                .arg(self.tmp.path().join("target"))
+                .args(&self.vendored.config_args),
+        )
+        .unwrap()
+    }
+
+    fn decide(&self, package: &str, action: Action, file: Option<&str>) -> Vec<Decided> {
+        self.collect()
+            .into_iter()
+            .map(|item| {
+                let mine = item.kind == Kind::BuildScript && item.package == package;
+                Decided {
+                    item,
+                    action: if mine { action } else { Action::Approve },
+                    file: if mine { file.map(str::to_string) } else { None },
+                }
+            })
+            .collect()
+    }
+}
+
+#[test]
+fn collect_finds_build_time_code_in_vendored_sources() {
+    let f = Fixture::new();
+    let found: Vec<String> = f
+        .collect()
+        .iter()
+        .map(|i| format!("{} {} {}", i.kind, i.package, i.vendored))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            "build-script scripted true",
+            "build-script tool false",
+            "build-script winonly true",
+            "proc-macro macro true",
+        ]
+    );
+}
+
+#[test]
+fn approved_code_builds_as_shipped() {
+    let f = Fixture::new();
+    let decided = f.decide("scripted", Action::Approve, None);
+    assert!(
+        apply(&decided, &f.project.crate_dir("tool"))
+            .unwrap()
+            .is_empty()
+    );
+    f.build();
+    assert!(f.marker("upstream"));
+}
+
+#[test]
+fn overridden_build_script_runs_instead() {
+    let f = Fixture::new();
+    let crate_dir = f.project.crate_dir("tool");
+    fs::create_dir_all(crate_dir.join("overrides")).unwrap();
+    fs::write(
+        crate_dir.join("overrides/scripted.rs"),
+        crate::test_registry::marker_script(&f.tmp.path().join("markers/ours")),
+    )
+    .unwrap();
+    let decided = f.decide("scripted", Action::Override, Some("overrides/scripted.rs"));
+    apply(&decided, &crate_dir).unwrap();
+    f.build();
+    assert!(f.marker("ours"));
+    assert!(!f.marker("upstream"));
+}
+
+#[test]
+fn stripped_build_script_does_not_run() {
+    let f = Fixture::new();
+    let decided = f.decide("scripted", Action::Strip, None);
+    apply(&decided, &f.project.crate_dir("tool")).unwrap();
+    f.build();
+    assert!(!f.marker("upstream"));
+}
+
+#[test]
+fn settled_vendor_dir_rebuilds_nothing() {
+    let mut f = Fixture::new();
+    f.build();
+    // Vendor afresh, as every install does, then settle.
+    let args = f.registry.cargo_args();
+    f.vendored = crate::vendor::vendor(&f.project, "tool", &f.checkout, false, &args).unwrap();
+    crate::vendor::settle(&f.vendored).unwrap();
+    let messages = f.build();
+    // The tool itself is dirty anyway: its build script writes a marker into its own source.
+    let rebuilt: Vec<&str> = messages
+        .lines()
+        .filter(|l| {
+            l.contains("\"reason\":\"compiler-artifact\"")
+                && l.contains("\"fresh\":false")
+                && !l.contains("\"package_id\":\"path+")
+        })
+        .collect();
+    assert!(rebuilt.is_empty(), "rebuilt: {rebuilt:#?}");
+}

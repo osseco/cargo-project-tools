@@ -13,6 +13,8 @@ mod review;
 mod selfinstall;
 mod sfw;
 mod source;
+#[cfg(test)]
+mod test_registry;
 mod vendor;
 
 use std::fs;
@@ -382,7 +384,7 @@ fn review_build(
     checkout: &source::Checkout,
     approve: bool,
 ) -> Result<()> {
-    let vendored = vendor::vendor(project, name, checkout, false)?;
+    let vendored = vendor::vendor(project, name, checkout, false, &[])?;
     review::review(project, name, features, checkout, &vendored, false, approve)?;
     Ok(())
 }

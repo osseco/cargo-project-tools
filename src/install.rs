@@ -291,7 +291,7 @@ pub fn install(
         tool.version
     );
     checkout.put_lock(&lock_path)?;
-    let vendored = vendor::vendor(project, name, &checkout, args.offline)?;
+    let vendored = vendor::vendor(project, name, &checkout, args.offline, &[])?;
     let changes = review::review(
         project,
         name,

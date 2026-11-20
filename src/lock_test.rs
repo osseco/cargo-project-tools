@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_registry::{Registry, tool};
 
 const LOCK_A: &str = r#"
 version = 3
@@ -76,45 +77,6 @@ fn carry_forward_candidates() {
     );
 }
 
-/// A stand-in for crates.io: a directory source that cargo reads offline.
-struct Registry(tempfile::TempDir);
-
-impl Registry {
-    fn new(crates: &[(&str, &str)]) -> Self {
-        let dir = tempfile::tempdir().unwrap();
-        for (name, version) in crates {
-            let root = dir.path().join(format!("{name}-{version}"));
-            std::fs::create_dir_all(root.join("src")).unwrap();
-            std::fs::write(
-                root.join("Cargo.toml"),
-                format!(
-                    "[package]\nname = \"{name}\"\nversion = \"{version}\"\nedition = \"2021\"\n"
-                ),
-            )
-            .unwrap();
-            std::fs::write(root.join("src/lib.rs"), "").unwrap();
-            std::fs::write(
-                root.join(".cargo-checksum.json"),
-                r#"{"files":{},"package":null}"#,
-            )
-            .unwrap();
-        }
-        Registry(dir)
-    }
-
-    /// Make cargo resolve against this directory only, without network.
-    fn cargo_args(&self) -> Vec<String> {
-        let dir = toml_edit::Value::from(self.0.path().to_string_lossy().as_ref());
-        vec![
-            "--offline".into(),
-            "--config".into(),
-            "source.crates-io.replace-with = \"local\"".into(),
-            "--config".into(),
-            format!("source.local.directory = {}", dir.to_string().trim()),
-        ]
-    }
-}
-
 fn registry() -> Registry {
     Registry::new(&[
         ("dep", "1.0.0"),
@@ -122,31 +84,6 @@ fn registry() -> Registry {
         ("dep", "2.0.0"),
         ("extra", "0.1.0"),
     ])
-}
-
-/// Package `tool` at `version` in `dir` with registry dependencies (name, requirement),
-/// and a build script that leaves a marker if it ever runs. Returns the manifest path.
-fn tool(dir: &Path, version: &str, deps: &[(&str, &str)]) -> std::path::PathBuf {
-    let deps: String = deps
-        .iter()
-        .map(|(n, r)| format!("{n} = \"{r}\"\n"))
-        .collect();
-    std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::fs::write(dir.join("src/main.rs"), "fn main() {}\n").unwrap();
-    std::fs::write(
-        dir.join("build.rs"),
-        "fn main() { std::fs::write(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/build-ran\"), \"\").unwrap(); }\n",
-    )
-    .unwrap();
-    let manifest = dir.join("Cargo.toml");
-    std::fs::write(
-        &manifest,
-        format!(
-            "[package]\nname = \"tool\"\nversion = \"{version}\"\nedition = \"2021\"\n\n[dependencies]\n{deps}\n[workspace]\n"
-        ),
-    )
-    .unwrap();
-    manifest
 }
 
 fn versions_of(lock: &Lockfile, name: &str) -> Vec<String> {
