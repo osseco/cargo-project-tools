@@ -36,6 +36,8 @@ impl Origin {
 
 /// A tool's source on disk.
 pub struct Checkout {
+    /// The extracted crate or the clone; contains the workspace root.
+    pub root: PathBuf,
     pub workspace_root: PathBuf,
     pub package_dir: PathBuf,
     pub version: String,
@@ -109,6 +111,7 @@ pub fn checkout(project: &Project, name: &str, origin: &Origin, dest: Dest) -> R
             let file = registry::download(&entry, &project.cache_dir())?;
             registry::extract(&file, &entry, &dir)?;
             Checkout {
+                root: dir.clone(),
                 workspace_root: dir.clone(),
                 package_dir: dir,
                 version: entry.vers.to_string(),
@@ -119,6 +122,7 @@ pub fn checkout(project: &Project, name: &str, origin: &Origin, dest: Dest) -> R
         Origin::Git { url, reference } => {
             let c = git::clone(url, reference, name, &dir)?;
             Checkout {
+                root: dir,
                 workspace_root: c.workspace_root,
                 package_dir: c.package_dir,
                 version: c.version,
@@ -128,6 +132,7 @@ pub fn checkout(project: &Project, name: &str, origin: &Origin, dest: Dest) -> R
         }
     };
     isolate_workspace(&checkout)?;
+    strip_toolchain(&checkout)?;
     Ok(checkout)
 }
 
@@ -155,6 +160,7 @@ pub fn scratch(project: &Project, name: &str, origin: &Origin) -> Result<Checkou
         fs::write(dir.join("Cargo.lock"), lock)?;
     }
     let checkout = Checkout {
+        root: dir.clone(),
         workspace_root: dir.clone(),
         package_dir: dir,
         version: entry.vers.to_string(),
@@ -163,6 +169,35 @@ pub fn scratch(project: &Project, name: &str, origin: &Origin) -> Result<Checkou
     };
     isolate_workspace(&checkout)?;
     Ok(checkout)
+}
+
+/// Directories cargo and rustup search for config when building the package: the package
+/// directory and its parents up to the checkout root. Parents above it are the user's.
+pub fn search_dirs(checkout: &Checkout) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    for dir in checkout.package_dir.ancestors() {
+        dirs.push(dir.to_path_buf());
+        if dir == checkout.root {
+            break;
+        }
+    }
+    dirs
+}
+
+/// Remove toolchain files the source ships: `cargo install <crate>` ignores them too, and a
+/// `path` toolchain would run local binaries.
+fn strip_toolchain(checkout: &Checkout) -> Result<()> {
+    for dir in search_dirs(checkout) {
+        for name in ["rust-toolchain", "rust-toolchain.toml"] {
+            let path = dir.join(name);
+            if path.symlink_metadata().is_ok() {
+                fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
+                let shown = path.strip_prefix(&checkout.root).unwrap_or(&path);
+                eprintln!("note: ignored {} shipped with the source", shown.display());
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Files that must exist for cargo to load the manifest: default target roots, explicit

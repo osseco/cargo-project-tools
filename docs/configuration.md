@@ -43,8 +43,8 @@ Allowed `profile-settings` keys: `inherits`, `opt-level`, `debug`, `strip`, `lto
 | --- | --- |
 | `version` | The tool's version |
 | `git`, `tag`, `rev`, `branch` | Git source (https only) |
-| `features` | Features to enable |
-| `default-features` | `false` turns off default features |
+| `features` | Features to enable; `audit` checks only what they build |
+| `default-features` | `false` turns off default features; `audit` follows it too |
 | `bins` | Binaries to install (default: all) |
 | `build` | A `[build]` table for this tool only; its keys override the global ones |
 
@@ -52,7 +52,7 @@ Changing any of these makes `install` rebuild the tool.
 
 ## sfw
 
-Package downloads (`add`, `upgrade`, `update`, `install`) can run through [Socket Firewall Free](https://docs.socket.dev/docs/socket-firewall-free), which blocks known malicious packages.
+Package downloads (`add`, `upgrade`, `update`, `install`, `audit`) can run through [Socket Firewall Free](https://docs.socket.dev/docs/socket-firewall-free), which blocks known malicious packages.
 
 | `settings.sfw` | Behavior |
 | --- | --- |
@@ -60,7 +60,7 @@ Package downloads (`add`, `upgrade`, `update`, `install`) can run through [Socke
 | `"require"` | Fail when `sfw` isn't on `PATH` |
 | `"off"` | Never use `sfw` |
 
-`--no-sfw` turns it off for one run. When you already run `sfw cargo project-tools …`, the tool detects the outer sfw and doesn't start a second one. `audit` and `audit-db` don't start sfw: the advisory database isn't a package. `install` fetches the database under sfw, and trusts sfw's certificate through `SSL_CERT_FILE`.
+`--no-sfw` turns it off for one run. When you already run `sfw cargo project-tools …`, the tool detects the outer sfw and doesn't start a second one. `audit` runs under sfw because cargo downloads the tool's dependencies to work out which of them are built. `audit-db` doesn't start sfw: the advisory database isn't a package. `audit` and `install` fetch the database under sfw, and trust sfw's certificate through `SSL_CERT_FILE`.
 
 On Windows, cargo checks certificate revocation through schannel, and sfw's local certificate has no revocation endpoint, so downloads fail with `the revocation status is unknown`. Turn the check off for cargo with `CARGO_HTTP_CHECK_REVOKE=false`, or `http.check-revoke = false` in your [cargo config](https://doc.rust-lang.org/cargo/reference/config.html#httpcheck-revoke). Certificate and hostname checks stay on.
 

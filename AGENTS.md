@@ -85,6 +85,7 @@ Never stage `site/dist/` or `site/node_modules/`.
 - `src/source/mod.rs`: full checkouts and minimal scratch projects (manifest + target stubs).
 - `src/lock.rs`: lock parsing, root check, diff, `cargo update`.
 - `src/install.rs`: `cargo install --path` invocation, build settings → `--config`, install stamps.
+- `src/graph.rs`: which locked packages a tool builds with its features (`cargo tree` on a scratch copy).
 - `src/audit.rs`: matches locks against the advisory database with rustsec (root and git packages included), our own yanked check, ignore list, fix suggestions.
 - `src/advisory_db.rs`: downloads, revalidates (ETag, `advisory-db-max-age`) and swaps in the RustSec advisory database.
 - `src/sfw.rs`: re-executes package-downloading commands under sfw.
@@ -98,6 +99,7 @@ Never stage `site/dist/` or `site/node_modules/`.
 - Verify every `.crate` against the index checksum before use.
 - Reject archive paths that escape the crate directory.
 - Start processes with `Command::arg`, never a shell.
+- Cargo runs from the project root, never from inside a tool's source: config and toolchain files are found from the working directory up. A tool's shipped `rust-toolchain*` files are removed.
 - Reject user values that start with `-` where they're passed as git refs.
 - Never weaken TLS verification. Extra trust comes only from `SSL_CERT_FILE` (set by sfw).
 - `install` always passes `--locked`, so cargo refuses a lock that doesn't fit the manifest.

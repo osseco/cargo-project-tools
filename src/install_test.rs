@@ -31,6 +31,16 @@ fn build_settings_become_config() {
 }
 
 #[test]
+fn feature_selection_args() {
+    assert_eq!(
+        feature_args(&tool()),
+        ["--features", "a", "--no-default-features"]
+    );
+    let plain: Tool = toml::from_str("version = \"1.0.0\"\n").unwrap();
+    assert!(feature_args(&plain).is_empty());
+}
+
+#[test]
 fn stamp_ignores_noise_flags() {
     let build = Build::default();
     let a = cargo_args(&tool(), &build, &install_args(&[]));

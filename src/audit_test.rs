@@ -363,8 +363,23 @@ fn self_findings_can_be_ignored_until_they_expire() {
     assert_eq!(evaluate_self(&found, &expired, today), 1);
 }
 
+/// Every package of the lock, as if all of it were built.
+fn all_of(lock_text: &str) -> Built {
+    crate::lock::parse(lock_text)
+        .unwrap()
+        .packages
+        .iter()
+        .map(|p| (p.name.as_str().to_string(), p.version.clone()))
+        .collect()
+}
+
 /// The full `Auditor::audit` path with a lock on disk and a seeded index.
-fn audit_file(lock_text: &str, git_tool: bool, index: &[registry::IndexEntry]) -> Report {
+fn audit_built(
+    lock_text: &str,
+    git_tool: bool,
+    index: &[registry::IndexEntry],
+    built: &Built,
+) -> Report {
     let (dir, db) = fixture();
     let lock_path = dir.path().join("Cargo.lock");
     fs::write(&lock_path, lock_text).unwrap();
@@ -373,7 +388,39 @@ fn audit_file(lock_text: &str, git_tool: bool, index: &[registry::IndexEntry]) -
         let entries = index.iter().filter(|e| e.name == name).cloned().collect();
         auditor.index.insert(name, entries);
     }
-    auditor.audit(&lock_path, "mytool", git_tool).unwrap()
+    auditor
+        .audit(&lock_path, "mytool", git_tool, built)
+        .unwrap()
+}
+
+fn audit_file(lock_text: &str, git_tool: bool, index: &[registry::IndexEntry]) -> Report {
+    audit_built(lock_text, git_tool, index, &all_of(lock_text))
+}
+
+/// `mytool` 1.0.1 is patched; `smallvec` is vulnerable but only an optional dependency.
+const OPTIONAL_LOCK: &str = r#"version = 3
+
+[[package]]
+name = "mytool"
+version = "1.0.1"
+
+[[package]]
+name = "smallvec"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+"#;
+
+#[test]
+fn packages_that_are_not_built_are_skipped() {
+    let built = Built::from([("mytool".to_string(), Version::new(1, 0, 1))]);
+    let r = audit_built(OPTIONAL_LOCK, false, &[], &built);
+    assert!(r.vulnerabilities.is_empty());
+    assert_eq!(r.skipped, 1);
+
+    let r = audit_built(OPTIONAL_LOCK, false, &[], &all_of(OPTIONAL_LOCK));
+    assert_eq!(r.vulnerabilities.len(), 1);
+    assert_eq!(r.vulnerabilities[0].package.name, "smallvec");
+    assert_eq!(r.skipped, 0);
 }
 
 const LOCK: &str = r#"version = 3
