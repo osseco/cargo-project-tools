@@ -26,7 +26,9 @@ Why each tool gets a Cargo.lock in your repository, and what lives where.
     ├── crates
     │   └── <tool>
     │       ├── Cargo.lock          # your lock for this tool
-    │       └── audit-ignore.toml   # accepted advisories, with reasons
+    │       ├── audit-ignore.toml   # accepted advisories, with reasons
+    │       ├── build-review.toml   # approved, overridden or stripped build-time code
+    │       └── overrides/          # your replacement files (optional)
     ├── self-audit-ignore.toml  # accepted advisories against cargo-project-tools (optional)
     ├── bin                   # installed binaries, <tool>.sha256 checksums, .stamps/
     ├── targets               # build directories, one per tool
@@ -48,15 +50,17 @@ Commit `project-tools.toml`, `.project-tools/crates/` and `.project-tools/self-a
 
 ## Installing
 
-`install` first audits the locks of the tools it's about to build, and builds nothing if one of them has a vulnerability you haven't ignored. Then it builds each tool with `cargo install --path … --locked`, using your lock and the build settings from `project-tools.toml`. It writes a stamp per tool to `bin/.stamps/<tool>.json`, and the sha256 of each binary to `bin/<tool>.sha256`. When the version, lock, settings, OS and architecture match the stamp and the binaries match their checksums, the tool is skipped. Both files sit next to the binaries, so restoring `bin` from a cache is enough to skip a build.
+`install` first audits the locks of the tools it's about to build, and builds nothing if one of them has a vulnerability you haven't ignored. It vendors each tool's dependencies into `targets/<tool>/vendor` and checks the build scripts, proc macros and shipped cargo config against the tool's [`build-review.toml`](build-review.md). Then it builds each tool with `cargo install --path … --locked`, using your lock and the build settings from `project-tools.toml`. It writes a stamp per tool to `bin/.stamps/<tool>.json`, and the sha256 of each binary to `bin/<tool>.sha256`. When the version, lock, settings, OS and architecture match the stamp and the binaries match their checksums, the tool is skipped. Both files sit next to the binaries, so restoring `bin` from a cache is enough to skip a build.
 
-The source of each tool is kept in `.project-tools/targets/<tool>/src`. A `.crate` is unpacked with its original file times, and a git tool already at its pinned commit is reset in place instead of cloned again, so with an unchanged build directory cargo finds nothing to rebuild and copies the binary it already has. [`verify --repair`](commands.md#verify) relies on that.
+The source of each tool is kept in `.project-tools/targets/<tool>/src`. A `.crate` is unpacked with its original file times, and a git tool already at its pinned commit is reset in place instead of cloned again. Vendored dependencies all get the same old file time, as they're copied afresh each time and build scripts watching them would otherwise run again. So with an unchanged build directory cargo finds nothing to rebuild and copies the binary it already has. [`verify --repair`](commands.md#verify) relies on that.
 
 ## Auditing
 
 `audit` reads the [RustSec advisory database](https://github.com/rustsec/advisory-db) with the [rustsec](https://crates.io/crates/rustsec) library, which cargo-audit is built on. It downloads the database as a `git archive` tarball of the default branch over https, and keeps the ETag, the commit and the time of the last check in `.project-tools/advisory-db/.fetch.json`. A new download is unpacked next to the old copy, checked, and only then swapped in. As with cargo-audit's git fetch, the database is trusted because it comes from GitHub over https; there's no checksum to check it against.
 
 Unlike cargo-audit, it also checks the root package of each lock, which is the tool itself, and git packages by name and version.
+
+Which packages a tool builds comes from `cargo tree` and is kept in `bin/.stamps/<tool>.built.json`, keyed by the tool's version, lock, features and targets. A file that doesn't match is computed again. Like the install stamps, it's trusted as found in `bin`, so restore `bin` only from caches your own runs wrote.
 
 ## Supply chain
 

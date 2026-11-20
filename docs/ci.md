@@ -25,15 +25,17 @@ jobs:
             .project-tools/bin
             .project-tools/.crates.toml
             .project-tools/.crates2.json
-          key: tools-bin-${{ runner.os }}-${{ hashFiles('project-tools.toml', '.project-tools/crates/**/Cargo.lock') }}
+          key: tools-bin-${{ runner.os }}-${{ hashFiles('project-tools.toml', '.project-tools/crates/**') }}
           restore-keys: tools-bin-${{ runner.os }}-
 
       - name: Cache tool builds
         if: steps.tools.outputs.cache-hit != 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .project-tools/targets
-          key: tools-targets-${{ runner.os }}-${{ hashFiles('project-tools.toml', '.project-tools/crates/**/Cargo.lock') }}
+          path: |
+            .project-tools/targets
+            !.project-tools/targets/*/vendor
+          key: tools-targets-${{ runner.os }}-${{ hashFiles('project-tools.toml', '.project-tools/crates/**') }}
           restore-keys: tools-targets-${{ runner.os }}-
 
       - name: Install tools
@@ -44,13 +46,13 @@ jobs:
       - run: echo "$GITHUB_WORKSPACE/.project-tools/bin" >> "$GITHUB_PATH"
 ```
 
-The build directories are only restored when the bin cache isn't an exact hit, because only then can something need building.
+The build directories are only restored when the bin cache isn't an exact hit, because only then can something need building. The keys hash everything in `.project-tools/crates`: the locks, and the [build review](build-review.md) decisions and overrides, which also decide whether a tool is rebuilt. Vendored sources are left out: `install` vendors them again on every build.
 
 `install` keeps a stamp (`bin/.stamps/<tool>.json`) and a `<tool>.sha256` for every tool in `.project-tools/bin`. The stamp includes the OS and architecture, so a bin cache restored on the wrong platform is rebuilt rather than used. A job that doesn't want to install can check restored binaries with [`cargo project-tools verify`](commands.md#verify), or with `sha256sum -c *.sha256` inside `bin`, but then the locks aren't audited.
 
 ## Audit the locks
 
-Use a separate job that installs cargo-project-tools and runs `audit`. It needs no other tools and builds nothing. Caching `.project-tools/advisory-db` is optional: a cached copy is revalidated with its ETag, so an unchanged database isn't downloaded again.
+Use a separate job that installs cargo-project-tools and runs `audit`. It needs no other tools and builds nothing. To find out which dependencies a tool builds, cargo downloads them once; the answer is kept in `.project-tools/bin/.stamps`, so caching `.project-tools/bin` as above saves those downloads on later runs. Caching `.project-tools/advisory-db` is optional: a cached copy is revalidated with its ETag, so an unchanged database isn't downloaded again.
 
 ```yaml
       - id: week

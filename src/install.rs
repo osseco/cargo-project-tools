@@ -8,11 +8,14 @@ use serde::{Deserialize, Serialize};
 use crate::checksum;
 use crate::cli::BuildArgs;
 use crate::config::{Build, Tool};
+use crate::graph;
 use crate::lock;
 use crate::process;
 use crate::project::Project;
+use crate::review;
 use crate::source::registry::sha256_hex as registry_hash;
 use crate::source::{self, Dest, Origin};
+use crate::vendor;
 
 /// Where stamps lived before they moved to `bin/.stamps`.
 const OLD_STAMP: &str = ".install-stamp.json";
@@ -33,13 +36,58 @@ pub enum Checksums {
     Expect,
 }
 
+/// How `install` treats a tool beyond its build settings.
+#[derive(Debug, Clone, Copy)]
+pub struct Options<'a> {
+    /// Rebuild even when the stamp is up to date.
+    pub force: bool,
+    /// Record new or changed build-time code in the review file.
+    pub approve_build: bool,
+    pub checksums: Checksums,
+    /// The targets build-time code is reviewed for; all when `None`.
+    pub targets: Option<&'a [String]>,
+}
+
+/// Cargo only fingerprints files of path packages, so after an override or strip in vendored
+/// sources changes it would reuse stale builds. Remove the build output when the applied
+/// changes differ from last time; `src`, `vendor` and its config stay.
+fn clean_if_changed(target_dir: &Path, changes: &str) -> Result<()> {
+    let marker = target_dir.join("review-changes");
+    let previous = fs::read_to_string(&marker).unwrap_or_default();
+    if previous == changes {
+        return Ok(());
+    }
+    for entry in fs::read_dir(target_dir)? {
+        let entry = entry?;
+        let keep = matches!(
+            entry.file_name().to_str(),
+            Some("src" | "vendor" | "vendor-config.toml")
+        );
+        if !keep {
+            let path = entry.path();
+            if entry.file_type()?.is_dir() {
+                fs::remove_dir_all(&path)?;
+            } else {
+                fs::remove_file(&path)?;
+            }
+        }
+    }
+    fs::write(marker, changes)?;
+    Ok(())
+}
+
 /// The tool's feature selection as cargo arguments.
 pub fn feature_args(tool: &Tool) -> Vec<String> {
+    feature_flags(&tool.features, tool.default_features != Some(false))
+}
+
+/// `features` and `default_features` as cargo arguments.
+pub fn feature_flags(features: &[String], default_features: bool) -> Vec<String> {
     let mut out = Vec::new();
-    for f in &tool.features {
+    for f in features {
         out.extend(["--features".into(), f.clone()]);
     }
-    if tool.default_features == Some(false) {
+    if !default_features {
         out.push("--no-default-features".into());
     }
     out
@@ -108,11 +156,19 @@ fn affects_output(arg: &str) -> bool {
     )
 }
 
-fn stamp_key(name: &str, tool: &Tool, lock_text: &str, cargo_args: &[String]) -> String {
+/// `review` is `review::file_digest`: a changed decision rebuilds the tool.
+fn stamp_key(
+    name: &str,
+    tool: &Tool,
+    lock_text: &str,
+    review: &str,
+    cargo_args: &[String],
+) -> String {
     stamp_key_on(
         name,
         tool,
         lock_text,
+        review,
         cargo_args,
         std::env::consts::OS,
         std::env::consts::ARCH,
@@ -125,6 +181,7 @@ fn stamp_key_on(
     name: &str,
     tool: &Tool,
     lock_text: &str,
+    review: &str,
     cargo_args: &[String],
     os: &str,
     arch: &str,
@@ -139,6 +196,7 @@ fn stamp_key_on(
         tool.tag.clone().unwrap_or_default(),
         tool.branch.clone().unwrap_or_default(),
         registry_hash(lock_text.as_bytes()),
+        review.to_string(),
     ];
     let mut skip_next = false;
     for a in cargo_args {
@@ -192,8 +250,7 @@ pub fn install(
     tool: &Tool,
     build: &Build,
     args: &BuildArgs,
-    force: bool,
-    checksums: Checksums,
+    opts: Options,
 ) -> Result<()> {
     let lock_path = project.lock_path(name);
     let lock_text = fs::read_to_string(&lock_path).with_context(|| {
@@ -205,10 +262,13 @@ pub fn install(
     lock::check_root(&lock::parse(&lock_text)?, name, &tool.version)?;
 
     let cargo_args = cargo_args(tool, build, args);
-    let key = stamp_key(name, tool, &lock_text, &cargo_args);
+    let review_digest = review::file_digest(project, name)?;
+    let key = stamp_key(name, tool, &lock_text, &review_digest, &cargo_args);
     let target_dir = project.target_dir(name);
     let stamp_path = project.stamp_path(name);
-    if !force
+    // Approving reviews now, even when the binaries are current.
+    if !opts.force
+        && !opts.approve_build
         && let Some(stamp) = read_stamp(&stamp_path)
         && stamp.key == key
         && !stamp.bins.is_empty()
@@ -236,6 +296,31 @@ pub fn install(
         tool.version
     );
     checkout.put_lock(&lock_path)?;
+    let vendored = vendor::vendor(project, name, &checkout, args.offline, &[])?;
+    let features = feature_args(tool);
+    let selection = graph::Selection {
+        features: &features,
+        targets: opts.targets,
+    };
+    let changes = review::review(
+        project,
+        name,
+        selection,
+        &checkout,
+        &vendored,
+        args.offline,
+        opts.approve_build,
+    )?;
+    clean_if_changed(&target_dir, &changes)?;
+    vendor::settle(&vendored)?;
+    // `--approve-build` may have just written the review file.
+    let key = stamp_key(
+        name,
+        tool,
+        &lock_text,
+        &review::file_digest(project, name)?,
+        &cargo_args,
+    );
 
     // The tracking key contains the source path, so binaries from an earlier install are
     // owned by a "different" package: --force lets cargo replace them. Our stamp decides
@@ -249,11 +334,12 @@ pub fn install(
             .arg(project.install_root())
             .arg("--target-dir")
             .arg(&target_dir)
+            .args(&vendored.config_args)
             .args(&cargo_args),
     )?;
 
     let bins = installed_bins(project, name, &tool.version);
-    match checksums {
+    match opts.checksums {
         Checksums::Write => checksum::write(project, name, &bins)?,
         Checksums::Expect => expect_recorded(project, name, &bins)?,
     }

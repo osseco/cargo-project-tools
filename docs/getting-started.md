@@ -70,7 +70,7 @@ cargo project-tools init
 cargo project-tools add cargo-nextest
 ```
 
-`init` creates `project-tools.toml` and `.project-tools/`. `add` records the tool and copies the `Cargo.lock` it ships with (or generates one, if it ships none) into `.project-tools/crates/cargo-nextest/`. That lock is now yours.
+`init` creates `project-tools.toml` and `.project-tools/`, and asks which [targets](configuration.md#targets) to review tools for, suggesting this machine and the runners of your GitHub workflows. `add` records the tool and copies the `Cargo.lock` it ships with (or generates one, if it ships none) into `.project-tools/crates/cargo-nextest/`. That lock is now yours.
 
 ## Audit and fix
 

@@ -40,6 +40,18 @@ pub fn output(cmd: &mut Command) -> Result<String> {
     Ok(String::from_utf8(out.stdout)?)
 }
 
+/// Run capturing stdout and stderr; stderr is printed only when the command fails.
+pub fn output_quiet(cmd: &mut Command) -> Result<String> {
+    let out = cmd
+        .output()
+        .with_context(|| format!("failed to start `{}`", describe(cmd)))?;
+    if !out.status.success() {
+        eprint!("{}", String::from_utf8_lossy(&out.stderr));
+        bail!("`{}` failed ({})", describe(cmd), out.status);
+    }
+    Ok(String::from_utf8(out.stdout)?)
+}
+
 /// Find an executable on PATH.
 pub fn which(name: &str) -> Option<std::path::PathBuf> {
     let path = std::env::var_os("PATH")?;

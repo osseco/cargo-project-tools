@@ -60,7 +60,7 @@ Run `pre-commit run --all-files` before staging a chunk. It runs fmt, clippy, te
 
 It needs these on PATH: `sfw`, `cargo-deny`, `zizmor`, `actionlint`, `uv`, `pre-commit`.
 
-Unit tests go in a sibling `<module>_test.rs` file, pulled in at the end of the module with `#[cfg(test)] #[path = "<module>_test.rs"] mod tests;`. They must not touch the network.
+Unit tests go in a sibling `<module>_test.rs` file, pulled in at the end of the module with `#[cfg(test)] #[path = "<module>_test.rs"] mod tests;`. They must not touch the network. Tests that run cargo use the offline registry in `src/test_registry.rs`.
 
 pre-commit doesn't cover `site/`. After changing `site/`, `docs/` or `llms.txt`, run in `site/`:
 
@@ -85,7 +85,10 @@ Never stage `site/dist/` or `site/node_modules/`.
 - `src/source/mod.rs`: full checkouts and minimal scratch projects (manifest + target stubs).
 - `src/lock.rs`: lock parsing, root check, diff, `cargo update`.
 - `src/install.rs`: `cargo install --path` invocation, build settings → `--config`, install stamps.
-- `src/graph.rs`: which locked packages a tool builds with its features (`cargo tree` on a scratch copy).
+- `src/review.rs`: `build-review.toml`: collects build scripts, proc macros and shipped cargo config, checks them against the file, applies overrides and strips.
+- `src/vendor.rs`: `cargo vendor` into `targets/<tool>/vendor`; builds use it through source replacement.
+- `src/graph.rs`: which locked packages a tool builds with its features and targets (`cargo tree` on a scratch copy).
+- `src/targets.rs`: the host triple, the check that it and `--target` are approved targets, and the target suggestions for `init` (this machine and GitHub workflow runners).
 - `src/audit.rs`: matches locks against the advisory database with rustsec (root and git packages included), our own yanked check, ignore list, fix suggestions.
 - `src/advisory_db.rs`: downloads, revalidates (ETag, `advisory-db-max-age`) and swaps in the RustSec advisory database.
 - `src/sfw.rs`: re-executes package-downloading commands under sfw.
@@ -98,11 +101,13 @@ Never stage `site/dist/` or `site/node_modules/`.
 - https only for downloads and git. `GIT_ALLOW_PROTOCOL=https` is set for clones.
 - Verify every `.crate` against the index checksum before use.
 - Reject archive paths that escape the crate directory.
+- Tool names must be crate names (they become directory names), and files we rewrite in a tool's source must not be links.
 - Start processes with `Command::arg`, never a shell.
 - Cargo runs from the project root, never from inside a tool's source: config and toolchain files are found from the working directory up. A tool's shipped `rust-toolchain*` files are removed.
 - Reject user values that start with `-` where they're passed as git refs.
 - Never weaken TLS verification. Extra trust comes only from `SSL_CERT_FILE` (set by sfw).
 - `install` always passes `--locked`, so cargo refuses a lock that doesn't fit the manifest.
+- Build-time code (build scripts, proc macros, a tool's shipped `.cargo/config*`) is built only when recorded in the tool's `build-review.toml`. Collecting it uses `cargo tree`, `cargo metadata` and `cargo vendor`, which compile and run nothing.
 
 ## GitHub Actions
 

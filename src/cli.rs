@@ -22,7 +22,7 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Create project-tools.toml and the .project-tools directory.
-    Init,
+    Init(InitArgs),
     /// Add a tool, starting from the Cargo.lock it ships with, or a generated one.
     Add(AddArgs),
     /// Remove a tool, its lock, build dir and binaries.
@@ -94,6 +94,14 @@ pub enum Command {
 }
 
 #[derive(Debug, Args)]
+pub struct InitArgs {
+    /// Target triple to review, audit and install tools for (repeatable). Without it,
+    /// init offers this machine and the runners of the project's GitHub workflows.
+    #[arg(long = "target")]
+    pub targets: Vec<String>,
+}
+
+#[derive(Debug, Args)]
 pub struct AddArgs {
     /// Crate name, optionally with a version requirement: `name` or `name@1.2.3`.
     pub spec: String,
@@ -114,6 +122,10 @@ pub struct AddArgs {
     /// Binaries to install (default: all).
     #[arg(long = "bin")]
     pub bins: Vec<String>,
+    /// Record new or changed build scripts, proc macros and cargo config in
+    /// build-review.toml. Review them first.
+    #[arg(long)]
+    pub approve_build: bool,
 }
 
 #[derive(Debug, Args)]
@@ -122,6 +134,10 @@ pub struct UpgradeArgs {
     /// Version requirement (default: latest stable).
     #[arg(long)]
     pub version: Option<String>,
+    /// Record new or changed build scripts, proc macros and cargo config in
+    /// build-review.toml. Review them first.
+    #[arg(long)]
+    pub approve_build: bool,
 }
 
 #[derive(Debug, Args)]
@@ -136,6 +152,10 @@ pub struct UpdateArgs {
     /// Also update the dependencies of the given dependencies.
     #[arg(long)]
     pub recursive: bool,
+    /// Record new or changed build scripts, proc macros and cargo config in
+    /// build-review.toml. Review them first.
+    #[arg(long)]
+    pub approve_build: bool,
 }
 
 #[derive(Debug, Args)]
@@ -145,6 +165,13 @@ pub struct InstallArgs {
     /// Rebuild even if the install stamp is up to date.
     #[arg(long)]
     pub force: bool,
+    /// Record new or changed build scripts, proc macros and cargo config in
+    /// build-review.toml. Review them first.
+    #[arg(long)]
+    pub approve_build: bool,
+    /// Add this machine (and --target) to the tool's targets when it isn't one of them.
+    #[arg(long)]
+    pub approve_target: bool,
     /// Don't audit the locks before building.
     #[arg(long)]
     pub no_audit: bool,

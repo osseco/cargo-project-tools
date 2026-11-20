@@ -26,6 +26,19 @@ Every command runs as `cargo project-tools <command>`. Apart from `init` and the
 
 Creates `project-tools.toml` with default build settings, and `.project-tools/` with its `.gitignore`.
 
+It also sets the [`targets`](configuration.md#targets) tools are reviewed, audited and installed for. It offers this machine and the GitHub-hosted runners your `.github/workflows` use (`ubuntu-*`, `macos-*`, `windows-*`, found anywhere in the files, matrix lists included), and asks which to keep: numbers or triples, `all` for every target, or Enter for every suggestion. Without a terminal it takes every suggestion.
+
+```bash
+cargo project-tools init
+cargo project-tools init --target aarch64-apple-darwin --target x86_64-unknown-linux-gnu
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--target <triple>` | Set the targets without asking (repeatable) |
+
+An existing `project-tools.toml` is left as it is.
+
 ## add
 
 ```bash
@@ -41,8 +54,11 @@ cargo project-tools add my-tool --git https://github.com/org/my-tool --tag v1.2.
 | `-F`, `--features <list>` | Features to enable, comma-separated |
 | `--no-default-features` | Turn off default features |
 | `--bin <name>` | Binaries to install (repeatable; default: all) |
+| `--approve-build` | Record the tool's build scripts, proc macros and cargo config in [`build-review.toml`](build-review.md) |
 
 Copies the lock the tool ships with into `.project-tools/crates/<tool>/` and adds a `[tool.<name>]` entry. A tool that ships no lock gets one from `cargo generate-lockfile`, which only reads the index: nothing is compiled and no build script runs.
+
+Before anything is written, it [reviews the build-time code](build-review.md) the lock brings in, and stops while any of it isn't in `build-review.toml`. Look at the files it lists, then run it again with `--approve-build`.
 
 ## remove
 
@@ -57,6 +73,8 @@ cargo project-tools upgrade cargo-nextest --version 0.9.90
 
 Moves to the latest stable version, or the one matching `--version`. Starts from the new release's lock, then reapplies every dependency you had bumped past it, as long as cargo still resolves. If the new release ships no lock, it starts from yours instead: cargo keeps every pinned version that still fits and only resolves what the new version needs. A git tool follows its tag or branch again.
 
+New or changed [build-time code](build-review.md) stops it before the lock is saved; `--approve-build` records it.
+
 ## update
 
 ```bash
@@ -70,8 +88,9 @@ cargo project-tools update cargo-nextest rustls@0.23.10 --precise 0.23.18
 | `[deps…]` | Dependencies to update (`name` or `name@version`); all when omitted |
 | `--precise <version>` | Update a single dependency to exactly this version |
 | `--recursive` | Also update the dependencies of the given dependencies |
+| `--approve-build` | Record new or changed build-time code in [`build-review.toml`](build-review.md) |
 
-Runs `cargo update` against the tool's lock. The lock is only saved if cargo resolves it.
+Runs `cargo update` against the tool's lock. The lock is only saved if cargo resolves it, and if every build script, proc macro and cargo config it builds is [recorded](build-review.md).
 
 ## install
 
@@ -82,6 +101,8 @@ cargo project-tools install cargo-nextest --force
 
 First it [audits](#audit) the lock of every selected tool. If any of them has a vulnerability that isn't ignored, nothing is built. Then it builds each tool with `cargo install --path … --locked` and installs it into `.project-tools/bin`. A tool whose version, lock and build settings haven't changed since the last install, and whose binaries still match their checksums, is skipped. What it was built from is recorded in `.project-tools/bin/.stamps`, so restoring `.project-tools/bin` alone is enough to skip it.
 
+The tool's dependencies are vendored first with `cargo vendor --locked` into `.project-tools/targets/<tool>/vendor`, and the build reads them from there instead of cargo's shared caches. Cargo checks each one against the lock, and nothing is compiled while vendoring. Then every build script, proc macro and cargo config the build would use must be in the tool's [`build-review.toml`](build-review.md), or nothing is built; overrides and strips from that file are applied to the vendored copies.
+
 A `rust-toolchain` or `rust-toolchain.toml` in the tool's source is removed before building, as `cargo install <crate>` ignores it too: the tool is built with your toolchain. Cargo always runs from the project root, so config and toolchain files are looked up from there, never from inside a tool's source.
 
 After building, it writes the sha256 of each of the tool's binaries to `.project-tools/bin/<tool>.sha256`, in `sha256sum` format, for [`verify`](#verify).
@@ -89,6 +110,8 @@ After building, it writes the sha256 of each of the tool's binaries to `.project
 | Option | Meaning |
 | --- | --- |
 | `--force` | Rebuild even when nothing changed |
+| `--approve-build` | Record new or changed build-time code in [`build-review.toml`](build-review.md); reviews even when the tool is up to date |
+| `--approve-target` | Add this machine, and `--target`, to the tool's [`targets`](configuration.md#targets) when they aren't listed |
 | `--no-audit` | Skip the audit |
 | `--deny-warnings` | Also refuse to build on warnings that aren't ignored |
 | `--profile <name>`, `--debug` | Override `[build].profile` |
@@ -143,7 +166,7 @@ Checks every tool's lock against the [RustSec advisory database](https://rustsec
 
 Path packages and other registries aren't checked.
 
-Only packages the tool actually builds are checked. A lock lists every optional dependency, whatever the features, so `audit` asks `cargo tree` what the tool's [`features` and `default-features`](configuration.md#toolname) build: normal and build dependencies, for every target. That resolves features without compiling anything or running build scripts, but cargo downloads the dependencies to do it. The rest is reported as `skipped N packages not built with these features`, and an ignore for one of them becomes unused.
+Only packages the tool actually builds are checked. A lock lists every optional dependency, whatever the features, so `audit` asks `cargo tree` what the tool's [`features` and `default-features`](configuration.md#toolname) build: normal and build dependencies, for the tool's [`targets`](configuration.md#targets) (named as `targets: …` in the output) or every target when none are set. That resolves features without compiling anything or running build scripts, but cargo downloads the dependencies to do it. The answer is kept in `.project-tools/bin/.stamps/<tool>.built.json`, so this only happens again when the lock, the features or the targets change. The rest is reported as `skipped N packages not built with these features`, and an ignore for one of them becomes unused.
 
 Then it:
 

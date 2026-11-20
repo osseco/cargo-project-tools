@@ -42,6 +42,24 @@ codegen-units = 1
 # version = "0.9.80"
 "#;
 
+/// `TEMPLATE` with `[settings].targets` set to `targets`, or left out (all targets).
+pub fn template_with(targets: Option<&[String]>) -> String {
+    let Some(targets) = targets else {
+        return TEMPLATE.to_string();
+    };
+    let mut doc: toml_edit::DocumentMut = TEMPLATE.parse().expect("the template parses");
+    let settings = doc["settings"]
+        .as_table_mut()
+        .expect("the template has [settings]");
+    settings.insert("targets", toml_edit::value(string_array(targets)));
+    if let Some(mut key) = settings.key_mut("targets") {
+        key.leaf_decor_mut().set_prefix(
+            "# Target triples tools are reviewed, audited and installed for; remove to allow all.\n",
+        );
+    }
+    doc.to_string()
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -60,6 +78,8 @@ pub struct Settings {
     pub sfw: SfwMode,
     /// How old the advisory database may get before it's revalidated, e.g. `"12h"`, `"1d"`.
     pub advisory_db_max_age: Option<String>,
+    /// Target triples tools are reviewed, audited and installed for; all when unset.
+    pub targets: Option<Vec<String>>,
 }
 
 const DEFAULT_ADVISORY_DB_MAX_AGE: Duration = Duration::from_secs(86_400);
@@ -120,6 +140,8 @@ pub struct Tool {
     #[serde(default)]
     pub bins: Vec<String>,
     pub build: Option<Build>,
+    /// Replaces `[settings].targets` for this tool.
+    pub targets: Option<Vec<String>>,
 }
 
 impl Build {
@@ -164,15 +186,24 @@ impl Config {
             toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
         config.settings.advisory_db_max_age()?;
         config.build.validate("[build]")?;
+        validate_targets(config.settings.targets.as_deref(), "[settings]")?;
         for (name, tool) in &config.tool {
+            validate_tool_name(name)?;
             if let Some(build) = &tool.build {
                 build.validate(&format!("[tool.{name}.build]"))?;
             }
+            validate_targets(tool.targets.as_deref(), &format!("[tool.{name}]"))?;
             if let Some(url) = &tool.git {
                 ensure_https(url)?;
             }
         }
         Ok(config)
+    }
+
+    /// The targets `tool` is reviewed and installed for: its own list, else the project's.
+    /// `None` means every target.
+    pub fn targets_for<'a>(&'a self, tool: &'a Tool) -> Option<&'a [String]> {
+        tool.targets.as_deref().or(self.settings.targets.as_deref())
     }
 
     pub fn tool(&self, name: &str) -> Result<&Tool> {
@@ -196,6 +227,36 @@ impl Config {
             })
             .collect()
     }
+}
+
+/// A crate name as cargo allows it. Tool names become directory names under
+/// `.project-tools`, so anything else, like `..` or `/`, is refused.
+pub fn validate_tool_name(name: &str) -> Result<()> {
+    let valid = name
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if !valid {
+        bail!("`{name}` is not a valid crate name");
+    }
+    Ok(())
+}
+
+fn validate_targets(targets: Option<&[String]>, context: &str) -> Result<()> {
+    if let Some(list) = targets {
+        if list.is_empty() {
+            bail!(
+                "{context}: `targets` is empty; list at least one target triple, or remove it to allow all"
+            );
+        }
+        if let Some(t) = list.iter().find(|t| !crate::targets::is_triple(t)) {
+            bail!("{context}: `{t}` is not a target triple");
+        }
+    }
+    Ok(())
 }
 
 pub fn ensure_https(url: &str) -> Result<()> {
@@ -246,6 +307,34 @@ impl ConfigEditor {
             .expect("[tool.<name>] must be a table");
         for (k, v) in entries {
             table.insert(k, toml_edit::Item::Value(v.clone()));
+        }
+    }
+
+    /// Add `triples` to `[tool.<tool>].targets` when given, else to `[settings].targets`.
+    pub fn add_targets(&mut self, tool: Option<&str>, triples: &[String]) {
+        let table = match tool {
+            Some(name) => self
+                .tools()
+                .entry(name)
+                .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
+                .as_table_mut()
+                .expect("[tool.<name>] must be a table"),
+            None => self
+                .doc
+                .entry("settings")
+                .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
+                .as_table_mut()
+                .expect("[settings] must be a table"),
+        };
+        let item = table
+            .entry("targets")
+            .or_insert_with(|| toml_edit::value(toml_edit::Array::new()));
+        if let Some(list) = item.as_array_mut() {
+            for t in triples {
+                if !list.iter().any(|v| v.as_str() == Some(t)) {
+                    list.push(t.as_str());
+                }
+            }
         }
     }
 

@@ -89,6 +89,13 @@ impl Project {
         self.bin_dir().join(".stamps").join(format!("{name}.json"))
     }
 
+    /// The packages `name` builds, remembered next to its stamp (`graph::built_packages`).
+    pub fn built_path(&self, name: &str) -> PathBuf {
+        self.bin_dir()
+            .join(".stamps")
+            .join(format!("{name}.built.json"))
+    }
+
     pub fn crate_dir(&self, name: &str) -> PathBuf {
         self.tools_dir().join("crates").join(name)
     }
@@ -99,6 +106,10 @@ impl Project {
 
     pub fn audit_ignore_path(&self, name: &str) -> PathBuf {
         self.crate_dir(name).join("audit-ignore.toml")
+    }
+
+    pub fn review_path(&self, name: &str) -> PathBuf {
+        self.crate_dir(name).join(crate::review::FILE)
     }
 
     pub fn self_audit_ignore_path(&self) -> PathBuf {

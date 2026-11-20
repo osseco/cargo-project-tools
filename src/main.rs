@@ -9,9 +9,14 @@ mod lock;
 mod net;
 mod process;
 mod project;
+mod review;
 mod selfinstall;
 mod sfw;
 mod source;
+mod targets;
+#[cfg(test)]
+mod test_registry;
+mod vendor;
 
 use std::fs;
 use std::process::ExitCode;
@@ -20,8 +25,8 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 
 use cli::{
-    AddArgs, AuditArgs, AuditDbCommand, Cli, Command, InstallArgs, UpdateArgs, UpgradeArgs,
-    VerifyArgs,
+    AddArgs, AuditArgs, AuditDbCommand, Cli, Command, InitArgs, InstallArgs, UpdateArgs,
+    UpgradeArgs, VerifyArgs,
 };
 use config::{AuditIgnore, Config, ConfigEditor, SfwMode};
 use project::Project;
@@ -46,8 +51,8 @@ fn run() -> Result<ExitCode> {
     }
     let cli = Cli::parse_from(argv);
 
-    if let Command::Init = cli.command {
-        return init().map(|()| ExitCode::SUCCESS);
+    if let Command::Init(args) = &cli.command {
+        return init(args).map(|()| ExitCode::SUCCESS);
     }
     // Self-management works outside a project.
     let self_out = match &cli.command {
@@ -87,8 +92,8 @@ fn run() -> Result<ExitCode> {
     }
 
     match cli.command {
-        Command::Init => unreachable!(),
-        Command::Add(args) => add(&project, args)?,
+        Command::Init(_) => unreachable!(),
+        Command::Add(args) => add(&project, &config, args)?,
         Command::Remove { name } => remove(&project, &config, &name)?,
         Command::Upgrade(args) => upgrade(&project, &config, args)?,
         Command::Update(args) => update(&project, &config, args)?,
@@ -113,18 +118,65 @@ fn run() -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn init() -> Result<()> {
+fn init(args: &InitArgs) -> Result<()> {
     let project = Project::for_init()?;
     let path = project.config_path();
     if path.exists() {
         println!("{} already exists", path.display());
     } else {
-        fs::write(&path, config::TEMPLATE)?;
+        let targets = if args.targets.is_empty() {
+            choose_targets(&project)?
+        } else {
+            Some(args.targets.clone())
+        };
+        fs::write(&path, config::template_with(targets.as_deref()))?;
         println!("Created {}", path.display());
+        match targets {
+            Some(t) => println!("Targets: {}", t.join(", ")),
+            None => println!("Targets: all"),
+        }
     }
     project.ensure_layout()?;
     println!("Prepared {}", project.tools_dir().display());
     Ok(())
+}
+
+/// Offer this machine and the workflow runners as targets. Without a terminal to ask on,
+/// all of them are taken.
+fn choose_targets(project: &Project) -> Result<Option<Vec<String>>> {
+    use std::io::{BufRead, IsTerminal, Write};
+    let suggestions = targets::suggestions(&project.root);
+    if suggestions.is_empty() {
+        return Ok(None);
+    }
+    let all: Vec<String> = suggestions.iter().map(|s| s.triple.clone()).collect();
+    if !std::io::stdin().is_terminal() {
+        println!(
+            "note: no terminal to ask on; targets are {} (change `targets` in {} or pass --target)",
+            all.join(", "),
+            project::CONFIG_FILE
+        );
+        return Ok(Some(all));
+    }
+    println!("Targets to review, audit and install tools for:");
+    for (i, s) in suggestions.iter().enumerate() {
+        println!("  {}) {}  ({})", i + 1, s.triple, s.sources.join(", "));
+    }
+    loop {
+        print!(
+            "Numbers or triples, `all` for every target [Enter: 1-{}]: ",
+            suggestions.len()
+        );
+        std::io::stdout().flush()?;
+        let mut line = String::new();
+        if std::io::stdin().lock().read_line(&mut line)? == 0 {
+            return Ok(Some(all));
+        }
+        match targets::parse_choice(&line, &suggestions) {
+            Ok(choice) => return Ok(choice),
+            Err(e) => println!("  {e}"),
+        }
+    }
 }
 
 fn split_spec(spec: &str) -> (&str, Option<&str>) {
@@ -144,8 +196,9 @@ fn write_new_lock(project: &Project, name: &str, lock_text: &str) -> Result<()> 
     Ok(())
 }
 
-fn add(project: &Project, args: AddArgs) -> Result<()> {
+fn add(project: &Project, config: &Config, args: AddArgs) -> Result<()> {
     let (name, req) = split_spec(&args.spec);
+    config::validate_tool_name(name)?;
     let mut editor = ConfigEditor::open(&project.config_path())?;
     if editor.has_tool(name) {
         bail!("`{name}` is already in project-tools.toml; use `upgrade` to change its version");
@@ -168,7 +221,7 @@ fn add(project: &Project, args: AddArgs) -> Result<()> {
             version_req: req.map(str::to_string),
         },
     };
-    let checkout = source::checkout(project, name, &origin, Dest::Temp)?;
+    let checkout = source::checkout(project, name, &origin, review_dest(project, name))?;
     let (lock_text, start) =
         lock::shipped_or_generated(&checkout.manifest_path(), &checkout.lock_path(), &[])?;
     let kind = match start {
@@ -176,6 +229,15 @@ fn add(project: &Project, args: AddArgs) -> Result<()> {
         lock::Start::Generated => "a generated Cargo.lock (it ships none)",
     };
     lock::check_root(&lock::parse(&lock_text)?, name, &checkout.version)?;
+    let features = install::feature_flags(&args.features, !args.no_default_features);
+    review_build(
+        project,
+        name,
+        &features,
+        config.settings.targets.as_deref(),
+        &checkout,
+        args.approve_build,
+    )?;
     write_new_lock(project, name, &lock_text)?;
 
     let mut entries: Vec<(&str, toml_edit::Value)> =
@@ -226,7 +288,11 @@ fn remove(project: &Project, config: &Config, name: &str) -> Result<()> {
             fs::remove_dir_all(&dir).with_context(|| format!("removing {}", dir.display()))?;
         }
     }
-    for file in [checksum::path(project, name), project.stamp_path(name)] {
+    for file in [
+        checksum::path(project, name),
+        project.stamp_path(name),
+        project.built_path(name),
+    ] {
         if file.exists() {
             fs::remove_file(&file).with_context(|| format!("removing {}", file.display()))?;
         }
@@ -251,7 +317,7 @@ fn upgrade(project: &Project, config: &Config, args: UpgradeArgs) -> Result<()> 
             Origin::Git { url, reference }
         }
     };
-    let checkout = source::checkout(project, name, &origin, Dest::Temp)?;
+    let checkout = source::checkout(project, name, &origin, review_dest(project, name))?;
     let ours = lock::load(&project.lock_path(name))?;
     let manifest = checkout.manifest_path();
     let lock_path = checkout.lock_path();
@@ -299,6 +365,14 @@ fn upgrade(project: &Project, config: &Config, args: UpgradeArgs) -> Result<()> 
     lock::check_root(&final_lock, name, &checkout.version)?;
     println!("Changes to {name}'s lock:");
     lock::print_diff(&lock::diff(&ours, &final_lock));
+    review_build(
+        project,
+        name,
+        &install::feature_args(tool),
+        config.targets_for(tool),
+        &checkout,
+        args.approve_build,
+    )?;
     fs::copy(&lock_path, project.lock_path(name))?;
 
     let mut editor = ConfigEditor::open(&project.config_path())?;
@@ -323,8 +397,9 @@ fn update(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
     let ours = lock::load(&ours_path)?;
     lock::check_root(&ours, name, &tool.version)?;
 
-    let scratch = source::scratch(project, name, &Origin::of(tool))?;
-    scratch.put_lock(&ours_path)?;
+    // A full checkout rather than a scratch project: the review needs the real build scripts.
+    let checkout = source::checkout(project, name, &Origin::of(tool), review_dest(project, name))?;
+    checkout.put_lock(&ours_path)?;
     let mut cargo_args = Vec::new();
     for dep in &args.deps {
         cargo_args.extend(["-p".to_string(), dep.clone()]);
@@ -336,16 +411,47 @@ fn update(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
         cargo_args.push("--recursive".into());
     }
     // Only a successful resolve reaches the copy below, so a failure leaves our lock as is.
-    lock::cargo_update(&scratch.manifest_path(), &cargo_args)?;
+    lock::cargo_update(&checkout.manifest_path(), &cargo_args)?;
 
-    let updated = lock::load(&scratch.lock_path())?;
+    let updated = lock::load(&checkout.lock_path())?;
     lock::check_root(&updated, name, &tool.version)?;
     let changes = lock::diff(&ours, &updated);
     println!("Changes to {name}'s lock:");
     lock::print_diff(&changes);
     if !changes.is_empty() {
-        fs::copy(scratch.lock_path(), &ours_path)?;
+        review_build(
+            project,
+            name,
+            &install::feature_args(tool),
+            config.targets_for(tool),
+            &checkout,
+            args.approve_build,
+        )?;
+        fs::copy(checkout.lock_path(), &ours_path)?;
     }
+    Ok(())
+}
+
+/// Where `add`, `upgrade` and `update` check out the tool: the place `install` builds from,
+/// so the files a review lists are still there afterwards.
+fn review_dest(project: &Project, name: &str) -> Dest {
+    Dest::Fixed(project.target_dir(name).join("src"))
+}
+
+/// Review the build-time code that the lock in `checkout` brings in, before it's recorded.
+fn review_build(
+    project: &Project,
+    name: &str,
+    features: &[String],
+    targets: Option<&[String]>,
+    checkout: &source::Checkout,
+    approve: bool,
+) -> Result<()> {
+    let vendored = vendor::vendor(project, name, checkout, false, &[])?;
+    let selection = graph::Selection { features, targets };
+    review::review(
+        project, name, selection, checkout, &vendored, false, approve,
+    )?;
     Ok(())
 }
 
@@ -369,8 +475,23 @@ fn load_auditor(
     Ok((auditor, open))
 }
 
-/// The packages a tool builds with its features: `graph::built_packages` outside tests.
+/// The packages a tool builds with its features: `built_for` outside tests.
 type BuiltOf<'a> = dyn FnMut(&str, &config::Tool) -> Result<graph::Built> + 'a;
+
+/// The packages `tool` builds for its targets, which are named when they're limited.
+fn built_for(
+    project: &Project,
+    config: &Config,
+    name: &str,
+    tool: &config::Tool,
+    offline: bool,
+) -> Result<graph::Built> {
+    let targets = config.targets_for(tool);
+    if let Some(list) = targets {
+        println!("  targets: {}", list.join(", "));
+    }
+    graph::built_packages(project, name, tool, targets, offline)
+}
 
 fn audit_tool(
     project: &Project,
@@ -380,8 +501,8 @@ fn audit_tool(
     today: &str,
     built_of: &mut BuiltOf,
 ) -> Result<audit::Outcome> {
-    let built = built_of(name, tool)?;
     println!("{name}:");
+    let built = built_of(name, tool)?;
     let report = auditor.audit(&project.lock_path(name), name, tool.git.is_some(), &built)?;
     if report.skipped > 0 {
         println!(
@@ -408,7 +529,7 @@ fn audit(project: &Project, config: &Config, args: AuditArgs) -> Result<ExitCode
     let today = audit::today();
     let (mut vulns, mut warns) = (own, 0);
     let mut built_of =
-        |name: &str, tool: &config::Tool| graph::built_packages(project, name, tool, false);
+        |name: &str, tool: &config::Tool| built_for(project, config, name, tool, false);
     for (name, tool) in tools {
         let outcome = audit_tool(project, &mut auditor, name, tool, &today, &mut built_of)?;
         vulns += outcome.vulnerabilities;
@@ -425,6 +546,14 @@ fn audit(project: &Project, config: &Config, args: AuditArgs) -> Result<ExitCode
 
 /// Audit every selected tool's lock first, so nothing is built when one of them fails.
 fn install(project: &Project, config: &Config, args: &InstallArgs) -> Result<()> {
+    let tools = config.select(&args.names)?;
+    let reloaded;
+    let config = if check_targets(project, config, &tools, &args.build, args.approve_target)? {
+        reloaded = Config::load(&project.config_path())?;
+        &reloaded
+    } else {
+        config
+    };
     let tools = config.select(&args.names)?;
     if !args.no_audit {
         audit_gate(
@@ -443,11 +572,54 @@ fn install(project: &Project, config: &Config, args: &InstallArgs) -> Result<()>
             tool,
             &build,
             &args.build,
-            args.force,
-            install::Checksums::Write,
+            install::Options {
+                force: args.force,
+                approve_build: args.approve_build,
+                checksums: install::Checksums::Write,
+                targets: config.targets_for(tool),
+            },
         )?;
     }
     Ok(())
+}
+
+/// Make sure this machine, and `--target` or `[build].target`, are among each tool's
+/// targets. Without `approve` a missing one is an error; with it, it's added to
+/// project-tools.toml, to the tool's own list when it has one. Returns whether it changed.
+fn check_targets(
+    project: &Project,
+    config: &Config,
+    tools: &[(&str, &config::Tool)],
+    build_args: &cli::BuildArgs,
+    approve: bool,
+) -> Result<bool> {
+    let host = targets::host()?;
+    let mut missing: Vec<(&str, Option<&str>, Vec<String>)> = Vec::new();
+    for (name, tool) in tools {
+        let build = config.build.merged(tool.build.as_ref());
+        let build_target = build_args.target.as_deref().or(build.target.as_deref());
+        let absent = targets::missing(&host, build_target, config.targets_for(tool));
+        if !absent.is_empty() {
+            missing.push((name, tool.targets.is_some().then_some(*name), absent));
+        }
+    }
+    if missing.is_empty() {
+        return Ok(false);
+    }
+    if !approve {
+        for (name, _, absent) in &missing {
+            println!("  {name}: {} isn't an approved target", absent.join(", "));
+        }
+        bail!("rerun with --approve-target to add the missing targets");
+    }
+    let mut editor = ConfigEditor::open(&project.config_path())?;
+    for (_, tool, absent) in &missing {
+        editor.add_targets(*tool, absent);
+        let place = tool.map_or("[settings]".to_string(), |t| format!("[tool.{t}]"));
+        println!("Added {} to {place} targets", absent.join(", "));
+    }
+    editor.save()?;
+    Ok(true)
 }
 
 /// Check every selected tool's binaries; with `--repair`, rebuild the ones that don't match
@@ -474,6 +646,7 @@ fn verify(project: &Project, config: &Config, args: &VerifyArgs) -> Result<ExitC
         }
     }
     if args.repair && !repairable.is_empty() {
+        check_targets(project, config, &repairable, &args.build, false)?;
         if !args.no_audit {
             audit_gate(
                 project,
@@ -491,8 +664,12 @@ fn verify(project: &Project, config: &Config, args: &VerifyArgs) -> Result<ExitC
                 tool,
                 &build,
                 &args.build,
-                true,
-                install::Checksums::Expect,
+                install::Options {
+                    force: true,
+                    approve_build: false,
+                    checksums: install::Checksums::Expect,
+                    targets: config.targets_for(tool),
+                },
             );
             match repaired {
                 Ok(()) => {
@@ -532,7 +709,7 @@ fn audit_gate(
         );
     }
     let mut built_of =
-        |name: &str, tool: &config::Tool| graph::built_packages(project, name, tool, offline);
+        |name: &str, tool: &config::Tool| built_for(project, config, name, tool, offline);
     audit_before_install(
         project,
         &mut auditor,

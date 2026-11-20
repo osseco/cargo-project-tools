@@ -8,6 +8,7 @@
 [settings]
 sfw = "auto"                 # "auto", "require" or "off"
 advisory-db-max-age = "1d"   # optional; hours ("12h") or days ("1d")
+targets = ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu"]   # optional; all when unset
 
 [build]
 profile = "release"
@@ -25,6 +26,12 @@ panic = "unwind"             # per-tool override
 ```
 
 `add`, `upgrade` and `remove` maintain the `[tool.*]` entries. You edit `[settings]` and `[build]`.
+
+### targets
+
+The target triples tools are [reviewed](build-review.md), audited and installed for. Only build scripts, proc macros and dependencies used on these targets need approval, and `audit` checks only those dependencies. `install` refuses to build on a machine, or with a `--target`, that isn't listed; `--approve-target` adds it here. Without `targets`, every target counts.
+
+`[tool.<name>].targets` replaces the list for one tool, for example a tool you only run in Linux CI.
 
 ### [build]
 
@@ -46,6 +53,7 @@ Allowed `profile-settings` keys: `inherits`, `opt-level`, `debug`, `strip`, `lto
 | `features` | Features to enable; `audit` checks only what they build |
 | `default-features` | `false` turns off default features; `audit` follows it too |
 | `bins` | Binaries to install (default: all) |
+| `targets` | Replaces [`[settings].targets`](#targets) for this tool |
 | `build` | A `[build]` table for this tool only; its keys override the global ones |
 
 Changing any of these makes `install` rebuild the tool.

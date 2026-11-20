@@ -98,3 +98,77 @@ fn self_ignores_need_an_expiry() {
     .unwrap();
     assert_eq!(AuditIgnore::load_self(&path).unwrap().ignore.len(), 1);
 }
+
+#[test]
+fn tool_targets_replace_the_project_list() {
+    let config: Config = toml::from_str(
+        "[settings]\ntargets = [\"a-b\", \"c-d\"]\n[tool.x]\nversion = \"1.0.0\"\n[tool.y]\nversion = \"1.0.0\"\ntargets = [\"e-f\"]\n",
+    )
+    .unwrap();
+    assert_eq!(
+        config.targets_for(&config.tool["x"]).unwrap(),
+        ["a-b", "c-d"]
+    );
+    assert_eq!(config.targets_for(&config.tool["y"]).unwrap(), ["e-f"]);
+    let unset: Config = toml::from_str("[tool.x]\nversion = \"1.0.0\"\n").unwrap();
+    assert!(unset.targets_for(&unset.tool["x"]).is_none());
+}
+
+#[test]
+fn bad_target_lists_are_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("project-tools.toml");
+    for (text, needle) in [
+        ("[settings]\ntargets = []\n", "is empty"),
+        ("[tool.x]\nversion = \"1.0.0\"\ntargets = []\n", "[tool.x]"),
+        ("[settings]\ntargets = [\"--x\"]\n", "not a target triple"),
+    ] {
+        fs::write(&path, text).unwrap();
+        let err = format!("{:#}", Config::load(&path).unwrap_err());
+        assert!(err.contains(needle), "{text}: {err}");
+    }
+}
+
+#[test]
+fn editor_adds_targets_where_they_apply() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("project-tools.toml");
+    fs::write(
+        &path,
+        "[settings]\n# ours\ntargets = [\"a-b\"]\n\n[tool.y]\nversion = \"1.0.0\"\ntargets = [\"e-f\"]\n",
+    )
+    .unwrap();
+    let mut ed = ConfigEditor::open(&path).unwrap();
+    ed.add_targets(None, &["c-d".into(), "a-b".into()]);
+    ed.add_targets(Some("y"), &["g-h".into()]);
+    ed.save().unwrap();
+    assert!(fs::read_to_string(&path).unwrap().contains("# ours"));
+    let config = Config::load(&path).unwrap();
+    assert_eq!(config.settings.targets.unwrap(), ["a-b", "c-d"]);
+    assert_eq!(config.tool["y"].targets.as_deref().unwrap(), ["e-f", "g-h"]);
+}
+
+#[test]
+fn template_with_targets() {
+    assert_eq!(template_with(None), TEMPLATE);
+    let text = template_with(Some(&["a-b-c".to_string(), "d-e-f".to_string()]));
+    assert!(text.contains("# Target triples tools are reviewed"));
+    assert!(text.starts_with("# Tools managed by"));
+    let config: Config = toml::from_str(&text).unwrap();
+    assert_eq!(config.settings.targets.unwrap(), ["a-b-c", "d-e-f"]);
+}
+
+#[test]
+fn tool_names_are_crate_names() {
+    for good in ["cargo-nextest", "x", "_x", "a_b-1"] {
+        validate_tool_name(good).unwrap();
+    }
+    for bad in ["", "-x", "../x", "a/b", "a\\b", ".", "..", "a b", "é"] {
+        assert!(validate_tool_name(bad).is_err(), "{bad}");
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("project-tools.toml");
+    fs::write(&path, "[tool.\"../x\"]\nversion = \"1.0.0\"\n").unwrap();
+    let err = format!("{:#}", Config::load(&path).unwrap_err());
+    assert!(err.contains("not a valid crate name"), "{err}");
+}
