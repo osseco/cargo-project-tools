@@ -19,12 +19,15 @@ permissions: {}
 
 env:
   PRODUCT_VERSION: ${{ inputs.version }}
-  # Every job starts with an empty target/, so incremental output is never reused.
+  # Builds start from an empty target/ (tests on pull requests from main's), so
+  # incremental output is never reused.
   CARGO_INCREMENTAL: "0"
   CARGO_TERM_COLOR: always
 
-# No actions/cache in this workflow: release.yml builds the signed binaries with it,
-# and a restored cache entry could be written by any workflow run on main.
+# release.yml builds the signed binaries with this workflow, and a restored cache entry
+# could be written by any workflow run on main, so no job whose output is released uses
+# actions/cache. The one exception is the test job: its output isn't released, main
+# always builds from scratch and saves, and every other run only restores.
 
 jobs:
   vuln-check:
@@ -116,6 +119,8 @@ jobs:
     env:
       # sfw's local CA has no CRL/OCSP endpoint; schannel can't check revocation.
       CARGO_HTTP_CHECK_REVOKE: ${{ startsWith(matrix.os, 'windows') && 'false' || 'true' }}
+      # No debug info in test builds: less to compile and link, on runners that cost more.
+      CARGO_PROFILE_DEV_DEBUG: "0"
     defaults:
       run:
         shell: bash
@@ -136,7 +141,29 @@ jobs:
           cache: ${{ github.ref == 'refs/heads/main' && 'true' || 'restore' }}
       - name: Apply version
         run: python3 .github/update_version_in_cargo.py "$PRODUCT_VERSION"
+      # Main builds the cache, everything else uses it.
+      - name: Restore test build from main
+        if: github.ref != 'refs/heads/main'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: test-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+          restore-keys: test-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
       - run: sfw cargo test --locked
+      - name: Save test build
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: test-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.run_id }}
 
   pre-commit:
     needs: vuln-check
