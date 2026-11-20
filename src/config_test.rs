@@ -144,3 +144,13 @@ fn editor_adds_targets_where_they_apply() {
     assert_eq!(config.settings.targets.unwrap(), ["a", "b"]);
     assert_eq!(config.tool["y"].targets.as_deref().unwrap(), ["c", "d"]);
 }
+
+#[test]
+fn template_with_targets() {
+    assert_eq!(template_with(None), TEMPLATE);
+    let text = template_with(Some(&["a-b-c".to_string(), "d-e-f".to_string()]));
+    assert!(text.contains("# Target triples tools are reviewed"));
+    assert!(text.starts_with("# Tools managed by"));
+    let config: Config = toml::from_str(&text).unwrap();
+    assert_eq!(config.settings.targets.unwrap(), ["a-b-c", "d-e-f"]);
+}

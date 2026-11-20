@@ -22,7 +22,7 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Create project-tools.toml and the .project-tools directory.
-    Init,
+    Init(InitArgs),
     /// Add a tool, starting from the Cargo.lock it ships with, or a generated one.
     Add(AddArgs),
     /// Remove a tool, its lock, build dir and binaries.
@@ -91,6 +91,14 @@ pub enum Command {
     /// Asks the GitHub API without a token; nothing is downloaded.
     #[command(name = "self-check")]
     SelfCheck,
+}
+
+#[derive(Debug, Args)]
+pub struct InitArgs {
+    /// Target triple to review, audit and install tools for (repeatable). Without it,
+    /// init offers this machine and the runners of the project's GitHub workflows.
+    #[arg(long = "target")]
+    pub targets: Vec<String>,
 }
 
 #[derive(Debug, Args)]

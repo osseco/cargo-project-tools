@@ -88,7 +88,7 @@ Never stage `site/dist/` or `site/node_modules/`.
 - `src/review.rs`: `build-review.toml`: collects build scripts, proc macros and shipped cargo config, checks them against the file, applies overrides and strips.
 - `src/vendor.rs`: `cargo vendor` into `targets/<tool>/vendor`; builds use it through source replacement.
 - `src/graph.rs`: which locked packages a tool builds with its features and targets (`cargo tree` on a scratch copy).
-- `src/targets.rs`: the host triple and the check that it, and `--target`, are approved targets.
+- `src/targets.rs`: the host triple, the check that it and `--target` are approved targets, and the target suggestions for `init` (this machine and GitHub workflow runners).
 - `src/audit.rs`: matches locks against the advisory database with rustsec (root and git packages included), our own yanked check, ignore list, fix suggestions.
 - `src/advisory_db.rs`: downloads, revalidates (ETag, `advisory-db-max-age`) and swaps in the RustSec advisory database.
 - `src/sfw.rs`: re-executes package-downloading commands under sfw.

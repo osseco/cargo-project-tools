@@ -42,6 +42,24 @@ codegen-units = 1
 # version = "0.9.80"
 "#;
 
+/// `TEMPLATE` with `[settings].targets` set to `targets`, or left out (all targets).
+pub fn template_with(targets: Option<&[String]>) -> String {
+    let Some(targets) = targets else {
+        return TEMPLATE.to_string();
+    };
+    let mut doc: toml_edit::DocumentMut = TEMPLATE.parse().expect("the template parses");
+    let settings = doc["settings"]
+        .as_table_mut()
+        .expect("the template has [settings]");
+    settings.insert("targets", toml_edit::value(string_array(targets)));
+    if let Some(mut key) = settings.key_mut("targets") {
+        key.leaf_decor_mut().set_prefix(
+            "# Target triples tools are reviewed, audited and installed for; remove to allow all.\n",
+        );
+    }
+    doc.to_string()
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {

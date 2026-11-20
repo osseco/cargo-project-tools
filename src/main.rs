@@ -25,8 +25,8 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 
 use cli::{
-    AddArgs, AuditArgs, AuditDbCommand, Cli, Command, InstallArgs, UpdateArgs, UpgradeArgs,
-    VerifyArgs,
+    AddArgs, AuditArgs, AuditDbCommand, Cli, Command, InitArgs, InstallArgs, UpdateArgs,
+    UpgradeArgs, VerifyArgs,
 };
 use config::{AuditIgnore, Config, ConfigEditor, SfwMode};
 use project::Project;
@@ -51,8 +51,8 @@ fn run() -> Result<ExitCode> {
     }
     let cli = Cli::parse_from(argv);
 
-    if let Command::Init = cli.command {
-        return init().map(|()| ExitCode::SUCCESS);
+    if let Command::Init(args) = &cli.command {
+        return init(args).map(|()| ExitCode::SUCCESS);
     }
     // Self-management works outside a project.
     let self_out = match &cli.command {
@@ -92,7 +92,7 @@ fn run() -> Result<ExitCode> {
     }
 
     match cli.command {
-        Command::Init => unreachable!(),
+        Command::Init(_) => unreachable!(),
         Command::Add(args) => add(&project, &config, args)?,
         Command::Remove { name } => remove(&project, &config, &name)?,
         Command::Upgrade(args) => upgrade(&project, &config, args)?,
@@ -118,18 +118,65 @@ fn run() -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn init() -> Result<()> {
+fn init(args: &InitArgs) -> Result<()> {
     let project = Project::for_init()?;
     let path = project.config_path();
     if path.exists() {
         println!("{} already exists", path.display());
     } else {
-        fs::write(&path, config::TEMPLATE)?;
+        let targets = if args.targets.is_empty() {
+            choose_targets(&project)?
+        } else {
+            Some(args.targets.clone())
+        };
+        fs::write(&path, config::template_with(targets.as_deref()))?;
         println!("Created {}", path.display());
+        match targets {
+            Some(t) => println!("Targets: {}", t.join(", ")),
+            None => println!("Targets: all"),
+        }
     }
     project.ensure_layout()?;
     println!("Prepared {}", project.tools_dir().display());
     Ok(())
+}
+
+/// Offer this machine and the workflow runners as targets. Without a terminal to ask on,
+/// all of them are taken.
+fn choose_targets(project: &Project) -> Result<Option<Vec<String>>> {
+    use std::io::{BufRead, IsTerminal, Write};
+    let suggestions = targets::suggestions(&project.root);
+    if suggestions.is_empty() {
+        return Ok(None);
+    }
+    let all: Vec<String> = suggestions.iter().map(|s| s.triple.clone()).collect();
+    if !std::io::stdin().is_terminal() {
+        println!(
+            "note: no terminal to ask on; targets are {} (change `targets` in {} or pass --target)",
+            all.join(", "),
+            project::CONFIG_FILE
+        );
+        return Ok(Some(all));
+    }
+    println!("Targets to review, audit and install tools for:");
+    for (i, s) in suggestions.iter().enumerate() {
+        println!("  {}) {}  ({})", i + 1, s.triple, s.sources.join(", "));
+    }
+    loop {
+        print!(
+            "Numbers or triples, `all` for every target [Enter: 1-{}]: ",
+            suggestions.len()
+        );
+        std::io::stdout().flush()?;
+        let mut line = String::new();
+        if std::io::stdin().lock().read_line(&mut line)? == 0 {
+            return Ok(Some(all));
+        }
+        match targets::parse_choice(&line, &suggestions) {
+            Ok(choice) => return Ok(choice),
+            Err(e) => println!("  {e}"),
+        }
+    }
 }
 
 fn split_spec(spec: &str) -> (&str, Option<&str>) {

@@ -26,6 +26,19 @@ Every command runs as `cargo project-tools <command>`. Apart from `init` and the
 
 Creates `project-tools.toml` with default build settings, and `.project-tools/` with its `.gitignore`.
 
+It also sets the [`targets`](configuration.md#targets) tools are reviewed, audited and installed for. It offers this machine and the GitHub-hosted runners your `.github/workflows` use (`ubuntu-*`, `macos-*`, `windows-*`, found anywhere in the files, matrix lists included), and asks which to keep: numbers or triples, `all` for every target, or Enter for every suggestion. Without a terminal it takes every suggestion.
+
+```bash
+cargo project-tools init
+cargo project-tools init --target aarch64-apple-darwin --target x86_64-unknown-linux-gnu
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--target <triple>` | Set the targets without asking (repeatable) |
+
+An existing `project-tools.toml` is left as it is.
+
 ## add
 
 ```bash
