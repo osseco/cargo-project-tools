@@ -139,9 +139,21 @@ jobs:
       - uses: osseco/setup-sfw-free@e1cbeae80920eb20b289196bb420d5f45a45ead1 # v1.15.6-0.2.0
         with:
           cache: ${{ github.ref == 'refs/heads/main' && 'true' || 'restore' }}
+      # Before "Apply version", which rewrites Cargo.lock: the key must not depend on the run's version.
+      # The toolchain is part of the fallback prefix: another compiler's target/ is never reused.
+      - name: Cache key
+        id: cache-key
+        env:
+          TOOLCHAIN_HASH: ${{ hashFiles('rust-toolchain.toml') }}
+          LOCK_HASH: ${{ hashFiles('Cargo.lock') }}
+        run: |
+          prefix="test-${RUNNER_OS}-${TOOLCHAIN_HASH}-"
+          echo "prefix=${prefix}" >> "$GITHUB_OUTPUT"
+          echo "key=${prefix}${LOCK_HASH}" >> "$GITHUB_OUTPUT"
       - name: Apply version
         run: python3 .github/update_version_in_cargo.py "$PRODUCT_VERSION"
-      # Main builds the cache, once per Cargo.lock and toolchain; everything else uses it.
+      # Main builds the cache, once per Cargo.lock and toolchain; everything else uses it,
+      # falling back to main's newest entry for the same toolchain when the lock differs.
       - name: Restore test build from main
         if: github.ref != 'refs/heads/main'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -151,7 +163,9 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: test-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          key: ${{ steps.cache-key.outputs.key }}
+          restore-keys: |
+            ${{ steps.cache-key.outputs.prefix }}
       - run: sfw cargo test --locked
       # Only checks whether main already saved this lock's build; downloads nothing.
       - name: Look up test build
@@ -165,7 +179,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: test-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          key: ${{ steps.cache-key.outputs.key }}
       - name: Save test build
         if: github.ref == 'refs/heads/main' && steps.test-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -175,7 +189,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: test-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          key: ${{ steps.cache-key.outputs.key }}
 
   pre-commit:
     needs: vuln-check
