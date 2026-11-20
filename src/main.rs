@@ -471,8 +471,23 @@ fn load_auditor(
     Ok((auditor, open))
 }
 
-/// The packages a tool builds with its features: `graph::built_packages` outside tests.
+/// The packages a tool builds with its features: `built_for` outside tests.
 type BuiltOf<'a> = dyn FnMut(&str, &config::Tool) -> Result<graph::Built> + 'a;
+
+/// The packages `tool` builds for its targets, which are named when they're limited.
+fn built_for(
+    project: &Project,
+    config: &Config,
+    name: &str,
+    tool: &config::Tool,
+    offline: bool,
+) -> Result<graph::Built> {
+    let targets = config.targets_for(tool);
+    if let Some(list) = targets {
+        println!("  targets: {}", list.join(", "));
+    }
+    graph::built_packages(project, name, tool, targets, offline)
+}
 
 fn audit_tool(
     project: &Project,
@@ -482,8 +497,8 @@ fn audit_tool(
     today: &str,
     built_of: &mut BuiltOf,
 ) -> Result<audit::Outcome> {
-    let built = built_of(name, tool)?;
     println!("{name}:");
+    let built = built_of(name, tool)?;
     let report = auditor.audit(&project.lock_path(name), name, tool.git.is_some(), &built)?;
     if report.skipped > 0 {
         println!(
@@ -509,9 +524,8 @@ fn audit(project: &Project, config: &Config, args: AuditArgs) -> Result<ExitCode
     let (mut auditor, own) = load_auditor(project, config, policy)?;
     let today = audit::today();
     let (mut vulns, mut warns) = (own, 0);
-    let mut built_of = |name: &str, tool: &config::Tool| {
-        graph::built_packages(project, name, tool, config.targets_for(tool), false)
-    };
+    let mut built_of =
+        |name: &str, tool: &config::Tool| built_for(project, config, name, tool, false);
     for (name, tool) in tools {
         let outcome = audit_tool(project, &mut auditor, name, tool, &today, &mut built_of)?;
         vulns += outcome.vulnerabilities;
@@ -690,9 +704,8 @@ fn audit_gate(
             config::SELF_AUDIT_IGNORE
         );
     }
-    let mut built_of = |name: &str, tool: &config::Tool| {
-        graph::built_packages(project, name, tool, config.targets_for(tool), offline)
-    };
+    let mut built_of =
+        |name: &str, tool: &config::Tool| built_for(project, config, name, tool, offline);
     audit_before_install(
         project,
         &mut auditor,

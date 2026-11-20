@@ -166,7 +166,7 @@ Checks every tool's lock against the [RustSec advisory database](https://rustsec
 
 Path packages and other registries aren't checked.
 
-Only packages the tool actually builds are checked. A lock lists every optional dependency, whatever the features, so `audit` asks `cargo tree` what the tool's [`features` and `default-features`](configuration.md#toolname) build: normal and build dependencies, for every target. That resolves features without compiling anything or running build scripts, but cargo downloads the dependencies to do it. The rest is reported as `skipped N packages not built with these features`, and an ignore for one of them becomes unused.
+Only packages the tool actually builds are checked. A lock lists every optional dependency, whatever the features, so `audit` asks `cargo tree` what the tool's [`features` and `default-features`](configuration.md#toolname) build: normal and build dependencies, for the tool's [`targets`](configuration.md#targets) (named as `targets: …` in the output) or every target when none are set. That resolves features without compiling anything or running build scripts, but cargo downloads the dependencies to do it. The rest is reported as `skipped N packages not built with these features`, and an ignore for one of them becomes unused.
 
 Then it:
 
