@@ -101,7 +101,7 @@ With `--latest` or `--version`, the tool moves first. It starts from the new rel
 | Tool | The tool's version; Enter lists the others, and picking one moves the tool there, keeping your dependency bumps where they still resolve. A git tool follows its branch or tag again. |
 | Features | `default` and each feature as a checkbox (`[·]` is on through `default`). Space or a click turns one on or off, and the tree and advisories follow. |
 | Dependencies | What cargo builds for those features and your [`targets`](configuration.md#targets), as a foldable tree. `⚠` marks a vulnerability, `!` a warning (unmaintained, unsound, yanked), `(*)` a package already shown. |
-| Details | For a package: its advisories, and after Enter, why it's built (which features pull it in) and its versions. The lowest version that fixes its advisories is marked `★`, counting warnings such as unsound ones when the advisory names a fix; Enter on a version moves the package there, if cargo can resolve it. |
+| Details | For a package: its advisories, and after Enter, why it's built (which features pull it in) and its versions. The lowest version that fixes its advisories is marked `★`, counting warnings such as unsound ones when the advisory names a fix; Enter on a version moves the package there, if cargo can resolve it. A moved package or tool shows `(was …)` in the tree, and its versions list marks the `original` one. |
 | Title bar | How many packages are built, and how many have open vulnerabilities and warnings. |
 | Buttons | Tree, Details, Next finding (also `n`), Done, Cancel. |
 

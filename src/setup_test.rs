@@ -269,6 +269,31 @@ fn another_checkout_keeps_the_features_it_still_has() {
     assert_eq!(f.setup.selected, BTreeSet::from(["extra".to_string()]));
     assert_eq!(names(&f.setup), ["tool", "dep"]);
     assert_eq!(f.setup.counts(), (2, 0, 0));
+    // What it started with stays known.
+    assert_eq!(f.setup.was("tool", &v("1.1.0")), [v("1.0.0")]);
+    assert_eq!(f.setup.was("dep", &v("1.1.0")), [v("1.0.0")]);
+    let choices = f.setup.versions("dep", &v("1.1.0"));
+    let marks: Vec<(String, bool, bool)> = choices
+        .iter()
+        .map(|c| (c.version.to_string(), c.current, c.original))
+        .collect();
+    assert_eq!(marks, [("1.1.0".into(), true, false)]);
+}
+
+#[test]
+fn originals_are_marked_and_nothing_was_moved_at_the_start() {
+    let mut f = fixture(AuditIgnore::default());
+    assert!(f.setup.was("dep", &v("1.0.0")).is_empty());
+    assert!(f.setup.was("tool", &v("1.0.0")).is_empty());
+    assert!(f.setup.was("unknown", &v("1.0.0")).is_empty());
+    let originals: Vec<String> = f
+        .setup
+        .versions("dep", &v("1.0.0"))
+        .iter()
+        .filter(|c| c.original)
+        .map(|c| c.version.to_string())
+        .collect();
+    assert_eq!(originals, ["1.0.0"]);
 }
 
 #[test]

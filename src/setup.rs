@@ -58,9 +58,11 @@ pub struct Choice {
     pub version: Version,
     /// Semver-compatible with the current version.
     pub compatible: bool,
-    /// The lowest version that fixes every vulnerability.
+    /// The lowest version that fixes its advisories.
     pub suggested: bool,
     pub current: bool,
+    /// The version in the lock when the setup started.
+    pub original: bool,
 }
 
 pub struct Setup {
@@ -76,6 +78,8 @@ pub struct Setup {
     pub targets: Option<Vec<String>>,
     pub tree: Vec<Dep>,
     pub findings: BTreeMap<(String, Version), Vec<Finding>>,
+    /// Each package's versions in the lock when the setup started, the tool's included.
+    pub original: BTreeMap<String, BTreeSet<Version>>,
     auditor: Auditor,
     ignore: AuditIgnore,
     today: String,
@@ -106,11 +110,19 @@ impl Setup {
             targets,
             tree: Vec::new(),
             findings: BTreeMap::new(),
+            original: BTreeMap::new(),
             auditor,
             ignore,
             today: audit::today(),
             cargo_args,
         };
+        for p in lock::load(&setup.checkout.lock_path())?.packages {
+            setup
+                .original
+                .entry(p.name.as_str().to_string())
+                .or_default()
+                .insert(p.version);
+        }
         setup.load_features()?;
         setup.refresh()?;
         Ok(setup)
@@ -292,12 +304,35 @@ impl Setup {
                 compatible: lock::compatible(&e.vers, current),
                 suggested: suggested.as_ref() == Some(&e.vers),
                 current: e.vers == *current,
+                original: self.original.get(name).is_some_and(|o| o.contains(&e.vers)),
                 version: e.vers.clone(),
             })
             .collect();
         out.sort_by(|a, b| b.version.cmp(&a.version));
         out.dedup_by(|a, b| a.version == b.version);
         out
+    }
+
+    /// What `name` was when the setup started, when `version` isn't one of those: its
+    /// original versions that are no longer built.
+    pub fn was(&self, name: &str, version: &Version) -> Vec<Version> {
+        let Some(original) = self.original.get(name) else {
+            return Vec::new();
+        };
+        if original.contains(version) {
+            return Vec::new();
+        }
+        let now: BTreeSet<&Version> = self
+            .tree
+            .iter()
+            .filter(|d| d.name == name)
+            .map(|d| &d.version)
+            .collect();
+        original
+            .iter()
+            .filter(|v| !now.contains(v))
+            .cloned()
+            .collect()
     }
 
     /// How many packages are built, and how many have open vulnerabilities and warnings.

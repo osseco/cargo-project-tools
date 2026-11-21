@@ -262,3 +262,41 @@ fn a_selected_package_that_goes_away_is_handled() {
     assert!(app.selected < app.rows.len());
     draw(&mut app);
 }
+
+#[test]
+fn a_moved_tool_shows_what_it_was() {
+    let Fixture {
+        _dir,
+        _registry,
+        setup,
+    } = fixture(AuditIgnore::default());
+    // The mover hands back tool 1.1.0, locked against the same test registry.
+    let args = _registry.cargo_args();
+    let next = tempfile::tempdir().unwrap();
+    let src = next.path().join("src");
+    let mover: Mover = Box::new(move |_| {
+        let manifest = crate::test_registry::tool_with(
+            &src,
+            "1.1.0",
+            "[dependencies]\ndep = \"1\"\n\n[features]\ndefault = []\nunused = []\n",
+        );
+        crate::lock::shipped_or_generated(&manifest, &src.join("Cargo.lock"), &args)?;
+        let mut checkout = crate::source::Checkout::at(src.clone(), src.clone(), src.clone());
+        checkout.version = "1.1.0".into();
+        Ok(checkout)
+    });
+    let mut app = App::new(setup, mover);
+    app.queue(Op::MoveTool(None));
+    app.run_pending();
+    assert_eq!(
+        app.message.clone().unwrap(),
+        ("tool 1.0.0 → 1.1.0".to_string(), false)
+    );
+    let screen = draw(&mut app);
+    assert!(screen.contains("tool 1.1.0  (was 1.0.0)"), "{screen}");
+    // The registry's newest 1.x is 1.2.0.
+    assert!(screen.contains("dep 1.2.0  (was 1.0.0)"), "{screen}");
+    // The tree's root is the tool itself, and isn't marked twice.
+    assert_eq!(screen.matches("(was 1.0.0)").count(), 2, "{screen}");
+    drop(next);
+}

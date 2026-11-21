@@ -96,6 +96,9 @@ impl App<'_> {
                             label.push_str(&format!(" @ {}", shown(&c[..c.len().min(10)])));
                         }
                         spans.push(Span::raw(label));
+                        if let Ok(v) = semver::Version::parse(&self.setup.checkout.version) {
+                            spans.extend(was(&self.setup.was(&self.setup.name, &v)));
+                        }
                     }
                     RowKind::Default => {
                         let mark = if self.setup.default_features {
@@ -120,6 +123,9 @@ impl App<'_> {
                     RowKind::Dep(i) => {
                         let d = &self.setup.tree[*i];
                         spans.push(Span::raw(format!("{} {}", shown(&d.name), d.version)));
+                        if d.depth > 0 {
+                            spans.extend(was(&self.setup.was(&d.name, &d.version)));
+                        }
                         let open: Vec<&Finding> = self
                             .findings_of(*i)
                             .into_iter()
@@ -281,6 +287,12 @@ impl App<'_> {
                 if c.current {
                     spans.push(Span::styled("  current", Style::default().dim()));
                 }
+                if c.original {
+                    spans.push(Span::styled(
+                        "  original",
+                        Style::default().fg(Color::Magenta),
+                    ));
+                }
                 if c.suggested {
                     spans.push(Span::styled(
                         "  ★ fixes its advisories",
@@ -341,4 +353,16 @@ impl App<'_> {
             );
         }
     }
+}
+
+/// `  (was 1.2.3)`, for a package moved from its original version.
+fn was(versions: &[semver::Version]) -> Option<Span<'static>> {
+    if versions.is_empty() {
+        return None;
+    }
+    let list: Vec<String> = versions.iter().map(ToString::to_string).collect();
+    Some(Span::styled(
+        format!("  (was {})", list.join(", ")),
+        Style::default().fg(Color::Magenta),
+    ))
 }
