@@ -401,8 +401,7 @@ fn interactive_setup(
     start: Start,
     mover: setup_tui::Mover,
 ) -> Result<Option<setup::Setup>> {
-    use std::io::IsTerminal;
-    if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
+    if !screen::interactive() {
         bail!("--interactive needs a terminal");
     }
     let (auditor, _) = load_auditor(project, config, advisory_db::Policy::Auto)?;
@@ -835,10 +834,18 @@ fn check_targets(
         return Ok(false);
     }
     if !approve {
+        // On stderr, so the list comes before the error on the same stream.
         for (name, _, absent) in &missing {
-            println!("  {name}: {} isn't an approved target", absent.join(", "));
+            eprintln!("  {name}: {} isn't an approved target", absent.join(", "));
         }
-        bail!("rerun with --approve-target to add the missing targets");
+        if screen::interactive() {
+            bail!("rerun with --approve-target to add the missing targets");
+        }
+        bail!(
+            "add the missing targets to project-tools.toml where you review (by hand, or by \
+             rerunning there with --approve-target), review what they add, then commit \
+             project-tools.toml"
+        );
     }
     let mut editor = ConfigEditor::open(&project.config_path())?;
     for (_, tool, absent) in &missing {

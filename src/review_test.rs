@@ -102,6 +102,10 @@ fn new_code_halts_until_approved() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("2 pieces of build-time code"), "{err}");
+    // Tests run with or without a terminal, and the hint follows it.
+    if !crate::screen::interactive() {
+        assert!(err.contains("where you have a terminal"), "{err}");
+    }
     assert!(!file.exists());
 
     let decided = check(

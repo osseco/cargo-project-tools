@@ -1,13 +1,18 @@
 //! The terminal for full-screen views: raw mode, the alternate screen and the mouse, put
 //! back however the view is left.
 
-use std::io;
+use std::io::{self, IsTerminal};
 
 use anyhow::{Context, Result};
 use ratatui::Frame;
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{Clear, ClearType};
+
+/// Whether a full-screen view can run: both input and output are a terminal.
+pub fn interactive() -> bool {
+    io::stdin().is_terminal() && io::stdout().is_terminal()
+}
 
 /// Restores the terminal when dropped, on errors and panics too (`ratatui::try_init`
 /// installs a panic hook).

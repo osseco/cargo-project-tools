@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
-use std::io::{self, IsTerminal};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -13,6 +12,7 @@ use crate::lock;
 use crate::process;
 use crate::project::Project;
 use crate::sanitize::shown;
+use crate::screen;
 use crate::source::registry::sha256_hex;
 use crate::source::{self, Checkout};
 use crate::vendor::Vendored;
@@ -758,7 +758,8 @@ fn unchanged(item: &Item, before: &str) -> Result<()> {
     Ok(())
 }
 
-/// Warn about unused entries, and fail listing what's pending.
+/// Warn about unused entries, and fail listing what's pending. All of it goes to stderr, so
+/// the list comes before the error on the same stream.
 fn report(
     path: &Path,
     pending: &[Pending],
@@ -769,7 +770,7 @@ fn report(
     let rel = |p: &Path| shown(&p.strip_prefix(root).unwrap_or(p).display().to_string());
     for e in stale {
         if !pending.iter().any(|(_, prev)| *prev == Some(*e)) {
-            println!(
+            eprintln!(
                 "  warning: unused [[{}]] {}{} in {}; --approve-build removes it",
                 e.kind,
                 shown(&e.package),
@@ -781,14 +782,14 @@ fn report(
     if pending.is_empty() {
         return Ok(());
     }
-    println!("  build-time code to review:");
+    eprintln!("  build-time code to review:");
     for (item, previous) in pending {
         let note = match (known_for(known, item), previous) {
             (Some(k), _) => format!(" (reviewed for {}: {})", shown(&k.tool), k.action.as_str()),
             (None, Some(p)) => format!(" (changed; was {})", p.action.as_str()),
             (None, None) => String::new(),
         };
-        println!(
+        eprintln!(
             "    {:<12} {}{}  {}",
             item.kind,
             shown(&item.describe()),
@@ -796,20 +797,29 @@ fn report(
             rel(&item.location)
         );
     }
-    println!(
+    eprintln!(
         "  to decide piece by piece, put these in {} with the action you choose:",
         rel(path)
     );
     for (item, previous) in pending {
         let text = paste_ready(item, *previous, known_for(known, item), root);
-        print!("{}", shown(&text));
+        eprint!("{}", shown(&text));
     }
     let what = match pending.len() {
         1 => "1 piece of build-time code isn't".to_string(),
         n => format!("{n} pieces of build-time code aren't"),
     };
+    if screen::interactive() {
+        bail!(
+            "{what} recorded in {}; review it, then rerun with --approve-build",
+            rel(path)
+        )
+    }
     bail!(
-        "{what} recorded in {}; review it, then rerun with --approve-build",
+        "{what} recorded in {}; review it where you have a terminal (run this command there \
+         for the review screen, or with --approve-build after reading the files), then \
+         commit {}",
+        rel(path),
         rel(path)
     )
 }
@@ -1074,7 +1084,7 @@ pub fn review(
     let crate_dir = project.crate_dir(name);
     let mode = if approve {
         Mode::ApproveAll
-    } else if io::stdin().is_terminal() && io::stdout().is_terminal() {
+    } else if screen::interactive() {
         Mode::Interactive {
             tool: name,
             crate_dir: &crate_dir,

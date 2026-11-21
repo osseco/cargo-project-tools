@@ -117,7 +117,7 @@ For an override, the editor shows that tool's override file. Done copies it to t
 
 ## Approving
 
-Outside a terminal (in CI, or with input or output redirected), `add`, `update` and `install` stop before writing or building, and list each piece with the file to look at:
+Outside a terminal (in CI, or with input or output redirected), `add`, `update` and `install` stop before writing or building, and list each piece with the file to look at, on stderr like the error:
 
 ```text
   build-time code to review:
@@ -129,8 +129,10 @@ Outside a terminal (in CI, or with input or output redirected), `add`, `update` 
     path = "build.rs"
     sha256 = "9e41…"
     action = "approve"
-error: 1 piece of build-time code isn't recorded in .project-tools/crates/cargo-nextest/build-review.toml; review it, then rerun with --approve-build
+error: 1 piece of build-time code isn't recorded in .project-tools/crates/cargo-nextest/build-review.toml; review it where you have a terminal (run this command there for the review screen, or with --approve-build after reading the files), then commit .project-tools/crates/cargo-nextest/build-review.toml
 ```
+
+Don't approve on a CI runner: review where you work, and commit `build-review.toml`. After Cancel on the review screen, the error says to rerun with `--approve-build` instead.
 
 A piece another tool already records is listed with that tool's decision (`reviewed for <tool>: strip`), and its printed entry uses it. For an override, the entry also says which file to copy.
 
