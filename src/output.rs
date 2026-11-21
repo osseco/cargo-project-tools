@@ -231,13 +231,44 @@ struct Line<'a> {
     record: &'a Record,
 }
 
+/// Compact JSON that also writes as `\uXXXX` what serde_json leaves as is but a terminal
+/// could act on or hide: DEL, C1 controls (U+009B starts an escape sequence), and the
+/// characters `sanitize::hidden` flags (bidi controls, zero-width characters, line and
+/// paragraph separators, …). The values stay the same.
+struct Escaping;
+
+impl serde_json::ser::Formatter for Escaping {
+    fn write_string_fragment<W>(&mut self, writer: &mut W, fragment: &str) -> std::io::Result<()>
+    where
+        W: ?Sized + Write,
+    {
+        let mut start = 0;
+        for (i, c) in fragment.char_indices() {
+            let code = c as u32;
+            if code == 0x7f || (0x80..0xa0).contains(&code) || crate::sanitize::hidden(c) {
+                writer.write_all(&fragment.as_bytes()[start..i])?;
+                let mut units = [0u16; 2];
+                for u in c.encode_utf16(&mut units) {
+                    write!(writer, "\\u{u:04x}")?;
+                }
+                start = i + c.len_utf8();
+            }
+        }
+        writer.write_all(&fragment.as_bytes()[start..])
+    }
+}
+
 /// The JSON line for a record.
 pub fn line(record: &Record) -> String {
-    serde_json::to_string(&Line {
+    let mut out = Vec::new();
+    let mut ser = serde_json::Serializer::with_formatter(&mut out, Escaping);
+    Line {
         version: VERSION,
         record,
-    })
-    .expect("records serialize")
+    }
+    .serialize(&mut ser)
+    .expect("records serialize");
+    String::from_utf8(out).expect("JSON is UTF-8")
 }
 
 /// Count the record for the summary, and in json mode write it to stdout.

@@ -6,7 +6,7 @@
 /// variation selectors and other characters that draw nothing, spaces other than U+0020,
 /// line and paragraph separators, private-use characters and noncharacters. Control
 /// characters are handled before this.
-fn hidden(c: char) -> bool {
+pub fn hidden(c: char) -> bool {
     let code = c as u32;
     matches!(code,
         // Format characters (general category Cf).

@@ -99,3 +99,18 @@ fn a_held_command_failure_carries_its_stderr() {
         .to_string();
     assert!(err.contains("no such command"), "{err}");
 }
+
+#[test]
+fn characters_a_terminal_acts_on_or_hides_are_escaped() {
+    let message = "a\u{7f}b\u{9b}2Jc\u{202e}d\u{2028}e\u{200b}f\u{e0041}g \u{e9}";
+    let json = line(&Record::Error {
+        message: message.into(),
+    });
+    assert_eq!(
+        json,
+        r#"{"version":1,"kind":"error","message":"a\u007fb\u009b2Jc\u202ed\u2028e\u200bf\udb40\udc41g é"}"#
+    );
+    // Still the same value.
+    let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(back["message"], message);
+}
