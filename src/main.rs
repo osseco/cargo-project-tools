@@ -12,7 +12,11 @@ mod net;
 mod process;
 mod project;
 mod review;
+mod sanitize;
+mod screen;
 mod selfinstall;
+mod setup;
+mod setup_tui;
 mod sfw;
 mod source;
 mod targets;
@@ -203,7 +207,9 @@ fn add(project: &Project, config: &Config, args: AddArgs) -> Result<()> {
     config::validate_tool_name(name)?;
     let mut editor = ConfigEditor::open(&project.config_path())?;
     if editor.has_tool(name) {
-        bail!("`{name}` is already in project-tools.toml; use `upgrade` to change its version");
+        bail!(
+            "`{name}` is already in project-tools.toml; use `update {name} --latest` or `--version` to change its version"
+        );
     }
     let origin = match &args.git {
         Some(url) => {
@@ -231,11 +237,40 @@ fn add(project: &Project, config: &Config, args: AddArgs) -> Result<()> {
         lock::Start::Generated => "a generated Cargo.lock (it ships none)",
     };
     lock::check_root(&lock::parse(&lock_text)?, name, &checkout.version)?;
-    let features = install::feature_flags(&args.features, !args.no_default_features);
+    let (checkout, features, default_features, lock_text) = if args.interactive {
+        let mover: setup_tui::Mover = Box::new(|to| {
+            let origin = moved_to(&origin, to);
+            let checkout = source::checkout(project, name, &origin, review_dest(project, name))?;
+            lock::shipped_or_generated(&checkout.manifest_path(), &checkout.lock_path(), &[])?;
+            Ok(checkout)
+        });
+        let start = Start {
+            features: &args.features,
+            default_features: !args.no_default_features,
+            targets: config.settings.targets.as_deref(),
+        };
+        let Some(setup) =
+            interactive_setup(project, config, name, checkout, &origin, start, mover)?
+        else {
+            println!("Cancelled; {name} wasn't added");
+            return Ok(());
+        };
+        let lock_text = fs::read_to_string(setup.lock_path())?;
+        lock::check_root(&lock::parse(&lock_text)?, name, &setup.checkout.version)?;
+        let features: Vec<String> = setup.selected.iter().cloned().collect();
+        (setup.checkout, features, setup.default_features, lock_text)
+    } else {
+        (
+            checkout,
+            args.features.clone(),
+            !args.no_default_features,
+            lock_text,
+        )
+    };
     review_build(
         project,
         name,
-        &features,
+        &install::feature_flags(&features, default_features),
         config.settings.targets.as_deref(),
         &checkout,
         args.approve_build,
@@ -256,10 +291,10 @@ fn add(project: &Project, config: &Config, args: AddArgs) -> Result<()> {
             entries.push(("rev", commit.as_str().into()));
         }
     }
-    if !args.features.is_empty() {
-        entries.push(("features", config::string_array(&args.features)));
+    if !features.is_empty() {
+        entries.push(("features", config::string_array(&features)));
     }
-    if args.no_default_features {
+    if !default_features {
         entries.push(("default-features", false.into()));
     }
     if !args.bins.is_empty() {
@@ -306,21 +341,204 @@ fn remove(project: &Project, config: &Config, name: &str) -> Result<()> {
     Ok(())
 }
 
+/// `upgrade`, kept for now: `update --latest` or `update --version`.
 fn upgrade(project: &Project, config: &Config, args: UpgradeArgs) -> Result<()> {
+    eprintln!(
+        "note: `upgrade` is deprecated; use `update {} --latest` or `--version <req>`",
+        args.name
+    );
+    // `upgrade` ignored `--version` for git tools, and always moved to the newest.
+    let git = config.tool(&args.name)?.git.is_some();
+    let version = args.version.filter(|_| !git);
+    update(
+        project,
+        config,
+        UpdateArgs {
+            interactive: false,
+            latest: version.is_none(),
+            version,
+            name: args.name,
+            deps: Vec::new(),
+            precise: None,
+            recursive: false,
+            approve_build: args.approve_build,
+        },
+    )
+}
+
+/// Where a tool from `origin` goes for the setup screen's move: that exact version, or for
+/// `None` the newest (a git tool: the head of its branch or tag again).
+fn moved_to(origin: &Origin, to: Option<&semver::Version>) -> Origin {
+    match origin {
+        Origin::Registry { .. } => Origin::Registry {
+            version_req: to.map(|v| format!("={v}")),
+        },
+        Origin::Git { url, reference } => {
+            let mut reference = reference.clone();
+            reference.rev = None;
+            Origin::Git {
+                url: url.clone(),
+                reference,
+            }
+        }
+    }
+}
+
+/// Where the setup screen starts: the features, and the targets the tree is for.
+struct Start<'a> {
+    features: &'a [String],
+    default_features: bool,
+    targets: Option<&'a [String]>,
+}
+
+/// Open the setup screen for `name` in `checkout`. `None` when cancelled.
+fn interactive_setup(
+    project: &Project,
+    config: &Config,
+    name: &str,
+    checkout: source::Checkout,
+    origin: &Origin,
+    start: Start,
+    mover: setup_tui::Mover,
+) -> Result<Option<setup::Setup>> {
+    use std::io::IsTerminal;
+    if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
+        bail!("--interactive needs a terminal");
+    }
+    let (auditor, _) = load_auditor(project, config, advisory_db::Policy::Auto)?;
+    let ignore = AuditIgnore::load(&project.audit_ignore_path(name))?;
+    println!("Resolving what {name} builds…");
+    let setup = setup::Setup::new(
+        name,
+        checkout,
+        matches!(origin, Origin::Git { .. }),
+        start.features.iter().cloned().collect(),
+        start.default_features,
+        start.targets.map(<[String]>::to_vec),
+        auditor,
+        ignore,
+        Vec::new(),
+    )?;
+    setup_tui::run(setup, mover)
+}
+
+/// `update -i`: the setup screen from the tool's current version, features and lock.
+fn update_interactive(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
     let tool = config.tool(&args.name)?;
     let name = args.name.as_str();
-    let origin = match Origin::of(tool) {
+    let ours_path = project.lock_path(name);
+    let ours = lock::load(&ours_path)?;
+    lock::check_root(&ours, name, &tool.version)?;
+    let origin = Origin::of(tool);
+    let checkout = source::checkout(project, name, &origin, review_dest(project, name))?;
+    checkout.put_lock(&ours_path)?;
+    let mover: setup_tui::Mover =
+        Box::new(|to| move_tool(project, name, &moved_to(&origin, to), &ours));
+    let start = Start {
+        features: &tool.features,
+        default_features: tool.default_features != Some(false),
+        targets: config.targets_for(tool),
+    };
+    let Some(setup) = interactive_setup(project, config, name, checkout, &origin, start, mover)?
+    else {
+        println!("Cancelled; nothing changed");
+        return Ok(());
+    };
+
+    let updated = lock::load(&setup.lock_path())?;
+    lock::check_root(&updated, name, &setup.checkout.version)?;
+    let changes = lock::diff(&ours, &updated);
+    let features: Vec<String> = setup.selected.iter().cloned().collect();
+    let before: std::collections::BTreeSet<&String> = tool.features.iter().collect();
+    let features_changed = setup
+        .selected
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>()
+        != before
+        || setup.default_features != (tool.default_features != Some(false));
+    let moved = setup.checkout.version != tool.version
+        || setup.checkout.commit.is_some() && setup.checkout.commit != tool.rev;
+    println!("Changes to {name}'s lock:");
+    lock::print_diff(&changes);
+    if changes.is_empty() && !features_changed && !moved {
+        println!("Nothing changed");
+        return Ok(());
+    }
+    review_build(
+        project,
+        name,
+        &setup.feature_args(),
+        config.targets_for(tool),
+        &setup.checkout,
+        args.approve_build,
+    )?;
+    fs::copy(setup.lock_path(), &ours_path)?;
+    let mut editor = ConfigEditor::open(&project.config_path())?;
+    let mut entries: Vec<(&str, toml_edit::Value)> = Vec::new();
+    if moved {
+        entries.push(("version", setup.checkout.version.as_str().into()));
+        if let Some(commit) = &setup.checkout.commit {
+            entries.push(("rev", commit.as_str().into()));
+        }
+    }
+    if features_changed {
+        let mut unset = Vec::new();
+        if features.is_empty() {
+            unset.push("features");
+        } else {
+            entries.push(("features", config::string_array(&features)));
+        }
+        if setup.default_features {
+            unset.push("default-features");
+        } else {
+            entries.push(("default-features", false.into()));
+        }
+        editor.unset_tool(name, &unset);
+    }
+    editor.set_tool(name, &entries);
+    editor.save()?;
+    if moved {
+        println!(
+            "Moved {name} {} -> {}",
+            tool.version, setup.checkout.version
+        );
+    }
+    Ok(())
+}
+
+/// Where `update --version`/`--latest` moves the tool, or `None` when it stays.
+fn moved_origin(
+    tool: &config::Tool,
+    version: Option<&str>,
+    latest: bool,
+) -> Result<Option<Origin>> {
+    if version.is_none() && !latest {
+        return Ok(None);
+    }
+    Ok(Some(match Origin::of(tool) {
         Origin::Registry { .. } => Origin::Registry {
-            version_req: args.version.clone(),
+            version_req: version.map(str::to_string),
         },
+        Origin::Git { .. } if version.is_some() => {
+            bail!("--version is for registry tools; use --latest to follow the branch or tag again")
+        }
         // Follow the branch/tag again instead of the pinned commit.
         Origin::Git { url, mut reference } => {
             reference.rev = None;
             Origin::Git { url, reference }
         }
-    };
-    let checkout = source::checkout(project, name, &origin, review_dest(project, name))?;
-    let ours = lock::load(&project.lock_path(name))?;
+    }))
+}
+
+/// Check out the tool at `origin` with the lock it ships (or one seeded from ours), keeping
+/// the dependency bumps in `ours` that still resolve.
+fn move_tool(
+    project: &Project,
+    name: &str,
+    origin: &Origin,
+    ours: &cargo_lock::Lockfile,
+) -> Result<source::Checkout> {
+    let checkout = source::checkout(project, name, origin, review_dest(project, name))?;
     let manifest = checkout.manifest_path();
     let lock_path = checkout.lock_path();
 
@@ -338,7 +556,7 @@ fn upgrade(project: &Project, config: &Config, args: UpgradeArgs) -> Result<()> 
 
     // Keep dependency bumps we made that the new lock doesn't already include. A lock seeded
     // from ours rarely lacks any, but a forced downgrade is retried here like any other.
-    for (dep, from, to) in lock::newer_than(&ours, &shipped) {
+    for (dep, from, to) in lock::newer_than(ours, &shipped) {
         let backup = fs::read_to_string(&lock_path)?;
         let spec = format!("{dep}@{from}");
         let ok = lock::cargo_update(
@@ -362,34 +580,13 @@ fn upgrade(project: &Project, config: &Config, args: UpgradeArgs) -> Result<()> 
             }
         }
     }
-
-    let final_lock = lock::load(&lock_path)?;
-    lock::check_root(&final_lock, name, &checkout.version)?;
-    println!("Changes to {name}'s lock:");
-    lock::print_diff(&lock::diff(&ours, &final_lock));
-    review_build(
-        project,
-        name,
-        &install::feature_args(tool),
-        config.targets_for(tool),
-        &checkout,
-        args.approve_build,
-    )?;
-    fs::copy(&lock_path, project.lock_path(name))?;
-
-    let mut editor = ConfigEditor::open(&project.config_path())?;
-    let mut entries: Vec<(&str, toml_edit::Value)> =
-        vec![("version", checkout.version.as_str().into())];
-    if let Some(commit) = &checkout.commit {
-        entries.push(("rev", commit.as_str().into()));
-    }
-    editor.set_tool(name, &entries);
-    editor.save()?;
-    println!("Upgraded {name} {} -> {}", tool.version, checkout.version);
-    Ok(())
+    Ok(checkout)
 }
 
 fn update(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
+    if args.interactive {
+        return update_interactive(project, config, args);
+    }
     let tool = config.tool(&args.name)?;
     let name = args.name.as_str();
     if args.precise.is_some() && args.deps.len() != 1 {
@@ -399,42 +596,71 @@ fn update(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
     let ours = lock::load(&ours_path)?;
     lock::check_root(&ours, name, &tool.version)?;
 
+    let moved = moved_origin(tool, args.version.as_deref(), args.latest)?;
     // A full checkout rather than a scratch project: the review needs the real build scripts.
-    let checkout = source::checkout(project, name, &Origin::of(tool), review_dest(project, name))?;
-    checkout.put_lock(&ours_path)?;
-    let mut cargo_args = Vec::new();
-    for dep in &args.deps {
-        cargo_args.extend(["-p".to_string(), dep.clone()]);
+    let checkout = match &moved {
+        Some(origin) => move_tool(project, name, origin, &ours)?,
+        None => {
+            let checkout =
+                source::checkout(project, name, &Origin::of(tool), review_dest(project, name))?;
+            checkout.put_lock(&ours_path)?;
+            checkout
+        }
+    };
+    // Without dependencies named, a plain `update` updates them all; a move leaves them be.
+    if !args.deps.is_empty() || moved.is_none() {
+        let mut cargo_args = Vec::new();
+        for dep in &args.deps {
+            cargo_args.extend(["-p".to_string(), dep.clone()]);
+        }
+        if let Some(p) = &args.precise {
+            cargo_args.extend(["--precise".to_string(), p.clone()]);
+        }
+        if args.recursive {
+            cargo_args.push("--recursive".into());
+        }
+        // Only a successful resolve reaches the copy below, so a failure leaves our lock as is.
+        lock::cargo_update(&checkout.manifest_path(), &cargo_args)?;
     }
-    if let Some(p) = &args.precise {
-        cargo_args.extend(["--precise".to_string(), p.clone()]);
-    }
-    if args.recursive {
-        cargo_args.push("--recursive".into());
-    }
-    // Only a successful resolve reaches the copy below, so a failure leaves our lock as is.
-    lock::cargo_update(&checkout.manifest_path(), &cargo_args)?;
 
     let updated = lock::load(&checkout.lock_path())?;
-    lock::check_root(&updated, name, &tool.version)?;
+    lock::check_root(&updated, name, &checkout.version)?;
     let changes = lock::diff(&ours, &updated);
     println!("Changes to {name}'s lock:");
     lock::print_diff(&changes);
-    if !changes.is_empty() {
-        review_build(
-            project,
-            name,
-            &install::feature_args(tool),
-            config.targets_for(tool),
-            &checkout,
-            args.approve_build,
-        )?;
-        fs::copy(checkout.lock_path(), &ours_path)?;
+    let moved = moved.is_some()
+        && (checkout.version != tool.version
+            || checkout.commit.is_some() && checkout.commit != tool.rev);
+    if changes.is_empty() && !moved {
+        if args.version.is_some() || args.latest {
+            println!("{name} is already at {}", checkout.version);
+        }
+        return Ok(());
+    }
+    review_build(
+        project,
+        name,
+        &install::feature_args(tool),
+        config.targets_for(tool),
+        &checkout,
+        args.approve_build,
+    )?;
+    fs::copy(checkout.lock_path(), &ours_path)?;
+    if moved {
+        let mut editor = ConfigEditor::open(&project.config_path())?;
+        let mut entries: Vec<(&str, toml_edit::Value)> =
+            vec![("version", checkout.version.as_str().into())];
+        if let Some(commit) = &checkout.commit {
+            entries.push(("rev", commit.as_str().into()));
+        }
+        editor.set_tool(name, &entries);
+        editor.save()?;
+        println!("Moved {name} {} -> {}", tool.version, checkout.version);
     }
     Ok(())
 }
 
-/// Where `add`, `upgrade` and `update` check out the tool: the place `install` builds from,
+/// Where `add` and `update` check out the tool: the place `install` builds from,
 /// so the files a review lists are still there afterwards.
 fn review_dest(project: &Project, name: &str) -> Dest {
     Dest::Fixed(project.target_dir(name).join("src"))

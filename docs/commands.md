@@ -5,10 +5,9 @@ Every command runs as `cargo project-tools <command>`. Apart from `init` and the
 | Command | What it does |
 | --- | --- |
 | `init` | Create `project-tools.toml` and `.project-tools/` |
-| `add <crate>[@ver]` | Add a tool |
+| `add <crate>[@ver]` | Add a tool; `-i` to choose features and versions on a [setup screen](#interactive-setup) |
 | `remove <crate>` | Remove a tool, its lock, build dir and binaries |
-| `upgrade <crate>` | Move to a new tool version, keeping your dependency bumps where they still resolve |
-| `update <crate> [deps…]` | Update dependencies in the tool's lock |
+| `update <crate> [deps…]` | Update dependencies in the tool's lock, or move the tool to another version (`--latest`, `--version`); `-i` for the [setup screen](#interactive-setup) |
 | `install [crates…]` | Audit, then build and install; skipped when nothing changed |
 | `verify [crates…]` | Check installed binaries against their recorded checksums; `--repair` rebuilds |
 | `audit [crates…]` | Check every lock against the RustSec advisory database, apply `audit-ignore.toml`, suggest fixes |
@@ -45,6 +44,7 @@ An existing `project-tools.toml` is left as it is.
 cargo project-tools add cargo-nextest
 cargo project-tools add cargo-nextest@0.9.80
 cargo project-tools add my-tool --git https://github.com/org/my-tool --tag v1.2.0
+cargo project-tools add -i cargo-nextest
 ```
 
 | Option | Meaning |
@@ -54,6 +54,7 @@ cargo project-tools add my-tool --git https://github.com/org/my-tool --tag v1.2.
 | `-F`, `--features <list>` | Features to enable, comma-separated |
 | `--no-default-features` | Turn off default features |
 | `--bin <name>` | Binaries to install (repeatable; default: all) |
+| `-i`, `--interactive` | Choose the version, features and dependency versions on the [setup screen](#interactive-setup) first |
 | `--approve-build` | Record the tool's build scripts, proc macros and cargo config in [`build-review.toml`](build-review.md) |
 
 Copies the lock the tool ships with into `.project-tools/crates/<tool>/` and adds a `[tool.<name>]` entry. A tool that ships no lock gets one from `cargo generate-lockfile`, which only reads the index: nothing is compiled and no build script runs.
@@ -64,33 +65,51 @@ Before anything is written, it [reviews the build-time code](build-review.md) th
 
 Removes the `[tool.<name>]` entry, the tool's lock folder, its build directory and its binaries.
 
-## upgrade
-
-```bash
-cargo project-tools upgrade cargo-nextest
-cargo project-tools upgrade cargo-nextest --version 0.9.90
-```
-
-Moves to the latest stable version, or the one matching `--version`. Starts from the new release's lock, then reapplies every dependency you had bumped past it, as long as cargo still resolves. If the new release ships no lock, it starts from yours instead: cargo keeps every pinned version that still fits and only resolves what the new version needs. A git tool follows its tag or branch again.
-
-New or changed [build-time code](build-review.md) stops it before the lock is saved; `--approve-build` records it.
-
 ## update
 
 ```bash
 cargo project-tools update cargo-nextest
 cargo project-tools update cargo-nextest rustls
 cargo project-tools update cargo-nextest rustls@0.23.10 --precise 0.23.18
+cargo project-tools update cargo-nextest --latest
+cargo project-tools update cargo-nextest --version 0.9.90
+cargo project-tools update -i cargo-nextest
 ```
 
 | Option | Meaning |
 | --- | --- |
-| `[deps…]` | Dependencies to update (`name` or `name@version`); all when omitted |
+| `[deps…]` | Dependencies to update (`name` or `name@version`); all when omitted, unless the tool moves |
 | `--precise <version>` | Update a single dependency to exactly this version |
 | `--recursive` | Also update the dependencies of the given dependencies |
+| `--latest` | Move the tool to its latest stable version; a git tool follows its tag or branch again |
+| `--version <req>` | Move a registry tool to the version matching this requirement |
+| `-i`, `--interactive` | Change the version, features and dependency versions on the [setup screen](#interactive-setup); not with the options above |
 | `--approve-build` | Record new or changed build-time code in [`build-review.toml`](build-review.md) |
 
 Runs `cargo update` against the tool's lock. The lock is only saved if cargo resolves it, and if every build script, proc macro and cargo config it builds is [recorded](build-review.md).
+
+With `--latest` or `--version`, the tool moves first. It starts from the new release's lock, then reapplies every dependency you had bumped past it, as long as cargo still resolves. If the new release ships no lock, it starts from yours instead: cargo keeps every pinned version that still fits and only resolves what the new version needs. Dependencies you name are updated after that. The new version (and commit, for git) is written to `project-tools.toml`.
+
+`upgrade <crate> [--version <req>]` still works and does the same as `update <crate> --latest` or `--version`, with a note that it's deprecated. It will be removed in a future major release.
+
+## Interactive setup
+
+`add -i` and `update -i` open a setup screen before the [build review](build-review.md#reviewing-on-the-terminal), so you can see what a tool pulls in and change it first. `add -i` starts from the newest release (or `@version`) and `-F`/`--no-default-features`. `update -i` starts from the tool's version, features and lock as they are.
+
+| Part | What it does |
+| --- | --- |
+| Tool | The tool's version; Enter lists the others, and picking one moves the tool there, keeping your dependency bumps where they still resolve. A git tool follows its branch or tag again. |
+| Features | `default` and each feature as a checkbox (`[·]` is on through `default`). Space or a click turns one on or off, and the tree and advisories follow. |
+| Dependencies | What cargo builds for those features and your [`targets`](configuration.md#targets), as a foldable tree. `⚠` marks a vulnerability, `!` a warning (unmaintained, unsound, yanked), `(*)` a package already shown. |
+| Details | For a package: its advisories, and after Enter, why it's built (which features pull it in) and its versions. The lowest version that fixes its advisories is marked `★`, counting warnings such as unsound ones when the advisory names a fix; Enter on a version moves the package there, if cargo can resolve it. A moved package or tool shows `(was …)` in the tree, and its versions list marks the `original` one. Pre-releases are labelled `pre-release`. |
+| Title bar | How many packages are built, and how many have open vulnerabilities and warnings. |
+| Buttons | Tree, Details, Next finding (also `n`), Done, Cancel. |
+
+The keys are the review screen's: `Ctrl-w` and `h`, `l` or `j` move to the tree, the details or the buttons; `j`/`k`/`h`/`l` move and fold; `Ctrl-c` cancels. Advisories already ignored in the tool's `audit-ignore.toml` are shown as ignored and not counted.
+
+For example, cargo-nextest's default features include `self-update`. Turn off `default`, turn on `default-no-update`, and the tree no longer has what `self-update` pulls in.
+
+**Done** goes on to the build review with exactly that setup, then saves the lock, and writes `version`, `features` and `default-features` (and `rev` for git) to `project-tools.toml`. **Cancel** saves nothing. The screen needs a terminal.
 
 ## install
 
@@ -172,7 +191,7 @@ Then it:
 
 - drops advisories listed in the tool's [`audit-ignore.toml`](configuration.md#audit-ignore),
 - warns about ignores that no longer match anything, and about expired ones,
-- prints an `update … --precise …` command for each vulnerability that has a patched version, or `upgrade <tool>` when the tool itself is affected.
+- prints an `update … --precise …` command for each vulnerability that has a patched version, or `update <tool> --latest` when the tool itself is affected.
 
 It also reports advisories against cargo-project-tools itself, and fails on them unless they're accepted in [`self-audit-ignore.toml`](configuration.md#advisories-against-cargo-project-tools-itself).
 

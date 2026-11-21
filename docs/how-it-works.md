@@ -46,7 +46,8 @@ Commit `project-tools.toml`, `.project-tools/crates/` and `.project-tools/self-a
 ## Changing a lock
 
 - `update` runs `cargo update` against the tool's manifest with your lock. The new lock is only saved if cargo resolves it.
-- `upgrade` moves the tool to a new version. It starts from the new release's lock and carries your dependency bumps forward where they still resolve. If the new release ships no lock, it starts from yours.
+- `update --latest` (or `--version`) moves the tool to a new version. It starts from the new release's lock and carries your dependency bumps forward where they still resolve. If the new release ships no lock, it starts from yours.
+- `add -i` and `update -i` do this on a [setup screen](commands.md#interactive-setup): features, the tool's version and single dependencies change there, with `cargo tree` and the advisory database showing the result as you go.
 
 ## Installing
 

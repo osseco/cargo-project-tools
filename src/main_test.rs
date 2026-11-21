@@ -153,3 +153,74 @@ fn verify_flags() {
     assert_eq!(args.build.profile.as_deref(), Some("dist"));
     assert_eq!(args.names, vec!["x".to_string()]);
 }
+
+fn tools() -> Config {
+    toml::from_str(
+        "[tool.reg]\nversion = \"1.0.0\"\n\n[tool.gitty]\nversion = \"0.1.0\"\ngit = \"https://example.com/g.git\"\nbranch = \"main\"\nrev = \"abc\"\n",
+    )
+    .unwrap()
+}
+
+#[test]
+fn update_moves_only_when_asked() {
+    let config = tools();
+    let reg = config.tool("reg").unwrap();
+    assert!(moved_origin(reg, None, false).unwrap().is_none());
+    match moved_origin(reg, Some("^1.2"), false).unwrap() {
+        Some(Origin::Registry { version_req }) => assert_eq!(version_req.as_deref(), Some("^1.2")),
+        other => panic!("{other:?}"),
+    }
+    match moved_origin(reg, None, true).unwrap() {
+        Some(Origin::Registry { version_req }) => assert_eq!(version_req, None),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_git_tool_follows_its_branch_again_and_takes_no_version() {
+    let config = tools();
+    let git = config.tool("gitty").unwrap();
+    match moved_origin(git, None, true).unwrap() {
+        Some(Origin::Git { reference, .. }) => {
+            assert_eq!(reference.rev, None);
+            assert_eq!(reference.branch.as_deref(), Some("main"));
+        }
+        other => panic!("{other:?}"),
+    }
+    let err = moved_origin(git, Some("1"), false).unwrap_err().to_string();
+    assert!(err.contains("--latest"), "{err}");
+}
+
+#[test]
+fn update_flags() {
+    let parse = |args: &[&str]| {
+        Cli::try_parse_from(
+            ["cargo-project-tools"]
+                .iter()
+                .chain(args)
+                .copied()
+                .collect::<Vec<_>>(),
+        )
+    };
+    assert!(parse(&["update", "t", "--version", "1", "--latest"]).is_err());
+    assert!(parse(&["update", "t", "--latest", "serde"]).is_ok());
+    assert!(parse(&["update", "t", "-i"]).is_ok());
+    for clash in [
+        &["--latest"][..],
+        &["--version", "1"],
+        &["serde"],
+        &["--recursive"],
+    ] {
+        let mut args = vec!["update", "t", "-i"];
+        args.extend_from_slice(clash);
+        assert!(parse(&args).is_err(), "{args:?}");
+    }
+    assert!(parse(&["add", "cargo-nextest", "-i", "--no-default-features"]).is_ok());
+    // `upgrade` still parses, but isn't listed.
+    assert!(parse(&["upgrade", "t"]).is_ok());
+    let help = <Cli as clap::CommandFactory>::command()
+        .render_help()
+        .to_string();
+    assert!(help.contains("update"), "{help}");
+    assert!(!help.contains("upgrade"), "{help}");
+}

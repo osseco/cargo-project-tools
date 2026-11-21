@@ -86,11 +86,15 @@ Never stage `site/dist/` or `site/node_modules/`.
 - `src/lock.rs`: lock parsing, root check, diff, `cargo update`.
 - `src/install.rs`: `cargo install --path` invocation, build settings → `--config`, install stamps.
 - `src/review.rs`: `build-review.toml`: collects build scripts (with the files they pull in), proc macros and shipped cargo config, checks them against the file, applies overrides and strips.
-- `src/review_tui.rs` and `src/review_tui/`: the review screen (ratatui, edtui), a submodule of `review`. `text.rs` sanitizes what it shows and writes overrides (no links, atomic), `tree.rs` builds the tree, `app.rs` holds the state and actions, `input.rs` and `render.rs` handle keys, mouse and drawing.
+- `src/review_tui.rs` and `src/review_tui/`: the review screen (ratatui, edtui), a submodule of `review`. `text.rs` reads what it shows and writes overrides (no links, atomic), `tree.rs` builds the tree, `app.rs` holds the state and actions, `input.rs` and `render.rs` handle keys, mouse and drawing.
+- `src/screen.rs`: the terminal guard for full-screen views (raw mode, alternate screen, mouse; restored on drop and panic).
+- `src/sanitize.rs`: makes untrusted text safe to draw (control, bidi, invisible and private-use characters become escapes).
 - `src/highlight.rs`: a small Rust and TOML lexer that colours the review screen's editor.
 - `src/build_files.rs`: the files a build script pulls in (`mod`, `#[path]`, `include!`), read with syn; falls back to the whole package when it can't tell.
 - `src/vendor.rs`: `cargo vendor` into `targets/<tool>/vendor`; builds use it through source replacement.
 - `src/graph.rs`: which locked packages a tool builds with its features and targets (`cargo tree` on a scratch copy).
+- `src/setup.rs`: the model behind interactive setup: a tool's features, the dependency tree they build (`cargo tree`), audit findings per package, why a package is built, version choices, and moving a dependency or the tool. Captures cargo's output.
+- `src/setup_tui.rs` and `src/setup_tui/`: the setup screen for `add -i`/`update -i` over a `Setup`: `app.rs` holds the state and the slow steps (run after `working…` is drawn), `input.rs` and `render.rs` handle keys, mouse and drawing.
 - `src/targets.rs`: the host triple, the check that it and `--target` are approved targets, and the target suggestions for `init` (this machine and GitHub workflow runners).
 - `src/audit.rs`: matches locks against the advisory database with rustsec (root and git packages included), our own yanked check, ignore list, fix suggestions.
 - `src/advisory_db.rs`: downloads, revalidates (ETag, `advisory-db-max-age`) and swaps in the RustSec advisory database.

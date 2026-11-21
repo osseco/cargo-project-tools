@@ -36,6 +36,8 @@ pub struct Warning {
     pub kind: String,
     pub package: Package,
     pub advisory: Option<Advisory>,
+    /// Versions the advisory says are fixed; empty for yanked and git-source warnings.
+    pub patched: Vec<VersionReq>,
 }
 
 #[derive(Debug)]
@@ -126,13 +128,18 @@ pub fn scan(db: &Database, lock: &Lockfile, root: &str, git_tool: bool) -> Repor
             continue;
         };
         for advisory in query(db, pkg.name.as_str(), &pkg.version, scope) {
+            let mut patched = advisory.versions.patched().to_vec();
             let kind = match (&advisory.metadata.informational, scope) {
-                (_, Scope::Git) => GIT_SOURCE.to_string(),
+                // Patched versions are registry versions, which don't apply to git.
+                (_, Scope::Git) => {
+                    patched.clear();
+                    GIT_SOURCE.to_string()
+                }
                 (None, Scope::Registry) => {
                     report.vulnerabilities.push(Vulnerability {
                         advisory: advisory.into(),
                         package: pkg.into(),
-                        patched: advisory.versions.patched().to_vec(),
+                        patched,
                     });
                     continue;
                 }
@@ -150,6 +157,7 @@ pub fn scan(db: &Database, lock: &Lockfile, root: &str, git_tool: bool) -> Repor
                     kind,
                     package: pkg.into(),
                     advisory: Some(advisory.into()),
+                    patched,
                 });
         }
     }
@@ -423,7 +431,7 @@ fn suggestion(
     index: &mut IndexCache,
 ) -> String {
     if name == tool {
-        return format!("cargo {SUBCOMMAND} upgrade {tool}");
+        return format!("cargo {SUBCOMMAND} update {tool} --latest");
     }
     let advisories: Vec<Vec<VersionReq>> = vulns.iter().map(|v| v.patched.clone()).collect();
     if advisories.iter().any(Vec::is_empty) {
@@ -453,6 +461,7 @@ pub fn yanked(lock: &Lockfile, root: &str, git_tool: bool, index: &mut IndexCach
             kind: "yanked".into(),
             package: p.into(),
             advisory: None,
+            patched: Vec::new(),
         })
         .collect()
 }

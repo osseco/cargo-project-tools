@@ -12,6 +12,7 @@ use crate::graph;
 use crate::lock;
 use crate::process;
 use crate::project::Project;
+use crate::sanitize::shown;
 use crate::source::registry::sha256_hex;
 use crate::source::{self, Checkout};
 use crate::vendor::Vendored;
@@ -606,7 +607,7 @@ fn known_elsewhere(crates_dir: &Path, name: &str) -> KnownMap {
             Err(e) => {
                 println!(
                     "  warning: skipping {}: {e:#}",
-                    tui::shown(&path.display().to_string())
+                    shown(&path.display().to_string())
                 );
                 continue;
             }
@@ -751,7 +752,7 @@ fn unchanged(item: &Item, before: &str) -> Result<()> {
     if now != before || (item.kind != Kind::ProcMacro && now != item.hash) {
         bail!(
             "{} changed during the review; run the command again",
-            tui::shown(&item.describe())
+            shown(&item.describe())
         );
     }
     Ok(())
@@ -765,15 +766,15 @@ fn report(
     known: &KnownMap,
     root: &Path,
 ) -> Result<()> {
-    let shown = |p: &Path| tui::shown(&p.strip_prefix(root).unwrap_or(p).display().to_string());
+    let rel = |p: &Path| shown(&p.strip_prefix(root).unwrap_or(p).display().to_string());
     for e in stale {
         if !pending.iter().any(|(_, prev)| *prev == Some(*e)) {
             println!(
                 "  warning: unused [[{}]] {}{} in {}; --approve-build removes it",
                 e.kind,
-                tui::shown(&e.package),
-                tui::shown(&e.path),
-                shown(path)
+                shown(&e.package),
+                shown(&e.path),
+                rel(path)
             );
         }
     }
@@ -783,29 +784,25 @@ fn report(
     println!("  build-time code to review:");
     for (item, previous) in pending {
         let note = match (known_for(known, item), previous) {
-            (Some(k), _) => format!(
-                " (reviewed for {}: {})",
-                tui::shown(&k.tool),
-                k.action.as_str()
-            ),
+            (Some(k), _) => format!(" (reviewed for {}: {})", shown(&k.tool), k.action.as_str()),
             (None, Some(p)) => format!(" (changed; was {})", p.action.as_str()),
             (None, None) => String::new(),
         };
         println!(
             "    {:<12} {}{}  {}",
             item.kind,
-            tui::shown(&item.describe()),
+            shown(&item.describe()),
             note,
-            shown(&item.location)
+            rel(&item.location)
         );
     }
     println!(
         "  to decide piece by piece, put these in {} with the action you choose:",
-        shown(path)
+        rel(path)
     );
     for (item, previous) in pending {
         let text = paste_ready(item, *previous, known_for(known, item), root);
-        print!("{}", tui::shown(&text));
+        print!("{}", shown(&text));
     }
     let what = match pending.len() {
         1 => "1 piece of build-time code isn't".to_string(),
@@ -813,7 +810,7 @@ fn report(
     };
     bail!(
         "{what} recorded in {}; review it, then rerun with --approve-build",
-        shown(path)
+        rel(path)
     )
 }
 

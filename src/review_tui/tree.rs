@@ -7,8 +7,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use super::text::{Warn, shown};
+use super::text::Warn;
 use crate::review::{Item, Kind};
+use crate::sanitize::shown;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum NodeKind {
