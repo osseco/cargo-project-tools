@@ -215,11 +215,13 @@ fn a_move_cargo_refuses_is_its_message() {
 #[test]
 fn cargo_errors_on_one_line() {
     assert_eq!(
-        cargo_error("    Updating index\nerror: no matching package\n\n  dep@1.2.0\n"),
+        crate::process::error_line(
+            "    Updating index\nerror: no matching package\n\n  dep@1.2.0\n"
+        ),
         "error: no matching package dep@1.2.0"
     );
-    assert_eq!(cargo_error("odd failure\n"), "odd failure");
-    assert_eq!(cargo_error(""), "cargo failed");
+    assert_eq!(crate::process::error_line("odd failure\n"), "odd failure");
+    assert_eq!(crate::process::error_line(""), "cargo failed");
 }
 
 #[test]

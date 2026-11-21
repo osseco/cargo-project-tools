@@ -25,8 +25,12 @@ fn describe(cmd: &Command) -> String {
 }
 
 /// Run with inherited stdio; error on non-zero exit. With `--message-format json` its
-/// stdout goes to stderr, so stdout holds only records.
+/// stdout goes to stderr, so stdout holds only records. While a full-screen view is up
+/// (`output::hold`), its output is captured instead, and a failure carries its stderr.
 pub fn run(cmd: &mut Command) -> Result<()> {
+    if crate::output::holding() {
+        return output_quiet(cmd).map(|_| ());
+    }
     if crate::output::json() {
         cmd.stdout(std::io::stderr());
     }
@@ -39,8 +43,12 @@ pub fn run(cmd: &mut Command) -> Result<()> {
     Ok(())
 }
 
-/// Run capturing stdout (stderr is passed through); error on non-zero exit.
+/// Run capturing stdout (stderr is passed through, or captured while a full-screen view is
+/// up); error on non-zero exit.
 pub fn output(cmd: &mut Command) -> Result<String> {
+    if crate::output::holding() {
+        return output_quiet(cmd);
+    }
     let out = cmd
         .stderr(Stdio::inherit())
         .output()
@@ -51,16 +59,45 @@ pub fn output(cmd: &mut Command) -> Result<String> {
     Ok(String::from_utf8(out.stdout)?)
 }
 
-/// Run capturing stdout and stderr; stderr is printed only when the command fails.
+/// Run capturing stdout and stderr; stderr is printed only when the command fails, or put
+/// in the error while a full-screen view is up.
 pub fn output_quiet(cmd: &mut Command) -> Result<String> {
     let out = cmd
         .output()
         .with_context(|| format!("failed to start `{}`", describe(cmd)))?;
     if !out.status.success() {
-        eprint!("{}", String::from_utf8_lossy(&out.stderr));
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if crate::output::holding() {
+            bail!(
+                "`{}` failed ({}): {}",
+                describe(cmd),
+                out.status,
+                error_line(&stderr)
+            );
+        }
+        eprint!("{stderr}");
         bail!("`{}` failed ({})", describe(cmd), out.status);
     }
     Ok(String::from_utf8(out.stdout)?)
+}
+
+/// A command's error on one line: from its first `error` line on, or all of it.
+pub fn error_line(stderr: &str) -> String {
+    let lines: Vec<&str> = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    let start = lines
+        .iter()
+        .position(|l| l.starts_with("error"))
+        .unwrap_or(0);
+    let msg = lines.get(start..).unwrap_or_default().join(" ");
+    if msg.is_empty() {
+        "cargo failed".into()
+    } else {
+        msg
+    }
 }
 
 /// Find an executable on PATH.
