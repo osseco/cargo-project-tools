@@ -9,6 +9,7 @@ mod highlight;
 mod install;
 mod lock;
 mod net;
+mod output;
 mod process;
 mod project;
 mod review;
@@ -35,18 +36,22 @@ use cli::{
     UpgradeArgs, VerifyArgs,
 };
 use config::{AuditIgnore, Config, ConfigEditor, SfwMode};
+use output::say;
 use project::Project;
 use selfinstall::SelfEnv;
 use source::{Dest, Origin, git::GitRef};
 
 fn main() -> ExitCode {
-    match run() {
-        Ok(code) => code,
+    let result = run();
+    let code = match &result {
+        Ok(code) => *code,
         Err(e) => {
             eprintln!("error: {e:#}");
             ExitCode::FAILURE
         }
-    }
+    };
+    output::finish(result.as_ref().err(), code == ExitCode::SUCCESS);
+    code
 }
 
 fn run() -> Result<ExitCode> {
@@ -56,6 +61,7 @@ fn run() -> Result<ExitCode> {
         argv.remove(1);
     }
     let cli = Cli::parse_from(argv);
+    output::init(cli.message_format, cli.command.has_summary());
 
     if let Command::Init(args) = &cli.command {
         return init(args).map(|()| ExitCode::SUCCESS);
@@ -76,7 +82,7 @@ fn run() -> Result<ExitCode> {
         _ => None,
     };
     if let Some(out) = self_out {
-        println!("{out}");
+        say!("{out}");
         return Ok(ExitCode::SUCCESS);
     }
     let project = Project::discover()?;
@@ -93,6 +99,8 @@ fn run() -> Result<ExitCode> {
             config.settings.sfw
         };
         if let Some(code) = sfw::reexec(mode)? {
+            // The child under sfw wrote the records.
+            output::skip_summary();
             return Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)));
         }
     }
@@ -109,7 +117,7 @@ fn run() -> Result<ExitCode> {
         Command::AuditDb(AuditDbCommand::Update) => {
             let max_age = config.settings.advisory_db_max_age()?;
             advisory_db::ensure(&project.advisory_db(), advisory_db::Policy::Force, max_age)?;
-            println!(
+            say!(
                 "Advisory database is up to date in {}",
                 project.advisory_db().display()
             );
@@ -128,7 +136,7 @@ fn init(args: &InitArgs) -> Result<()> {
     let project = Project::for_init()?;
     let path = project.config_path();
     if path.exists() {
-        println!("{} already exists", path.display());
+        say!("{} already exists", path.display());
     } else {
         let targets = if args.targets.is_empty() {
             choose_targets(&project)?
@@ -136,14 +144,14 @@ fn init(args: &InitArgs) -> Result<()> {
             Some(args.targets.clone())
         };
         fs::write(&path, config::template_with(targets.as_deref()))?;
-        println!("Created {}", path.display());
+        say!("Created {}", path.display());
         match targets {
-            Some(t) => println!("Targets: {}", t.join(", ")),
-            None => println!("Targets: all"),
+            Some(t) => say!("Targets: {}", t.join(", ")),
+            None => say!("Targets: all"),
         }
     }
     project.ensure_layout()?;
-    println!("Prepared {}", project.tools_dir().display());
+    say!("Prepared {}", project.tools_dir().display());
     Ok(())
 }
 
@@ -157,16 +165,16 @@ fn choose_targets(project: &Project) -> Result<Option<Vec<String>>> {
     }
     let all: Vec<String> = suggestions.iter().map(|s| s.triple.clone()).collect();
     if !std::io::stdin().is_terminal() {
-        println!(
+        say!(
             "note: no terminal to ask on; targets are {} (change `targets` in {} or pass --target)",
             all.join(", "),
             project::CONFIG_FILE
         );
         return Ok(Some(all));
     }
-    println!("Targets to review, audit and install tools for:");
+    say!("Targets to review, audit and install tools for:");
     for (i, s) in suggestions.iter().enumerate() {
-        println!("  {}) {}  ({})", i + 1, s.triple, s.sources.join(", "));
+        say!("  {}) {}  ({})", i + 1, s.triple, s.sources.join(", "));
     }
     loop {
         print!(
@@ -180,7 +188,7 @@ fn choose_targets(project: &Project) -> Result<Option<Vec<String>>> {
         }
         match targets::parse_choice(&line, &suggestions) {
             Ok(choice) => return Ok(choice),
-            Err(e) => println!("  {e}"),
+            Err(e) => say!("  {e}"),
         }
     }
 }
@@ -252,7 +260,7 @@ fn add(project: &Project, config: &Config, args: AddArgs) -> Result<()> {
         let Some(setup) =
             interactive_setup(project, config, name, checkout, &origin, start, mover)?
         else {
-            println!("Cancelled; {name} wasn't added");
+            say!("Cancelled; {name} wasn't added");
             return Ok(());
         };
         let lock_text = fs::read_to_string(setup.lock_path())?;
@@ -302,7 +310,7 @@ fn add(project: &Project, config: &Config, args: AddArgs) -> Result<()> {
     }
     editor.set_tool(name, &entries);
     editor.save()?;
-    println!(
+    say!(
         "Added {name} {} with {kind} in {}",
         checkout.version,
         project.crate_dir(name).display()
@@ -337,7 +345,7 @@ fn remove(project: &Project, config: &Config, name: &str) -> Result<()> {
     let mut editor = ConfigEditor::open(&project.config_path())?;
     editor.remove_tool(name);
     editor.save()?;
-    println!("Removed {name}");
+    say!("Removed {name}");
     Ok(())
 }
 
@@ -406,7 +414,7 @@ fn interactive_setup(
     }
     let (auditor, _) = load_auditor(project, config, advisory_db::Policy::Auto)?;
     let ignore = AuditIgnore::load(&project.audit_ignore_path(name))?;
-    println!("Resolving what {name} builds…");
+    say!("Resolving what {name} builds…");
     let setup = setup::Setup::new(
         name,
         checkout,
@@ -440,7 +448,7 @@ fn update_interactive(project: &Project, config: &Config, args: UpdateArgs) -> R
     };
     let Some(setup) = interactive_setup(project, config, name, checkout, &origin, start, mover)?
     else {
-        println!("Cancelled; nothing changed");
+        say!("Cancelled; nothing changed");
         return Ok(());
     };
 
@@ -457,10 +465,10 @@ fn update_interactive(project: &Project, config: &Config, args: UpdateArgs) -> R
         || setup.default_features != (tool.default_features != Some(false));
     let moved = setup.checkout.version != tool.version
         || setup.checkout.commit.is_some() && setup.checkout.commit != tool.rev;
-    println!("Changes to {name}'s lock:");
+    say!("Changes to {name}'s lock:");
     lock::print_diff(&changes);
     if changes.is_empty() && !features_changed && !moved {
-        println!("Nothing changed");
+        say!("Nothing changed");
         return Ok(());
     }
     review_build(
@@ -497,9 +505,10 @@ fn update_interactive(project: &Project, config: &Config, args: UpdateArgs) -> R
     editor.set_tool(name, &entries);
     editor.save()?;
     if moved {
-        println!(
+        say!(
             "Moved {name} {} -> {}",
-            tool.version, setup.checkout.version
+            tool.version,
+            setup.checkout.version
         );
     }
     Ok(())
@@ -569,10 +578,10 @@ fn move_tool(
             ],
         );
         match ok {
-            Ok(()) => println!("  kept {dep} {to} (new lock has {from})"),
+            Ok(()) => say!("  kept {dep} {to} (new lock has {from})"),
             Err(_) => {
                 fs::write(&lock_path, backup)?;
-                println!(
+                say!(
                     "  dropped {dep} {to}: does not resolve with {name} {}",
                     checkout.version
                 );
@@ -625,14 +634,14 @@ fn update(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
     let updated = lock::load(&checkout.lock_path())?;
     lock::check_root(&updated, name, &checkout.version)?;
     let changes = lock::diff(&ours, &updated);
-    println!("Changes to {name}'s lock:");
+    say!("Changes to {name}'s lock:");
     lock::print_diff(&changes);
     let moved = moved.is_some()
         && (checkout.version != tool.version
             || checkout.commit.is_some() && checkout.commit != tool.rev);
     if changes.is_empty() && !moved {
         if args.version.is_some() || args.latest {
-            println!("{name} is already at {}", checkout.version);
+            say!("{name} is already at {}", checkout.version);
         }
         return Ok(());
     }
@@ -654,7 +663,7 @@ fn update(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
         }
         editor.set_tool(name, &entries);
         editor.save()?;
-        println!("Moved {name} {} -> {}", tool.version, checkout.version);
+        say!("Moved {name} {} -> {}", tool.version, checkout.version);
     }
     Ok(())
 }
@@ -697,7 +706,7 @@ fn load_auditor(
     if found.is_empty() && ignore.ignore.is_empty() {
         return Ok((auditor, 0));
     }
-    println!("cargo-{}:", cli::SUBCOMMAND);
+    say!("cargo-{}:", cli::SUBCOMMAND);
     let open = audit::evaluate_self(&found, &ignore, &audit::today());
     Ok((auditor, open))
 }
@@ -715,7 +724,7 @@ fn built_for(
 ) -> Result<graph::Built> {
     let targets = config.targets_for(tool);
     if let Some(list) = targets {
-        println!("  targets: {}", list.join(", "));
+        say!("  targets: {}", list.join(", "));
     }
     graph::built_packages(project, name, tool, targets, offline)
 }
@@ -728,11 +737,11 @@ fn audit_tool(
     today: &str,
     built_of: &mut BuiltOf,
 ) -> Result<audit::Outcome> {
-    println!("{name}:");
+    say!("{name}:");
     let built = built_of(name, tool)?;
     let report = auditor.audit(&project.lock_path(name), name, tool.git.is_some(), &built)?;
     if report.skipped > 0 {
-        println!(
+        say!(
             "  skipped {} packages not built with these features",
             report.skipped
         );
@@ -740,7 +749,7 @@ fn audit_tool(
     let ignore = AuditIgnore::load(&project.audit_ignore_path(name))?;
     let outcome = audit::evaluate(name, &report, &ignore, today, &mut auditor.index);
     if outcome.vulnerabilities == 0 && outcome.warnings == 0 {
-        println!("  ok");
+        say!("  ok");
     }
     Ok(outcome)
 }
@@ -762,7 +771,7 @@ fn audit(project: &Project, config: &Config, args: AuditArgs) -> Result<ExitCode
         vulns += outcome.vulnerabilities;
         warns += outcome.warnings;
     }
-    println!("{vulns} vulnerabilities, {warns} warnings");
+    say!("{vulns} vulnerabilities, {warns} warnings");
     let failed = vulns > 0 || (args.deny_warnings && warns > 0);
     Ok(if failed {
         ExitCode::FAILURE
@@ -860,7 +869,7 @@ fn check_install(project: &Project, config: &Config, args: &InstallArgs) -> Resu
     if !failed.is_empty() {
         bail!("check failed ({}); nothing was built", failed.join(", "));
     }
-    println!("All checks passed; nothing was built");
+    say!("All checks passed; nothing was built");
     Ok(())
 }
 
@@ -891,6 +900,11 @@ fn check_targets(
         // On stderr, so the list comes before the error on the same stream.
         for (name, _, absent) in &missing {
             eprintln!("  {name}: {} isn't an approved target", absent.join(", "));
+            output::emit(output::Record::TargetMissing {
+                tool: name.to_string(),
+                file: project::CONFIG_FILE.to_string(),
+                targets: absent.clone(),
+            });
         }
         if screen::interactive() {
             bail!("rerun with --approve-target to add the missing targets");
@@ -905,7 +919,7 @@ fn check_targets(
     for (_, tool, absent) in &missing {
         editor.add_targets(*tool, absent);
         let place = tool.map_or("[settings]".to_string(), |t| format!("[tool.{t}]"));
-        println!("Added {} to {place} targets", absent.join(", "));
+        say!("Added {} to {place} targets", absent.join(", "));
     }
     editor.save()?;
     Ok(true)
@@ -919,17 +933,17 @@ fn verify(project: &Project, config: &Config, args: &VerifyArgs) -> Result<ExitC
     let mut repairable = Vec::new();
     for (name, tool) in tools {
         match checksum::check(project, name) {
-            Ok(mismatches) if mismatches.is_empty() => println!("{name}: ok"),
+            Ok(mismatches) if mismatches.is_empty() => say!("{name}: ok"),
             Ok(mismatches) => {
-                println!("{name}:");
+                say!("{name}:");
                 for m in &mismatches {
-                    println!("  {m}");
+                    say!("  {m}");
                 }
                 failed.push(name);
                 repairable.push((name, tool));
             }
             Err(e) => {
-                println!("{name}: {e:#}");
+                say!("{name}: {e:#}");
                 failed.push(name);
             }
         }
@@ -963,7 +977,7 @@ fn verify(project: &Project, config: &Config, args: &VerifyArgs) -> Result<ExitC
             );
             match repaired {
                 Ok(()) => {
-                    println!("{name}: repaired");
+                    say!("{name}: repaired");
                     failed.retain(|f| *f != name);
                 }
                 Err(e) => eprintln!("error: {e:#}"),
@@ -973,7 +987,7 @@ fn verify(project: &Project, config: &Config, args: &VerifyArgs) -> Result<ExitC
     if failed.is_empty() {
         return Ok(ExitCode::SUCCESS);
     }
-    println!("verification failed for {}", failed.join(", "));
+    say!("verification failed for {}", failed.join(", "));
     Ok(ExitCode::FAILURE)
 }
 
@@ -1041,7 +1055,7 @@ fn list(project: &Project, config: &Config) -> Result<()> {
         let source = tool.git.as_deref().unwrap_or("crates.io");
         let has_lock = project.lock_path(name).is_file();
         let built = project.stamp_path(name).is_file();
-        println!(
+        say!(
             "{name} {} ({source}){}{}",
             tool.version,
             if has_lock {

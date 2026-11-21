@@ -15,6 +15,11 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub no_sfw: bool,
 
+    /// `json`: one JSON record per line on stdout (findings, pending reviews, missing
+    /// targets, a summary), and the human text on stderr.
+    #[arg(long, global = true, value_enum, default_value_t)]
+    pub message_format: crate::output::Format,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -281,6 +286,18 @@ pub enum AuditDbCommand {
 }
 
 impl Command {
+    /// Commands whose JSON output ends with a `summary` record.
+    pub fn has_summary(&self) -> bool {
+        matches!(
+            self,
+            Command::Add(_)
+                | Command::Upgrade(_)
+                | Command::Update(_)
+                | Command::Install(_)
+                | Command::Audit(_)
+        )
+    }
+
     /// Commands that download packages and should run through sfw. `audit` and `audit-db`
     /// only fetch the advisory database, which isn't a package. `verify` only builds when
     /// repairing.

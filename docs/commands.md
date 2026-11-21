@@ -21,6 +21,8 @@ Every command runs as `cargo project-tools <command>`. Apart from `init` and the
 
 `--no-sfw` works with every command and turns off [sfw](configuration.md#sfw) for that run.
 
+`--message-format json` also works with every command. See [JSON output](#json-output).
+
 ## init
 
 Creates `project-tools.toml` with default build settings, and `.project-tools/` with its `.gitignore`.
@@ -212,6 +214,46 @@ Fetches or revalidates the advisory database without auditing.
 ## list
 
 Shows every configured tool with its version and source, and flags a missing `Cargo.lock` or an installed build.
+
+## JSON output
+
+With `--message-format json`, stdout holds only JSON records, one per line. All human text, and cargo's own output, goes to stderr instead. `add`, `update`, `install` and `audit` write these records:
+
+| `kind` | When | Fields |
+| --- | --- | --- |
+| `review-pending` | Build-time code isn't recorded in [`build-review.toml`](build-review.md) | `tool`, `file`, `item`, `entry` |
+| `review-unused` | An entry in `build-review.toml` matches nothing the tool builds | `tool`, `file`, `type`, `package`, `path` |
+| `target-missing` | This machine or `--target` isn't in the tool's [`targets`](configuration.md#targets) | `tool`, `file`, `targets` |
+| `advisory` | A finding of the [audit](#audit) that isn't ignored | `tool`, `file`, `id`, `type`, `package`, `package_version`, `title`, `patched`, `severity`, `fix` |
+| `ignore-unused` | An ignore that matched nothing | `tool`, `file`, `id` |
+| `ignore-expired` | An ignore past its `expires` date | `tool`, `file`, `id`, `expires` |
+| `error` | The command failed | `message` |
+| `summary` | Always the last record | `ok`, `vulnerabilities`, `warnings`, `pending_reviews`, `missing_targets` |
+
+Every record also has `"version": 1`. The version goes up when a record changes in a way that breaks readers.
+
+Other fields:
+
+- `file` is the file to change, relative to the project root: `build-review.toml`, `project-tools.toml`, the tool's `Cargo.lock`, or the ignore file.
+- `item` describes the piece of build-time code:
+  - `type` is `build-script`, `proc-macro` or `cargo-config`;
+  - `package`, `version` and `path` are left out when they don't apply;
+  - `sha256` is given for build scripts and cargo config, `checksum` for proc macros;
+  - `location` is the file or directory to read;
+  - `previous` (`action`, plus `sha256` or `checksum`) is the entry it replaces;
+  - `known` (`tool`, `action`) is a decision another tool records for it.
+- `entry` is the TOML to put in `file`, with the action it would get.
+- In an `advisory`:
+  - `type` is `vulnerability`, `unmaintained`, `unsound`, `notice`, `yanked` or `git-source`;
+  - `severity` is `error` for a vulnerability and `warning` otherwise. With `--deny-warnings`, warnings fail the run too, and `summary.ok` says so;
+  - `fix` is the command to run, when one exists.
+
+```json
+{"version":1,"kind":"target-missing","tool":"cargo-deny","file":"project-tools.toml","targets":["x86_64-unknown-linux-gnu"]}
+{"version":1,"kind":"summary","ok":false,"vulnerabilities":0,"warnings":0,"pending_reviews":0,"missing_targets":1}
+```
+
+Every value comes from locks, sources and advisories you don't control. JSON escapes control characters, but nothing else is changed: check a value before you use it in a command or a CI annotation.
 
 ## Managing cargo-project-tools itself
 

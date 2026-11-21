@@ -171,7 +171,7 @@ fn ignore_by_alias_and_unused() {
         reason = "stale"
         "#,
     );
-    let mut ig = Ignores::new(&file, "2026-01-01", "t");
+    let mut ig = Ignores::new(&file, "2026-01-01", "t", "f");
     assert!(ig.matches(&r.vulnerabilities[1].advisory).is_some());
     assert!(
         ig.matches(r.warnings["unmaintained"][0].advisory.as_ref().unwrap())
@@ -188,7 +188,7 @@ fn expired_ignore_does_not_apply() {
     let file = ignores(
         "[[ignore]]\nid = \"RUSTSEC-2020-0002\"\nreason = \"x\"\nexpires = \"2025-01-01\"\n",
     );
-    let mut ig = Ignores::new(&file, "2026-01-01", "t");
+    let mut ig = Ignores::new(&file, "2026-01-01", "t", "f");
     assert!(ig.matches(&r.vulnerabilities[1].advisory).is_none());
 }
 

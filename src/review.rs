@@ -9,6 +9,7 @@ use serde::Deserialize;
 use crate::build_files::{self, Pulled};
 use crate::graph;
 use crate::lock;
+use crate::output::{self, Record, say};
 use crate::process;
 use crate::project::Project;
 use crate::sanitize::shown;
@@ -605,7 +606,7 @@ fn known_elsewhere(crates_dir: &Path, name: &str) -> KnownMap {
         let entries = match load(&path) {
             Ok(e) => e,
             Err(e) => {
-                println!(
+                say!(
                     "  warning: skipping {}: {e:#}",
                     shown(&path.display().to_string())
                 );
@@ -768,8 +769,23 @@ fn report(
     root: &Path,
 ) -> Result<()> {
     let rel = |p: &Path| shown(&p.strip_prefix(root).unwrap_or(p).display().to_string());
+    // Records carry the raw text, which JSON escapes; humans get it `shown`.
+    let raw = |p: &Path| slash(p.strip_prefix(root).unwrap_or(p));
+    // `crates/<tool>/build-review.toml`
+    let tool = path
+        .parent()
+        .and_then(Path::file_name)
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     for e in stale {
         if !pending.iter().any(|(_, prev)| *prev == Some(*e)) {
+            output::emit(Record::ReviewUnused {
+                tool: tool.clone(),
+                file: raw(path),
+                kind: e.kind.table().to_string(),
+                package: e.package.clone(),
+                path: e.path.clone(),
+            });
             eprintln!(
                 "  warning: unused [[{}]] {}{} in {}; --approve-build removes it",
                 e.kind,
@@ -802,8 +818,18 @@ fn report(
         rel(path)
     );
     for (item, previous) in pending {
-        let text = paste_ready(item, *previous, known_for(known, item), root);
+        let found = known_for(known, item);
+        let text = paste_ready(item, *previous, found, root);
         eprint!("{}", shown(&text));
+        output::emit(Record::ReviewPending {
+            tool: tool.clone(),
+            file: raw(path),
+            item: review_item(item, *previous, found, raw(&item.location)),
+            entry: text
+                .lines()
+                .map(|l| format!("{}\n", l.trim_start()))
+                .collect(),
+        });
     }
     let what = match pending.len() {
         1 => "1 piece of build-time code isn't".to_string(),
@@ -822,6 +848,41 @@ fn report(
         rel(path),
         rel(path)
     )
+}
+
+/// A pending item as a `review-pending` record describes it.
+fn review_item(
+    item: &Item,
+    previous: Option<&Entry>,
+    known: Option<&Known>,
+    location: String,
+) -> output::ReviewItem {
+    let hash = |kind: Kind, hash: &str| match kind {
+        Kind::ProcMacro => (None, Some(hash.to_string())),
+        _ => (Some(hash.to_string()), None),
+    };
+    let (sha256, checksum) = hash(item.kind, &item.hash);
+    output::ReviewItem {
+        kind: item.kind.table().to_string(),
+        package: item.package.clone(),
+        version: item.version.clone(),
+        path: item.path.clone(),
+        sha256,
+        checksum,
+        location,
+        previous: previous.map(|p| {
+            let (sha256, checksum) = hash(p.kind, &p.hash);
+            output::Previous {
+                action: p.action.as_str().to_string(),
+                sha256,
+                checksum,
+            }
+        }),
+        known: known.map(|k| output::Known {
+            tool: k.tool.clone(),
+            action: k.action.as_str().to_string(),
+        }),
+    }
 }
 
 /// The review-file entry for a pending item, indented: with the decision another tool
@@ -902,7 +963,7 @@ fn record(path: &Path, decisions: Vec<Decision>, stale: &[&Entry]) -> Result<Vec
             }
             None => add_entry(&mut doc, &item, action, file.as_deref()),
         }
-        println!(
+        say!(
             "  recorded {:<12} {} ({})",
             item.kind,
             item.describe(),
@@ -912,7 +973,7 @@ fn record(path: &Path, decisions: Vec<Decision>, stale: &[&Entry]) -> Result<Vec
     }
     for e in stale.iter().filter(|e| !reused.contains(e)) {
         remove_entry(&mut doc, e);
-        println!("  removed unused [[{}]] {}{}", e.kind, e.package, e.path);
+        say!("  removed unused [[{}]] {}{}", e.kind, e.package, e.path);
     }
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;

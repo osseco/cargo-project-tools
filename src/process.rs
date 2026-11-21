@@ -17,8 +17,12 @@ fn describe(cmd: &Command) -> String {
     s
 }
 
-/// Run with inherited stdio; error on non-zero exit.
+/// Run with inherited stdio; error on non-zero exit. With `--message-format json` its
+/// stdout goes to stderr, so stdout holds only records.
 pub fn run(cmd: &mut Command) -> Result<()> {
+    if crate::output::json() {
+        cmd.stdout(std::io::stderr());
+    }
     let status = cmd
         .status()
         .with_context(|| format!("failed to start `{}`", describe(cmd)))?;

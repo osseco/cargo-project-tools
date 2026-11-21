@@ -73,6 +73,8 @@ Add `--deny-warnings` to also fail on unmaintained, unsound, yanked and git-sour
 
 Checking the build review vendors the dependencies of each tool that isn't up to date, so restore the bin cache from above first: a tool whose stamp matches is skipped, and the cached `bin/.stamps/<tool>.built.json` saves the downloads `audit` needs. The build cache isn't needed, and vendored sources are left out of it anyway.
 
+Add `--message-format json` to get each problem as a JSON record on stdout, with its `file` and what to put there, for example to turn them into annotations. Pin the records' `version`. See [JSON output](commands.md#json-output).
+
 A failure names the files to change. Never fix it on the runner with `--approve-build` or `--approve-target`: review where you work, then commit `build-review.toml` or `project-tools.toml`.
 
 ## Socket Firewall in CI

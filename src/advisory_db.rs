@@ -6,6 +6,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::net::{self, Fetched};
+use crate::output::say;
 use crate::source::registry;
 
 /// A `git archive` of the default branch. codeload answers `If-None-Match` with 304.
@@ -97,7 +98,7 @@ fn ensure_with(
         },
     }
     if let Some(state) = read_state(path) {
-        println!("advisory-db: {}", describe(&state, now));
+        say!("advisory-db: {}", describe(&state, now));
     }
     match fetched {
         Some(db) => Ok(db),
@@ -115,14 +116,14 @@ fn fetch(
 ) -> Result<Option<rustsec::Database>> {
     match get(state.and_then(|s| s.etag.as_deref()))? {
         Fetched::NotModified => {
-            println!("advisory-db: unchanged on the server");
+            say!("advisory-db: unchanged on the server");
             let mut state = state.cloned().unwrap_or_default();
             state.fetched_at = now;
             write_state(path, &state)?;
             Ok(None)
         }
         Fetched::Body { bytes, etag } => {
-            println!("advisory-db: downloaded {} KiB", bytes.len() / 1024);
+            say!("advisory-db: downloaded {} KiB", bytes.len() / 1024);
             let (commit, updated_at) = archive_info(&bytes)?;
             let parent = path
                 .parent()

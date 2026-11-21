@@ -10,6 +10,7 @@ use crate::cli::BuildArgs;
 use crate::config::{Build, Tool};
 use crate::graph;
 use crate::lock;
+use crate::output::say;
 use crate::process;
 use crate::project::Project;
 use crate::review;
@@ -280,14 +281,14 @@ pub fn install(
             .all(|b| project.bin_dir().join(b).is_file())
         && checksum::check(project, name).is_ok_and(|m| m.is_empty())
     {
-        println!("{name} {} is up to date", tool.version);
+        say!("{name} {} is up to date", tool.version);
         return Ok(());
     }
 
     if opts.check {
-        println!("Checking {name} {}", tool.version);
+        say!("Checking {name} {}", tool.version);
     } else {
-        println!("Installing {name} {}", tool.version);
+        say!("Installing {name} {}", tool.version);
     }
     let checkout = source::checkout(
         project,
