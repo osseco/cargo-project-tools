@@ -3,6 +3,7 @@ use super::*;
 use std::path::PathBuf;
 
 use crate::review::tui::Choice;
+use crate::review::{Entry, Pin};
 
 use std::path::Path;
 
@@ -637,4 +638,53 @@ fn editing_another_tools_override_saves_ours() {
     assert_eq!(fs::read_to_string(&ours).unwrap(), "mine theirs\n");
     assert_eq!(fs::read_to_string(&theirs).unwrap(), "theirs\n");
     assert_eq!(app.sources, [None]);
+}
+
+/// A changed piece's earlier entry with `action`.
+fn earlier(item: &Item, action: Action) -> Entry {
+    Entry {
+        kind: item.kind,
+        package: item.package.clone(),
+        path: item.path.clone(),
+        hash: "old".into(),
+        pin: Pin::None,
+        action,
+        file: None,
+    }
+}
+
+#[test]
+fn a_changed_piece_starts_on_strip_but_not_on_approve() {
+    let tmp = tempfile::tempdir().unwrap();
+    let items = [
+        root_script(tmp.path(), "a", "x\n"),
+        root_script(tmp.path(), "b", "y\n"),
+    ];
+    let entries = [
+        earlier(&items[0], Action::Approve),
+        earlier(&items[1], Action::Strip),
+    ];
+    let pending: Vec<Pending> = items
+        .iter()
+        .cloned()
+        .zip(entries.iter().map(Some))
+        .collect();
+    let app = App::new("tool", &pending, &[None, None], &tmp.path().join("crate")).unwrap();
+    assert_eq!(app.radio, [None, Some(Action::Strip)]);
+}
+
+#[test]
+fn another_tools_approve_does_not_replace_our_strip() {
+    let tmp = tempfile::tempdir().unwrap();
+    let item = root_script(tmp.path(), "a", "x\n");
+    let entry = earlier(&item, Action::Strip);
+    let pending: Vec<Pending> = vec![(item, Some(&entry))];
+    let app = App::new(
+        "tool",
+        &pending,
+        &[known("nextest", Action::Approve, None)],
+        &tmp.path().join("crate"),
+    )
+    .unwrap();
+    assert_eq!(app.radio, [Some(Action::Strip)]);
 }

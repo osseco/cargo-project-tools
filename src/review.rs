@@ -706,21 +706,17 @@ fn known_for<'a>(known: &'a KnownMap, item: &Item) -> Option<&'a Known> {
     ))
 }
 
-/// The decisions in every other tool's review file under `crates_dir`. A file that can't be
-/// read is skipped with a warning; for a piece several tools record, the first tool by name
-/// wins.
-fn known_elsewhere(crates_dir: &Path, name: &str) -> KnownMap {
+/// The decisions in the review files of the other configured tools, `tools`, under
+/// `crates_dir`; a directory that isn't a configured tool counts for nothing. A file that
+/// can't be read is skipped with a warning. A piece the tools decided differently on is left
+/// out: there's no one decision to start from.
+fn known_elsewhere(crates_dir: &Path, name: &str, tools: &[String]) -> KnownMap {
     let mut known = KnownMap::new();
-    let Ok(dirs) = fs::read_dir(crates_dir) else {
-        return known;
-    };
-    let mut tools: Vec<String> = dirs
-        .filter_map(|d| d.ok()?.file_name().into_string().ok())
-        .filter(|t| t != name)
-        .collect();
+    let mut disputed = BTreeSet::new();
+    let mut tools: Vec<&String> = tools.iter().filter(|t| *t != name).collect();
     tools.sort();
     for tool in tools {
-        let dir = crates_dir.join(&tool);
+        let dir = crates_dir.join(tool);
         let path = dir.join(FILE);
         if !path.exists() {
             continue;
@@ -736,16 +732,39 @@ fn known_elsewhere(crates_dir: &Path, name: &str) -> KnownMap {
             }
         };
         for e in entries {
-            known
-                .entry((e.kind, e.package, e.path, e.hash, e.pin))
-                .or_insert_with(|| Known {
-                    tool: tool.clone(),
-                    action: e.action,
-                    file: e.file.map(|f| dir.join(f)),
-                });
+            let key = (e.kind, e.package, e.path, e.hash, e.pin);
+            match known.get(&key) {
+                Some(k) if k.action != e.action => {
+                    disputed.insert(key);
+                }
+                Some(_) => {}
+                None => {
+                    known.insert(
+                        key,
+                        Known {
+                            tool: tool.clone(),
+                            action: e.action,
+                            file: e.file.map(|f| dir.join(f)),
+                        },
+                    );
+                }
+            }
         }
     }
+    known.retain(|k, _| !disputed.contains(k));
     known
+}
+
+/// The tools in project-tools.toml, whose review decisions may be reused; none without one.
+fn configured_tools(project: &Project) -> Result<Vec<String>> {
+    let path = project.config_path();
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    Ok(crate::config::Config::load(&path)?
+        .tool
+        .into_keys()
+        .collect())
 }
 
 /// How `check` treats pending items.
@@ -1308,7 +1327,11 @@ pub fn review(
     } else {
         Mode::Report
     };
-    let known = known_elsewhere(&project.tools_dir().join("crates"), name);
+    let known = known_elsewhere(
+        &project.tools_dir().join("crates"),
+        name,
+        &configured_tools(project)?,
+    );
     let decided = check(
         &project.review_path(name),
         items,
@@ -1331,7 +1354,11 @@ pub fn check_only(
 ) -> Result<()> {
     source::refuse_config_above(&project.root, checkout)?;
     let items = collect(name, selection, checkout, vendored, offline)?;
-    let known = known_elsewhere(&project.tools_dir().join("crates"), name);
+    let known = known_elsewhere(
+        &project.tools_dir().join("crates"),
+        name,
+        &configured_tools(project)?,
+    );
     check(
         &project.review_path(name),
         items,

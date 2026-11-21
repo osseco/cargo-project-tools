@@ -214,7 +214,12 @@ impl App {
         let mut app = App {
             tool: tool.to_string(),
             previous: pending.iter().map(|(_, p)| p.map(|e| e.action)).collect(),
-            radio: pending.iter().map(|(_, p)| p.map(|e| e.action)).collect(),
+            // A changed piece starts on its earlier strip or override, but not on approve:
+            // approving new content takes a look at it.
+            radio: pending
+                .iter()
+                .map(|(_, p)| p.map(|e| e.action).filter(|a| *a != Action::Approve))
+                .collect(),
             files: pending
                 .iter()
                 .map(|(_, p)| p.and_then(|e| e.file.clone()))
@@ -247,14 +252,17 @@ impl App {
     }
 
     /// Pre-select what other tools recorded; it's an exact match, so it wins over a changed
-    /// entry's decision. Another tool's override is shown from its file until Done copies
-    /// it here. An override of ours that differs from it is kept, and the piece left
-    /// undecided.
+    /// entry's approve, but never over its strip or override. Another tool's override is
+    /// shown from its file until Done copies it here. An override of ours that differs from
+    /// it is kept, and the piece left undecided.
     fn take_known(&mut self) {
         for i in 0..self.items.len() {
             let Some(k) = self.known[i].clone() else {
                 continue;
             };
+            if self.previous[i].is_some_and(|p| p != Action::Approve && p != k.action) {
+                continue;
+            }
             if k.action != Action::Override {
                 self.radio[i] = Some(k.action);
                 self.files[i] = None;

@@ -968,9 +968,13 @@ fn decisions_are_read_from_other_tools() {
     }
     fs::create_dir_all(crates.join("no-file")).unwrap();
 
-    let known = known_elsewhere(&crates, "me");
+    let tools = |t: &[&str]| t.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     let ring = script(tmp.path(), "ring", "h");
-    // The first tool by name wins; this tool's own file and broken files aren't used.
+    // Tools that decided differently give nothing to start from.
+    let known = known_elsewhere(&crates, "me", &tools(&["alpha", "beta", "me", "broken"]));
+    assert_eq!(known_for(&known, &ring), None);
+    // One tool's decision is used; this tool's own file and broken files aren't.
+    let known = known_elsewhere(&crates, "me", &tools(&["alpha", "me", "broken"]));
     assert_eq!(
         known_for(&known, &ring),
         Some(&Known {
@@ -985,6 +989,9 @@ fn decisions_are_read_from_other_tools() {
         known_for(&known, &script(tmp.path(), "ring", "other")),
         None
     );
+    // A directory that isn't a configured tool counts for nothing.
+    let known = known_elsewhere(&crates, "me", &tools(&["me"]));
+    assert!(known.is_empty());
 }
 
 #[test]
