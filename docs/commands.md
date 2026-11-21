@@ -58,7 +58,7 @@ cargo project-tools add my-tool --git https://github.com/org/my-tool --tag v1.2.
 
 Copies the lock the tool ships with into `.project-tools/crates/<tool>/` and adds a `[tool.<name>]` entry. A tool that ships no lock gets one from `cargo generate-lockfile`, which only reads the index: nothing is compiled and no build script runs.
 
-Before anything is written, it [reviews the build-time code](build-review.md) the lock brings in, and stops while any of it isn't in `build-review.toml`. Look at the files it lists, then run it again with `--approve-build`.
+Before anything is written, it [reviews the build-time code](build-review.md) the lock brings in, and stops while any of it isn't in `build-review.toml`. In a terminal it opens the [review screen](build-review.md#reviewing-on-the-terminal); otherwise look at the files it lists, then run it again with `--approve-build`.
 
 ## remove
 

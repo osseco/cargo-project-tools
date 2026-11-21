@@ -53,9 +53,54 @@ A proc macro can only be approved. To avoid one, turn off the feature that pulls
 
 `sha256` and `checksum` always describe the shipped content, also for `override` and `strip`, so a change upstream stops the build again and you can check that your override still fits.
 
+## Reviewing on the terminal
+
+When something isn't recorded and both input and output are a terminal, `add`, `upgrade`, `update` and `install` open a review screen. Elsewhere, or with `--approve-build`, they behave as described under [Approving](#approving).
+
+| Part | What it does |
+| --- | --- |
+| Tree (left) | The pending pieces by kind, and their files. A build script outside its package root shows its directory, which is what its sha256 covers. A proc macro shows its whole crate. `?` undecided, `✓` approve, `⊘` strip, `✎` override. A changed piece shows its previous decision and starts with it. |
+| Decision (top right) | Approve, Strip or Override for the selected piece. A proc macro can only be approved. |
+| Editor (right) | The selected file, with vim keys and Rust and TOML colours. Shipped files are view only. |
+| Title bar | How many pieces are approved, overridden, stripped and undecided. |
+| Buttons (bottom) | Tree, Editor, Save override, Done, Cancel. |
+
+The mouse works everywhere. On the keyboard, `Ctrl-w` and then `h`, `l`, `k` or `j` moves to the tree, the editor, the decision or the buttons. In the tree, `j`/`k` move and `l`/`h` unfold and fold. With the decision or the buttons focused, `h`/`l` choose and `Enter` picks. `Ctrl-c` cancels.
+
+### Overriding
+
+With Override chosen, the build script or config file itself can be edited. **Save override** writes it to `overrides/<package>/<path>`, or `overrides/cargo-config/<path>` for config, in the tool's crate directory. Leaving an edited file asks whether to save it.
+
+Saving is careful with what's already there:
+
+- An override file you didn't open (one that appeared while you were editing) is only replaced after you say yes.
+- An override that changed on disk since you opened it isn't replaced. Discard your edits to load it again.
+- No link is followed anywhere under the crate directory. The file is written to a temporary file and renamed into place.
+
+### What you see is what's there
+
+The screen escapes anything that could hide, reorder or disguise text. Control characters show as `\x1b`. These show as `<U+202E>`:
+
+- bidi controls, zero-width characters and other format characters, including tag characters
+- variation selectors and characters that draw nothing
+- spaces other than the plain one, and line and paragraph separators
+- private-use characters and noncharacters
+
+This also covers file names and link targets in the tree.
+
+A file that needed escaping is marked `⚠` in the tree and gets a warning, and it can't be edited on the screen, so an override saved there only ever holds text you saw. Choosing Override for such a file writes a copy of the original with every line commented out under an `UNREVIEWED COPY` header, for you to edit in your own editor. An override already in place is kept. `install` refuses an override while that header is still there.
+
+Look-alike letters from other scripts (a Cyrillic `а` for a Latin `a`) aren't escaped, since that would hide ordinary non-English text.
+
+### Done and Cancel
+
+**Done** records the decisions in `build-review.toml` and removes entries that no longer match anything. It first checks that nothing changed on disk while you were reviewing. For a proc macro, that covers every file of its crate. The command then still stops if any piece is undecided, or set to Override without a saved file. Run it again to decide on the rest.
+
+**Cancel** records nothing and lists what's pending, as below.
+
 ## Approving
 
-When something isn't recorded, `add`, `upgrade`, `update` and `install` stop before writing or building, and list each piece with the file to look at:
+Outside a terminal (in CI, or with input or output redirected), `add`, `upgrade`, `update` and `install` stop before writing or building, and list each piece with the file to look at:
 
 ```text
   build-time code to review:

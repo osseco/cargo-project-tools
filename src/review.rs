@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
+use std::io::{self, IsTerminal};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -14,12 +15,15 @@ use crate::source::registry::sha256_hex;
 use crate::source::{self, Checkout};
 use crate::vendor::Vendored;
 
+#[path = "review_tui.rs"]
+mod tui;
+
 /// Per-tool file recording the build-time code that may run, next to the tool's lock.
 pub const FILE: &str = "build-review.toml";
 
 const TEMPLATE: &str =
     "# Code that runs while building this tool. `install` halts on anything not listed here.
-# Review it, then record it with `--approve-build`. See docs/build-review.md.
+# Review it on the review screen, or record it with `--approve-build`. See docs/build-review.md.
 
 ";
 
@@ -509,11 +513,22 @@ impl<'a> Decision<'a> {
     }
 }
 
+/// How `check` treats pending items.
+pub enum Mode<'a> {
+    /// Fail listing them.
+    Report,
+    /// Record them all (`--approve-build`).
+    ApproveAll,
+    /// Decide on each on the review screen.
+    Interactive { tool: &'a str, crate_dir: &'a Path },
+}
+
 /// Match `items` against the review file at `path`. Items without a matching entry are
-/// pending: without `approve` that's an error listing them; with it they're recorded, keeping
-/// the action of an entry for the same place whose content changed. Entries that match
-/// nothing are reported, and removed with `approve`.
-pub fn check(path: &Path, items: Vec<Item>, approve: bool, root: &Path) -> Result<Vec<Decided>> {
+/// pending. `Mode::Report` fails listing them. `Mode::ApproveAll` records them, keeping the
+/// action of an entry for the same place whose content changed. `Mode::Interactive` records
+/// what's decided on the review screen and fails listing the rest. Entries that match nothing
+/// are reported, and removed when recording.
+pub fn check(path: &Path, items: Vec<Item>, mode: Mode, root: &Path) -> Result<Vec<Decided>> {
     let entries = load(path)?;
     let stale: Vec<&Entry> = entries
         .iter()
@@ -534,25 +549,101 @@ pub fn check(path: &Path, items: Vec<Item>, approve: bool, root: &Path) -> Resul
             }
         }
     }
-    if approve {
-        let decisions = pending.into_iter().map(Decision::keep_or_approve).collect();
-        decided.extend(record(path, decisions, &stale)?);
-    } else {
-        report(path, &pending, &stale, root)?;
+    match mode {
+        Mode::ApproveAll => {
+            let decisions = pending.into_iter().map(Decision::keep_or_approve).collect();
+            decided.extend(record(path, decisions, &stale)?);
+        }
+        Mode::Interactive { tool, crate_dir } if !pending.is_empty() => {
+            let before = pending
+                .iter()
+                .map(|(item, _)| snapshot(item))
+                .collect::<Result<Vec<_>>>()?;
+            match tui::run(tool, &pending, crate_dir)? {
+                Some(choices) => {
+                    decided.extend(settle(path, pending, choices, &before, &stale, root)?)
+                }
+                // Cancelled.
+                None => report(path, &pending, &stale, root)?,
+            }
+        }
+        _ => report(path, &pending, &stale, root)?,
     }
     Ok(decided)
 }
 
+/// Record the choices made on the review screen, then fail listing what's still undecided.
+/// `before` holds each pending item's `snapshot` from before the screen opened.
+fn settle(
+    path: &Path,
+    pending: Vec<Pending>,
+    choices: Vec<Option<tui::Choice>>,
+    before: &[String],
+    stale: &[&Entry],
+    root: &Path,
+) -> Result<Vec<Decided>> {
+    let mut decisions = Vec::new();
+    let mut rest = Vec::new();
+    for (((item, previous), choice), before) in pending.into_iter().zip(choices).zip(before) {
+        match choice {
+            Some(c) => {
+                unchanged(&item, before)?;
+                decisions.push(Decision {
+                    item,
+                    previous,
+                    action: c.action,
+                    file: c.file,
+                });
+            }
+            None => rest.push((item, previous)),
+        }
+    }
+    // The entries of undecided items stay until they're decided.
+    let keep: Vec<&Entry> = rest.iter().filter_map(|(_, p)| *p).collect();
+    let unused: Vec<&Entry> = stale
+        .iter()
+        .copied()
+        .filter(|e| !keep.contains(e))
+        .collect();
+    let decided = record(path, decisions, &unused)?;
+    report(path, &rest, &[], root)?;
+    Ok(decided)
+}
+
+/// A hash of what's on disk for `item`: the same as `item.hash` for build scripts and
+/// config, and every file of the crate for a proc macro, whose `hash` is its lock checksum
+/// or commit.
+fn snapshot(item: &Item) -> Result<String> {
+    match item.kind {
+        Kind::BuildScript => script_hash(&item.base, &item.location),
+        Kind::CargoConfig => Ok(sha256_hex(&fs::read(&item.location)?)),
+        Kind::ProcMacro => dir_hash(&item.location),
+    }
+}
+
+/// Fail when a piece's content changed while it was on the review screen, or, for build
+/// scripts and config, since it was collected.
+fn unchanged(item: &Item, before: &str) -> Result<()> {
+    let now = snapshot(item)?;
+    if now != before || (item.kind != Kind::ProcMacro && now != item.hash) {
+        bail!(
+            "{} changed during the review; run the command again",
+            tui::shown(&item.describe())
+        );
+    }
+    Ok(())
+}
+
 /// Warn about unused entries, and fail listing what's pending.
 fn report(path: &Path, pending: &[Pending], stale: &[&Entry], root: &Path) -> Result<()> {
-    let shown = |p: &Path| p.strip_prefix(root).unwrap_or(p).display().to_string();
+    let shown = |p: &Path| tui::shown(&p.strip_prefix(root).unwrap_or(p).display().to_string());
     for e in stale {
         if !pending.iter().any(|(_, prev)| *prev == Some(*e)) {
             println!(
                 "  warning: unused [[{}]] {}{} in {}; --approve-build removes it",
                 e.kind,
-                e.package,
-                e.path,
+                tui::shown(&e.package),
+                tui::shown(&e.path),
                 shown(path)
             );
         }
@@ -569,7 +660,7 @@ fn report(path: &Path, pending: &[Pending], stale: &[&Entry], root: &Path) -> Re
         println!(
             "    {:<12} {}{}  {}",
             item.kind,
-            item.describe(),
+            tui::shown(&item.describe()),
             note,
             shown(&item.location)
         );
@@ -579,7 +670,7 @@ fn report(path: &Path, pending: &[Pending], stale: &[&Entry], root: &Path) -> Re
         shown(path)
     );
     for (item, previous) in pending {
-        print!("{}", paste_ready(item, *previous));
+        print!("{}", tui::shown(&paste_ready(item, *previous)));
     }
     let what = match pending.len() {
         1 => "1 piece of build-time code isn't".to_string(),
@@ -739,6 +830,13 @@ pub fn apply(decided: &[Decided], crate_dir: &Path) -> Result<String> {
                 let src = crate_dir.join(rel);
                 let content = fs::read(&src)
                     .with_context(|| format!("reading override {}", src.display()))?;
+                let first = content.split(|b| *b == b'\n').next().unwrap_or_default();
+                if String::from_utf8_lossy(first).contains(tui::UNREVIEWED) {
+                    bail!(
+                        "override {} is still the commented-out copy; edit it first",
+                        src.display()
+                    );
+                }
                 fs::write(&item.location, &content)
                     .with_context(|| format!("writing {}", item.location.display()))?;
                 if item.vendored {
@@ -818,8 +916,19 @@ pub fn review(
     approve: bool,
 ) -> Result<String> {
     let items = collect(name, selection, checkout, vendored, offline)?;
-    let decided = check(&project.review_path(name), items, approve, &project.root)?;
-    apply(&decided, &project.crate_dir(name))
+    let crate_dir = project.crate_dir(name);
+    let mode = if approve {
+        Mode::ApproveAll
+    } else if io::stdin().is_terminal() && io::stdout().is_terminal() {
+        Mode::Interactive {
+            tool: name,
+            crate_dir: &crate_dir,
+        }
+    } else {
+        Mode::Report
+    };
+    let decided = check(&project.review_path(name), items, mode, &project.root)?;
+    apply(&decided, &crate_dir)
 }
 
 /// Digest of the review file and its override files, for the install stamp.
