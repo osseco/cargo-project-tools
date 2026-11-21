@@ -64,6 +64,8 @@ fn lowest_patched_version() {
 fn rejects_unsafe_archive_paths() {
     assert!(inner_path(Path::new("x-1.0.0/../evil"), "x-1.0.0").is_err());
     assert!(inner_path(Path::new("other/file"), "x-1.0.0").is_err());
+    assert!(inner_path(Path::new("x-1.0.0/.git/config"), "x-1.0.0").is_err());
+    assert!(inner_path(Path::new("x-1.0.0/sub/.GIT"), "x-1.0.0").is_err());
     assert_eq!(
         inner_path(Path::new("x-1.0.0/src/lib.rs"), "x-1.0.0").unwrap(),
         Some(PathBuf::from("src/lib.rs"))

@@ -95,6 +95,7 @@ pub fn built_packages(
             lock_path.display()
         );
     };
+    crate::lock::parse(&lock_text).with_context(|| format!("reading {}", lock_path.display()))?;
     let features = install::feature_args(tool);
     let selection = Selection {
         features: &features,

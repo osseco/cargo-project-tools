@@ -342,6 +342,22 @@ fn pulled_by(pkg_dir: &Path, script: &Path) -> Result<Pulled> {
 
 /// Fail when `path` is a link. Registry archives and `cargo vendor` have none, but a git
 /// repository can point a file anywhere.
+/// Fail unless `dir`, with links resolved, is inside one of `roots` (already resolved). A
+/// workspace member or path dependency that leads elsewhere, through a link or `..`, would
+/// let an override or strip write outside the tool's sources.
+fn inside_sources(dir: &Path, roots: &[PathBuf]) -> Result<()> {
+    let real = dir
+        .canonicalize()
+        .with_context(|| format!("reading {}", dir.display()))?;
+    if !roots.iter().any(|r| real.starts_with(r)) {
+        bail!(
+            "{} is outside the tool's checkout and vendored sources",
+            dir.display()
+        );
+    }
+    Ok(())
+}
+
 fn refuse_link(path: &Path) -> Result<()> {
     let meta = path
         .symlink_metadata()
@@ -455,6 +471,11 @@ pub fn collect(
     let json = process::output(&mut cmd).context("reading package metadata")?;
     let meta: Metadata = serde_json::from_str(&json)?;
 
+    // What an override or strip may write into: the checkout and the vendored copies.
+    let roots: Vec<PathBuf> = [&checkout.root, &vendored.dir]
+        .into_iter()
+        .filter_map(|d| d.canonicalize().ok())
+        .collect();
     let lock = lock::load(&checkout.lock_path())?;
     let checksums: BTreeMap<(String, String), String> = lock
         .packages
@@ -477,6 +498,8 @@ pub fn collect(
             .parent()
             .context("bad manifest path")?
             .to_path_buf();
+        inside_sources(&pkg_dir, &roots)
+            .with_context(|| format!("package {} {}", pkg.name, pkg.version))?;
         let in_vendor = pkg_dir.starts_with(&vendored.dir);
         for t in &pkg.targets {
             if t.kind.iter().any(|k| k == "custom-build") {
@@ -1149,6 +1172,7 @@ pub fn review(
     offline: bool,
     approve: bool,
 ) -> Result<String> {
+    source::refuse_config_above(&project.root, checkout)?;
     let items = collect(name, selection, checkout, vendored, offline)?;
     let crate_dir = project.crate_dir(name);
     let mode = if approve {
@@ -1182,6 +1206,7 @@ pub fn check_only(
     vendored: &Vendored,
     offline: bool,
 ) -> Result<()> {
+    source::refuse_config_above(&project.root, checkout)?;
     let items = collect(name, selection, checkout, vendored, offline)?;
     let known = known_elsewhere(&project.tools_dir().join("crates"), name);
     check(

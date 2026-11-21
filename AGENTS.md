@@ -107,11 +107,13 @@ Never stage `site/dist/` or `site/node_modules/`.
 
 ## Security rules
 
-- https only for downloads and git. `GIT_ALLOW_PROTOCOL=https` is set for clones.
+- https only for downloads and git. `GIT_ALLOW_PROTOCOL=https` is set for clones and for cargo, which fetches git with the git command (`CARGO_NET_GIT_FETCH_WITH_CLI`). Locks with a non-https source are refused.
 - Verify every `.crate` against the index checksum before use.
-- Reject archive paths that escape the crate directory.
+- Reject archive paths that escape the crate directory, and archives with a `.git`.
+- Reuse a git clone only when `src.clone` says we made it; run git with no hooks and no fsmonitor.
 - Tool names must be crate names (they become directory names), and files we rewrite in a tool's source must not be links.
 - Start processes with `Command::arg`, never a shell.
+- No `.cargo` between a checkout and the project root; no package directory outside the checkout and vendored sources.
 - Cargo runs from the project root, never from inside a tool's source: config and toolchain files are found from the working directory up. A tool's shipped `rust-toolchain*` files are removed.
 - Reject user values that start with `-` where they're passed as git refs.
 - Never weaken TLS verification. Extra trust comes only from `SSL_CERT_FILE` (set by sfw).

@@ -12,7 +12,9 @@ Building a tool runs code before the tool itself ever runs: build scripts and pr
 
 Only what the tool builds with its [`features` and `default-features`](configuration.md#toolname) counts, for the [`targets`](configuration.md#targets) you chose, so one review holds on each of them. Without `targets` that's every target, including Windows-only crates when you only build on Linux. Installing on a machine that isn't listed needs `--approve-target`, and then usually `--approve-build` for what that target adds.
 
-Cargo never reads config from inside dependencies, and a config with `include`, or one that is a link, is refused. A shipped `rust-toolchain` file is always removed instead.
+Cargo never reads config from inside dependencies, and a config with `include`, or one that is a link, is refused. A `.cargo` between the checkout and the project root (in `.project-tools/targets/<tool>`, `.project-tools/targets` or `.project-tools`) is refused too: cargo would read it, and nobody reviewed it. A shipped `rust-toolchain` file is always removed instead.
+
+A package whose directory leads outside the tool's checkout and vendored sources, through a link or `..`, is refused, so an override or strip never writes anywhere else.
 
 ### Files a build script pulls in
 

@@ -232,7 +232,9 @@ cargo project-tools inspect cargo-nextest --message-format json
 Shows what the setup screen shows, as text or as a [JSON](#json-output) `inspect` record, so a script or an AI agent can choose features without a terminal. It records nothing.
 
 - For a configured tool, it uses the tool's lock, features and [`targets`](configuration.md#targets). `-F` and `--no-default-features` try other features instead.
-- For any other crate (or a configured one with `@version` or `--git`), it starts from the lock `add` would start from, with `-F`, `--no-default-features` and `--git`/`--branch`/`--tag`/`--rev` as for `add`. Only `.project-tools/targets/<crate>` is written.
+- For any other crate (or a configured one with `@version` or `--git`), it starts from the lock `add` would start from, with `-F`, `--no-default-features` and `--git`/`--branch`/`--tag`/`--rev` as for `add`.
+
+Either way it checks out into a temporary directory under `.project-tools/targets/.tmp`, never the one `install` builds from.
 
 It reports:
 

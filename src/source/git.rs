@@ -22,12 +22,33 @@ pub struct Clone {
     pub version: String,
 }
 
+/// Not a directory, so git finds no hooks in it.
+#[cfg(windows)]
+const NO_HOOKS: &str = "NUL";
+#[cfg(not(windows))]
+const NO_HOOKS: &str = "/dev/null";
+
 fn git() -> Command {
     let mut cmd = Command::new("git");
     // Never prompt for credentials and refuse non-https transports, including in submodules.
     cmd.env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_ALLOW_PROTOCOL", "https");
+    // Run no command a repository's config names: no hooks, no fsmonitor.
+    cmd.args(["-c", "core.fsmonitor=false", "-c"])
+        .arg(format!("core.hooksPath={NO_HOOKS}"));
     cmd
+}
+
+/// Next to `dest`: which clone `fresh_clone` made there. Outside the work tree, so nothing
+/// in the source can write it.
+fn marker(dest: &Path) -> PathBuf {
+    let mut name = dest.file_name().unwrap_or_default().to_os_string();
+    name.push(".clone");
+    dest.with_file_name(name)
+}
+
+fn marker_text(url: &str, rev: &str) -> String {
+    format!("{url}\n{rev}\n")
 }
 
 fn reject_option_like(value: &str) -> Result<()> {
@@ -41,7 +62,11 @@ fn reject_option_like(value: &str) -> Result<()> {
 /// A `dest` already at the pinned `rev` is reused instead.
 pub fn clone(url: &str, reference: &GitRef, name: &str, dest: &Path) -> Result<Clone> {
     ensure_https(url)?;
-    if !reference.rev.as_deref().is_some_and(|rev| reuse(dest, rev)) {
+    if !reference
+        .rev
+        .as_deref()
+        .is_some_and(|rev| reuse(dest, url, rev))
+    {
         fresh_clone(url, reference, dest)?;
     }
     let commit = process::output(git().arg("-C").arg(dest).args(["rev-parse", "HEAD"]))?
@@ -58,11 +83,20 @@ pub fn clone(url: &str, reference: &GitRef, name: &str, dest: &Path) -> Result<C
 }
 
 /// Reset an existing clone that's already at commit `rev`, rewriting only files that differ
-/// from it, so unchanged files keep their mtimes and cargo's fingerprints stay fresh. False
-/// when there's nothing to reuse or git fails.
-fn reuse(dest: &Path, rev: &str) -> bool {
-    if rev.len() != 40 || !rev.bytes().all(|b| b.is_ascii_hexdigit()) || !dest.join(".git").exists()
-    {
+/// from it, so unchanged files keep their mtimes and cargo's fingerprints stay fresh. Only a
+/// clone `fresh_clone` made of `url` at `rev` is reused: a `.git` that came some other way
+/// (inside a crate archive, say) could hold config that runs commands. False when there's
+/// nothing to reuse or git fails.
+fn reuse(dest: &Path, url: &str, rev: &str) -> bool {
+    if rev.len() != 40 || !rev.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return false;
+    }
+    let ours = fs::read_to_string(marker(dest)).is_ok_and(|m| m == marker_text(url, rev));
+    let real_dir = dest
+        .join(".git")
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_dir());
+    if !ours || !real_dir {
         return false;
     }
     let at_rev = process::output(git().arg("-C").arg(dest).args(["rev-parse", "HEAD"]))
@@ -79,6 +113,10 @@ fn reuse(dest: &Path, rev: &str) -> bool {
 }
 
 fn fresh_clone(url: &str, reference: &GitRef, dest: &Path) -> Result<()> {
+    let marker = marker(dest);
+    if marker.exists() {
+        fs::remove_file(&marker)?;
+    }
     if dest.exists() {
         fs::remove_dir_all(dest)?;
     }
@@ -104,6 +142,7 @@ fn fresh_clone(url: &str, reference: &GitRef, dest: &Path) -> Result<()> {
                 .args(["checkout", "--quiet", "--detach"])
                 .arg(rev),
         )?;
+        fs::write(&marker, marker_text(url, rev))?;
     }
     Ok(())
 }

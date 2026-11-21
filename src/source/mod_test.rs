@@ -56,6 +56,30 @@ fn search_dirs_never_leave_the_checkout() {
 }
 
 #[test]
+fn cargo_config_above_the_checkout_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path();
+    let checkout = member_checkout(&project.join(".project-tools/targets/tool/src"));
+    fs::create_dir_all(&checkout.package_dir).unwrap();
+    // The project's own config is the user's.
+    fs::create_dir_all(project.join(".cargo")).unwrap();
+    refuse_config_above(project, &checkout).unwrap();
+    for dir in [
+        ".project-tools/targets/tool",
+        ".project-tools/targets",
+        ".project-tools",
+    ] {
+        let cargo = project.join(dir).join(".cargo");
+        fs::create_dir(&cargo).unwrap();
+        let err = refuse_config_above(project, &checkout)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("isn't reviewed"), "{err}");
+        fs::remove_dir(&cargo).unwrap();
+    }
+}
+
+#[test]
 fn toolchain_files_are_removed_along_the_search_path() {
     let tmp = tempfile::tempdir().unwrap();
     let checkout = member_checkout(tmp.path());

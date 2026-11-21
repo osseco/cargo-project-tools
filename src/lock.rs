@@ -8,11 +8,35 @@ use crate::output::say;
 use crate::process;
 
 pub fn load(path: &Path) -> Result<Lockfile> {
-    Lockfile::load(path).with_context(|| format!("reading {}", path.display()))
+    let lock = Lockfile::load(path).with_context(|| format!("reading {}", path.display()))?;
+    check_sources(&lock).with_context(|| format!("checking {}", path.display()))?;
+    Ok(lock)
 }
 
 pub fn parse(text: &str) -> Result<Lockfile> {
-    text.parse().context("parsing Cargo.lock")
+    let lock = text.parse().context("parsing Cargo.lock")?;
+    check_sources(&lock)?;
+    Ok(lock)
+}
+
+/// Every source in the lock must be fetched over https: `git+ssh://`, `git://`, `file://`
+/// and plain http are refused, as for our own downloads and clones.
+pub fn check_sources(lock: &Lockfile) -> Result<()> {
+    for p in &lock.packages {
+        let Some(source) = &p.source else { continue };
+        let text = source.to_string();
+        let https = text
+            .split_once('+')
+            .is_some_and(|(_, url)| url.starts_with("https://"));
+        if !https {
+            bail!(
+                "{} {} comes from {text}; only https sources are allowed",
+                p.name,
+                p.version
+            );
+        }
+    }
+    Ok(())
 }
 
 /// The lock must belong to `name` at `version`: the package without a source.

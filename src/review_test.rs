@@ -1007,3 +1007,24 @@ fn paste_ready_entries_use_what_another_tool_recorded() {
     assert_eq!(entry.action, Action::Override);
     assert_eq!(entry.file.as_deref(), Some("overrides/ring/build.rs"));
 }
+
+#[test]
+fn packages_outside_the_sources_are_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("src");
+    fs::create_dir_all(root.join("member")).unwrap();
+    fs::create_dir_all(tmp.path().join("project")).unwrap();
+    let roots = [root.canonicalize().unwrap()];
+    inside_sources(&root.join("member"), &roots).unwrap();
+    // `..` out of the checkout.
+    assert!(inside_sources(&root.join("../project"), &roots).is_err());
+    // A link out of it.
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(tmp.path().join("project"), root.join("linked")).unwrap();
+        let err = inside_sources(&root.join("linked"), &roots)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("outside the tool's checkout"), "{err}");
+    }
+}

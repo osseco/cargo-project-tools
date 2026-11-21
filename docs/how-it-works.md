@@ -53,7 +53,7 @@ Commit `project-tools.toml`, `.project-tools/crates/` and `.project-tools/self-a
 
 `install` first audits the locks of the tools it's about to build, and builds nothing if one of them has a vulnerability you haven't ignored. It vendors each tool's dependencies into `targets/<tool>/vendor` and checks the build scripts, proc macros and shipped cargo config against the tool's [`build-review.toml`](build-review.md). Then it builds each tool with `cargo install --path … --locked`, using your lock and the build settings from `project-tools.toml`. It writes a stamp per tool to `bin/.stamps/<tool>.json`, and the sha256 of each binary to `bin/<tool>.sha256`. When the version, lock, settings, OS and architecture match the stamp and the binaries match their checksums, the tool is skipped. Both files sit next to the binaries, so restoring `bin` from a cache is enough to skip a build.
 
-The source of each tool is kept in `.project-tools/targets/<tool>/src`. A `.crate` is unpacked with its original file times, and a git tool already at its pinned commit is reset in place instead of cloned again. Vendored dependencies all get the same old file time, as they're copied afresh each time and build scripts watching them would otherwise run again. So with an unchanged build directory cargo finds nothing to rebuild and copies the binary it already has. [`verify --repair`](commands.md#verify) relies on that.
+The source of each tool is kept in `.project-tools/targets/<tool>/src`. A `.crate` is unpacked with its original file times, and a git tool already at its pinned commit is reset in place instead of cloned again (only a clone it made itself, recorded in `targets/<tool>/src.clone`). Vendored dependencies all get the same old file time, as they're copied afresh each time and build scripts watching them would otherwise run again. So with an unchanged build directory cargo finds nothing to rebuild and copies the binary it already has. [`verify --repair`](commands.md#verify) relies on that.
 
 ## Auditing
 
@@ -65,6 +65,7 @@ Which packages a tool builds comes from `cargo tree` and is kept in `bin/.stamps
 
 ## Supply chain
 
-- Downloads and git clones are https only, with normal TLS verification.
-- Every `.crate` is checked against the index checksum before use, and archive paths that escape the crate directory are rejected.
+- Downloads and git clones are https only, with normal TLS verification. A lock with a source that isn't https (`git+ssh://`, `git://`, `file://`, plain http) is refused, and cargo fetches git dependencies with the git command, limited to https.
+- Every `.crate` is checked against the index checksum before use. Archive paths that escape the crate directory are rejected, and so is an archive with a `.git` in it, whose config could make git run commands.
+- A git tool's clone is only reused when this tool made it, at that commit and from that url. Git runs with no hooks and no fsmonitor, whatever a repository's config says.
 - Package downloads run through [Socket Firewall Free](https://docs.socket.dev/docs/socket-firewall-free) when `sfw` is installed. See [Configuration](configuration.md#sfw).

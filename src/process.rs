@@ -4,8 +4,15 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result, bail};
 
 /// The cargo binary: `$CARGO` when run as a cargo subcommand, otherwise `cargo` on PATH.
+/// Cargo fetches git dependencies with the git command, limited to https like our own
+/// clones; its built-in git would take any transport a manifest names.
 pub fn cargo() -> Command {
-    Command::new(std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo")))
+    let mut cmd =
+        Command::new(std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo")));
+    cmd.env("CARGO_NET_GIT_FETCH_WITH_CLI", "true")
+        .env("GIT_ALLOW_PROTOCOL", "https")
+        .env("GIT_TERMINAL_PROMPT", "0");
+    cmd
 }
 
 fn describe(cmd: &Command) -> String {
