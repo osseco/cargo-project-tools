@@ -507,7 +507,8 @@ fn a_blank_row_under_the_title_and_above_the_editor() {
 /// An app whose pieces have these decisions recorded for other tools.
 fn app_knowing(dir: &Path, items: Vec<Item>, known: Vec<Option<Known>>) -> App {
     let pending: Vec<Pending> = items.into_iter().map(|i| (i, None)).collect();
-    App::new("tool", &pending, &known, &dir.join("crate")).unwrap()
+    // Beside the other tools' directories, as under `.project-tools/crates`.
+    App::new("tool", &pending, &known, &dir.join("crates/tool")).unwrap()
 }
 
 fn known(tool: &str, action: Action, file: Option<PathBuf>) -> Option<Known> {
@@ -557,7 +558,7 @@ fn another_tools_override_is_copied_on_done_only() {
     fixtures::write(&theirs, "fn main() { /* theirs */ }\n");
     let items = || vec![root_script(tmp.path(), "a", "fn main() {}\n")];
     let hint = || vec![known("nextest", Action::Override, Some(theirs.clone()))];
-    let ours = tmp.path().join("crate/overrides/a/build.rs");
+    let ours = tmp.path().join("crates/tool/overrides/a/build.rs");
 
     let mut app = app_knowing(tmp.path(), items(), hint());
     assert_eq!(app.files[0].as_deref(), Some("overrides/a/build.rs"));
@@ -592,7 +593,7 @@ fn an_override_of_ours_that_differs_is_kept_and_left_undecided() {
     let tmp = tempfile::tempdir().unwrap();
     let theirs = tmp.path().join("crates/nextest/overrides/a/build.rs");
     fixtures::write(&theirs, "theirs\n");
-    let ours = tmp.path().join("crate/overrides/a/build.rs");
+    let ours = tmp.path().join("crates/tool/overrides/a/build.rs");
     fixtures::write(&ours, "ours\n");
     let app = app_knowing(
         tmp.path(),
@@ -634,7 +635,7 @@ fn editing_another_tools_override_saves_ours() {
     typed(&mut app, "imine ");
     press(&mut app, KeyCode::Esc);
     app.press(Button::Save);
-    let ours = tmp.path().join("crate/overrides/a/build.rs");
+    let ours = tmp.path().join("crates/tool/overrides/a/build.rs");
     assert_eq!(fs::read_to_string(&ours).unwrap(), "mine theirs\n");
     assert_eq!(fs::read_to_string(&theirs).unwrap(), "theirs\n");
     assert_eq!(app.sources, [None]);
@@ -687,4 +688,69 @@ fn another_tools_approve_does_not_replace_our_strip() {
     )
     .unwrap();
     assert_eq!(app.radio, [Some(Action::Strip)]);
+}
+
+#[cfg(unix)]
+#[test]
+fn another_tools_override_through_a_link_is_not_used() {
+    let tmp = tempfile::tempdir().unwrap();
+    let elsewhere = tmp.path().join("elsewhere");
+    fixtures::write(
+        &elsewhere.join("a/build.rs"),
+        "fn main() { /* theirs */ }\n",
+    );
+    fs::create_dir_all(tmp.path().join("crates/nextest")).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, tmp.path().join("crates/nextest/overrides")).unwrap();
+    let theirs = tmp.path().join("crates/nextest/overrides/a/build.rs");
+    let app = app_knowing(
+        tmp.path(),
+        vec![root_script(tmp.path(), "a", "fn main() {}\n")],
+        vec![known("nextest", Action::Override, Some(theirs))],
+    );
+    assert_eq!(app.radio, [None]);
+    assert_eq!(app.sources, [None]);
+}
+
+#[test]
+fn another_tools_override_changed_during_the_review_is_not_copied() {
+    let tmp = tempfile::tempdir().unwrap();
+    let theirs = tmp.path().join("crates/nextest/overrides/a/build.rs");
+    fixtures::write(&theirs, "fn main() { /* theirs */ }\n");
+    let mut app = app_knowing(
+        tmp.path(),
+        vec![root_script(tmp.path(), "a", "fn main() {}\n")],
+        vec![known("nextest", Action::Override, Some(theirs.clone()))],
+    );
+    fixtures::write(&theirs, "fn main() { /* changed */ }\n");
+    app.press(Button::Done);
+    let err = app.copy_sources().unwrap_err().to_string();
+    assert!(err.contains("changed during the review"), "{err}");
+    assert!(!tmp.path().join("crates/tool/overrides/a/build.rs").exists());
+}
+
+#[test]
+fn shipped_files_wrap_so_nothing_hides_past_the_edge() {
+    let tmp = tempfile::tempdir().unwrap();
+    let text = format!("fn main() {{}}{}; hidden_call();\n", " ".repeat(300));
+    let mut app = app(tmp.path(), vec![root_script(tmp.path(), "a", &text)]);
+    let screen = draw(&mut app);
+    assert!(screen.contains("hidden_call"), "{screen}");
+}
+
+#[test]
+fn choosing_override_shows_the_override_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let item = fixtures::dir_script(tmp.path(), "b");
+    let mut app = app(tmp.path(), vec![item]);
+    fixtures::write(
+        &tmp.path().join("crate/overrides/b/build/main.rs"),
+        "fn main() { /* ours */ }\n",
+    );
+    // A pulled-in file is open, not the script itself.
+    app.selected = node(&app, "helper.rs");
+    app.open_selected();
+    app.set_radio(0, Action::Override);
+    assert_eq!(app.files[0].as_deref(), Some("overrides/b/build/main.rs"));
+    assert!(app.open.as_ref().unwrap().own);
+    assert_eq!(editor_text(&app), "fn main() { /* ours */ }\n");
 }
