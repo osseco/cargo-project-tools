@@ -63,6 +63,8 @@ pub struct Choice {
     pub current: bool,
     /// The version in the lock when the setup started.
     pub original: bool,
+    /// A pre-release (`1.0.0-rc.1`).
+    pub prerelease: bool,
 }
 
 pub struct Setup {
@@ -304,6 +306,7 @@ impl Setup {
                 compatible: lock::compatible(&e.vers, current),
                 suggested: suggested.as_ref() == Some(&e.vers),
                 current: e.vers == *current,
+                prerelease: !e.vers.pre.is_empty(),
                 original: self.original.get(name).is_some_and(|o| o.contains(&e.vers)),
                 version: e.vers.clone(),
             })

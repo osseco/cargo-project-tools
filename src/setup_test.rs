@@ -368,3 +368,30 @@ fn a_vulnerability_without_a_fix_suggests_nothing() {
             .all(|c| !c.suggested)
     );
 }
+
+#[test]
+fn pre_releases_are_labelled() {
+    let mut f = fixture(AuditIgnore::default());
+    f.setup.auditor.index.insert(
+        "dep",
+        vec![
+            entry("dep", "1.0.0", false),
+            entry("dep", "1.1.0-rc.1", false),
+            entry("dep", "1.1.0", false),
+        ],
+    );
+    let marks: Vec<(String, bool)> = f
+        .setup
+        .versions("dep", &v("1.0.0"))
+        .iter()
+        .map(|c| (c.version.to_string(), c.prerelease))
+        .collect();
+    assert_eq!(
+        marks,
+        [
+            ("1.1.0".into(), false),
+            ("1.1.0-rc.1".into(), true),
+            ("1.0.0".into(), false),
+        ]
+    );
+}

@@ -284,6 +284,12 @@ impl App<'_> {
             .iter()
             .map(|c| {
                 let mut spans = vec![Span::raw(c.version.to_string())];
+                if c.prerelease {
+                    spans.push(Span::styled(
+                        "  pre-release",
+                        Style::default().fg(Color::Yellow),
+                    ));
+                }
                 if c.current {
                     spans.push(Span::styled("  current", Style::default().dim()));
                 }
