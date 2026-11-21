@@ -360,6 +360,41 @@ impl Setup {
         (built.len(), open(true), open(false))
     }
 
+    /// The packages in the lock with build-time code, by kind (`build-script` or
+    /// `proc-macro`), from `cargo metadata`. Whether one is built depends on the features.
+    pub fn build_time(&self) -> Result<BTreeSet<(String, String, Version)>> {
+        #[derive(Deserialize)]
+        struct Metadata {
+            packages: Vec<Package>,
+        }
+        #[derive(Deserialize)]
+        struct Package {
+            name: String,
+            version: Version,
+            targets: Vec<Target>,
+        }
+        #[derive(Deserialize)]
+        struct Target {
+            kind: Vec<String>,
+        }
+        // Every feature of the tool, so it lists whatever any choice of them could build.
+        let mut cmd = self.cargo("metadata");
+        cmd.args(["--format-version", "1", "--locked", "--all-features"]);
+        let meta: Metadata = serde_json::from_str(&self.run(cmd)?)?;
+        let mut out = BTreeSet::new();
+        for p in meta.packages {
+            for kind in p.targets.iter().flat_map(|t| &t.kind) {
+                let kind = match kind.as_str() {
+                    "custom-build" => "build-script",
+                    "proc-macro" => "proc-macro",
+                    _ => continue,
+                };
+                out.insert((kind.to_string(), p.name.clone(), p.version.clone()));
+            }
+        }
+        Ok(out)
+    }
+
     /// The lock as it is now.
     pub fn lock_path(&self) -> std::path::PathBuf {
         self.checkout.lock_path()

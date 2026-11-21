@@ -13,6 +13,7 @@ Every command runs as `cargo project-tools <command>`. Apart from `init` and the
 | `audit [crates…]` | Check every lock against the RustSec advisory database, apply `audit-ignore.toml`, suggest fixes |
 | `audit-db update` | Fetch or revalidate the advisory database |
 | `list` | Show tools and their state |
+| `inspect <crate>[@ver]` | Show what a tool builds with its features, and what each other feature would add, without a terminal |
 | `self-update [<version>]` | Install a release of cargo-project-tools and make it active |
 | `self-use <version>` | Make an installed version active |
 | `self-list` | List installed versions |
@@ -111,7 +112,7 @@ The keys are the review screen's: `Ctrl-w` and `h`, `l` or `j` move to the tree,
 
 For example, cargo-nextest's default features include `self-update`. Turn off `default`, turn on `default-no-update`, and the tree no longer has what `self-update` pulls in.
 
-**Done** goes on to the build review with exactly that setup, then saves the lock, and writes `version`, `features` and `default-features` (and `rev` for git) to `project-tools.toml`. **Cancel** saves nothing. The screen needs a terminal.
+**Done** goes on to the build review with exactly that setup, then saves the lock, and writes `version`, `features` and `default-features` (and `rev` for git) to `project-tools.toml`. **Cancel** saves nothing. The screen needs a terminal; without one, use [`inspect`](#inspect).
 
 ## install
 
@@ -215,9 +216,33 @@ Fetches or revalidates the advisory database without auditing.
 
 Shows every configured tool with its version and source, and flags a missing `Cargo.lock` or an installed build.
 
+## inspect
+
+```bash
+cargo project-tools inspect cargo-nextest
+cargo project-tools inspect typos-cli@1.40.0 --no-default-features -F unstable-schema
+cargo project-tools inspect cargo-nextest --message-format json
+```
+
+Shows what the setup screen shows, as text or as a [JSON](#json-output) `inspect` record, so a script or an AI agent can choose features without a terminal. It records nothing.
+
+- For a configured tool, it uses the tool's lock, features and [`targets`](configuration.md#targets). `-F` and `--no-default-features` try other features instead.
+- For any other crate (or a configured one with `@version` or `--git`), it starts from the lock `add` would start from, with `-F`, `--no-default-features` and `--git`/`--branch`/`--tag`/`--rev` as for `add`. Only `.project-tools/targets/<crate>` is written.
+
+It reports:
+
+- the tool's features and what each enables;
+- the packages built with the chosen features, and their advisories (ones in the tool's `audit-ignore.toml` are marked ignored);
+- the build scripts and proc macros among them, and whether the tool's `build-review.toml` has an entry for each;
+- for each feature that isn't on, what turning it on adds: packages, advisories, build scripts and proc macros. With the default features on, it also shows what `default-features = false` removes; with them off, what turning them on adds.
+
+Each feature costs one `cargo tree` run. Like `audit`, it lets cargo download the dependencies to read their manifests, and compiles nothing.
+
+In JSON, the record has `tool`, `tool_version`, `features`, `default_features`, `selected`, `targets`, `packages` (`name`, `version`), `findings` (`package`, `version`, `type`, `id`, `title`, `patched`, `ignored`), `build_time` (`type`, `package`, `version`, `recorded`) and `feature_changes`. Each entry of `feature_changes` has `feature`, `enable`, and the `packages`, `findings` and `build_time` it adds. When `enable` is `false` (only for `default`), they are what it removes.
+
 ## JSON output
 
-With `--message-format json`, stdout holds only JSON records, one per line. All human text, and cargo's own output, goes to stderr instead. `add`, `update`, `install` and `audit` write these records:
+With `--message-format json`, stdout holds only JSON records, one per line. All human text, and cargo's own output, goes to stderr instead. `add`, `update`, `install`, `audit` and `inspect` write these records:
 
 | `kind` | When | Fields |
 | --- | --- | --- |
@@ -227,8 +252,9 @@ With `--message-format json`, stdout holds only JSON records, one per line. All 
 | `advisory` | A finding of the [audit](#audit) that isn't ignored | `tool`, `file`, `id`, `type`, `package`, `package_version`, `title`, `patched`, `severity`, `fix` |
 | `ignore-unused` | An ignore that matched nothing | `tool`, `file`, `id` |
 | `ignore-expired` | An ignore past its `expires` date | `tool`, `file`, `id`, `expires` |
+| `inspect` | What [`inspect`](#inspect) found | See [inspect](#inspect) |
 | `error` | The command failed | `message` |
-| `summary` | Always the last record | `ok`, `vulnerabilities`, `warnings`, `pending_reviews`, `missing_targets` |
+| `summary` | The last record of `add`, `update`, `install` and `audit` | `ok`, `vulnerabilities`, `warnings`, `pending_reviews`, `missing_targets` |
 
 Every record also has `"version": 1`. The version goes up when a record changes in a way that breaks readers.
 

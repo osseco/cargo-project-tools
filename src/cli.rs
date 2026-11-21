@@ -48,6 +48,9 @@ pub enum Command {
     AuditDb(AuditDbCommand),
     /// List configured tools.
     List,
+    /// Show what a tool builds with its features, what each other feature would add, and
+    /// the advisories and build-time code that come with it. Records nothing.
+    Inspect(InspectArgs),
     /// Install a release of cargo-project-tools under `~/.cargo-project-tools` and make it active.
     ///
     /// Without a version, installs the latest release. Each version is kept as
@@ -111,15 +114,8 @@ pub struct InitArgs {
 pub struct AddArgs {
     /// Crate name, optionally with a version requirement: `name` or `name@1.2.3`.
     pub spec: String,
-    /// Install from a git repository (https only).
-    #[arg(long)]
-    pub git: Option<String>,
-    #[arg(long, requires = "git", conflicts_with_all = ["tag", "rev"])]
-    pub branch: Option<String>,
-    #[arg(long, requires = "git", conflicts_with = "rev")]
-    pub tag: Option<String>,
-    #[arg(long, requires = "git")]
-    pub rev: Option<String>,
+    #[command(flatten)]
+    pub source: SourceArgs,
     /// Features to enable.
     #[arg(long, short = 'F', value_delimiter = ',')]
     pub features: Vec<String>,
@@ -137,6 +133,34 @@ pub struct AddArgs {
     /// a review screen lets you decide on each.
     #[arg(long)]
     pub approve_build: bool,
+}
+
+/// A git source instead of crates.io.
+#[derive(Debug, Args)]
+pub struct SourceArgs {
+    /// Install from a git repository (https only).
+    #[arg(long)]
+    pub git: Option<String>,
+    #[arg(long, requires = "git", conflicts_with_all = ["tag", "rev"])]
+    pub branch: Option<String>,
+    #[arg(long, requires = "git", conflicts_with = "rev")]
+    pub tag: Option<String>,
+    #[arg(long, requires = "git")]
+    pub rev: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct InspectArgs {
+    /// A configured tool, or a crate to inspect before adding it: `name` or `name@1.2.3`.
+    pub spec: String,
+    #[command(flatten)]
+    pub source: SourceArgs,
+    /// Features to enable, instead of the tool's.
+    #[arg(long, short = 'F', value_delimiter = ',')]
+    pub features: Vec<String>,
+    /// Without the default features, instead of the tool's setting.
+    #[arg(long)]
+    pub no_default_features: bool,
 }
 
 #[derive(Debug, Args)]
@@ -311,6 +335,7 @@ impl Command {
                     | Command::Update(_)
                     | Command::Install(_)
                     | Command::Audit(_)
+                    | Command::Inspect(_)
             ),
         }
     }

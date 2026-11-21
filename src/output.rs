@@ -104,6 +104,8 @@ pub enum Record {
         id: String,
         expires: String,
     },
+    /// What `inspect` found.
+    Inspect(crate::inspect::Inspection),
     Error {
         message: String,
     },

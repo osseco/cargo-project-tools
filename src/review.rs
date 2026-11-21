@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -160,6 +160,14 @@ struct RawFile {
 }
 
 /// Read the review file; a missing file has no entries.
+/// The kinds and packages a review file has entries for, whatever their hash.
+pub fn recorded(path: &Path) -> Result<BTreeSet<(String, String)>> {
+    Ok(load(path)?
+        .into_iter()
+        .map(|e| (e.kind.table().to_string(), e.package))
+        .collect())
+}
+
 pub fn load(path: &Path) -> Result<Vec<Entry>> {
     let text = match fs::read_to_string(path) {
         Ok(t) => t,

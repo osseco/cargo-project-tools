@@ -6,6 +6,7 @@ mod cli;
 mod config;
 mod graph;
 mod highlight;
+mod inspect;
 mod install;
 mod lock;
 mod net;
@@ -32,8 +33,8 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 
 use cli::{
-    AddArgs, AuditArgs, AuditDbCommand, Cli, Command, InitArgs, InstallArgs, UpdateArgs,
-    UpgradeArgs, VerifyArgs,
+    AddArgs, AuditArgs, AuditDbCommand, Cli, Command, InitArgs, InspectArgs, InstallArgs,
+    UpdateArgs, UpgradeArgs, VerifyArgs,
 };
 use config::{AuditIgnore, Config, ConfigEditor, SfwMode};
 use output::say;
@@ -123,6 +124,7 @@ fn run() -> Result<ExitCode> {
             );
         }
         Command::List => list(&project, &config)?,
+        Command::Inspect(args) => inspect(&project, &config, args)?,
         Command::SelfUpdate { .. }
         | Command::SelfUse { .. }
         | Command::SelfList
@@ -219,24 +221,7 @@ fn add(project: &Project, config: &Config, args: AddArgs) -> Result<()> {
             "`{name}` is already in project-tools.toml; use `update {name} --latest` or `--version` to change its version"
         );
     }
-    let origin = match &args.git {
-        Some(url) => {
-            if req.is_some() {
-                bail!("use --tag/--rev/--branch instead of @version with --git");
-            }
-            Origin::Git {
-                url: url.clone(),
-                reference: GitRef {
-                    branch: args.branch.clone(),
-                    tag: args.tag.clone(),
-                    rev: args.rev.clone(),
-                },
-            }
-        }
-        None => Origin::Registry {
-            version_req: req.map(str::to_string),
-        },
-    };
+    let origin = origin_of(req, &args.source)?;
     let checkout = source::checkout(project, name, &origin, review_dest(project, name))?;
     let (lock_text, start) =
         lock::shipped_or_generated(&checkout.manifest_path(), &checkout.lock_path(), &[])?;
@@ -287,12 +272,12 @@ fn add(project: &Project, config: &Config, args: AddArgs) -> Result<()> {
 
     let mut entries: Vec<(&str, toml_edit::Value)> =
         vec![("version", checkout.version.as_str().into())];
-    if let Some(url) = &args.git {
+    if let Some(url) = &args.source.git {
         entries.push(("git", url.as_str().into()));
-        if let Some(b) = &args.branch {
+        if let Some(b) = &args.source.branch {
             entries.push(("branch", b.as_str().into()));
         }
-        if let Some(t) = &args.tag {
+        if let Some(t) = &args.source.tag {
             entries.push(("tag", t.as_str().into()));
         }
         if let Some(commit) = &checkout.commit {
@@ -315,6 +300,98 @@ fn add(project: &Project, config: &Config, args: AddArgs) -> Result<()> {
         checkout.version,
         project.crate_dir(name).display()
     );
+    Ok(())
+}
+
+/// Where `add` and `inspect` take a new tool from: crates.io at `req`, or git.
+fn origin_of(req: Option<&str>, source: &cli::SourceArgs) -> Result<Origin> {
+    Ok(match &source.git {
+        Some(url) => {
+            if req.is_some() {
+                bail!("use --tag/--rev/--branch instead of @version with --git");
+            }
+            Origin::Git {
+                url: url.clone(),
+                reference: GitRef {
+                    branch: source.branch.clone(),
+                    tag: source.tag.clone(),
+                    rev: source.rev.clone(),
+                },
+            }
+        }
+        None => Origin::Registry {
+            version_req: req.map(str::to_string),
+        },
+    })
+}
+
+/// `inspect`: a configured tool from its own lock and settings, or a crate that isn't added
+/// yet from the lock `add` would start with. Checks out under `targets/<tool>`, and writes
+/// nothing else.
+fn inspect(project: &Project, config: &Config, args: InspectArgs) -> Result<()> {
+    let (name, req) = split_spec(&args.spec);
+    config::validate_tool_name(name)?;
+    let configured = config
+        .tool
+        .get(name)
+        .filter(|_| req.is_none() && args.source.git.is_none());
+    let (checkout, origin, features, default_features, targets) = match configured {
+        Some(tool) => {
+            let ours = lock::load(&project.lock_path(name))?;
+            lock::check_root(&ours, name, &tool.version)?;
+            let origin = Origin::of(tool);
+            let checkout = source::checkout(project, name, &origin, review_dest(project, name))?;
+            checkout.put_lock(&project.lock_path(name))?;
+            let (features, default_features) =
+                if args.features.is_empty() && !args.no_default_features {
+                    (tool.features.clone(), tool.default_features != Some(false))
+                } else {
+                    (args.features.clone(), !args.no_default_features)
+                };
+            (
+                checkout,
+                origin,
+                features,
+                default_features,
+                config.targets_for(tool),
+            )
+        }
+        None => {
+            if config.tool.contains_key(name) {
+                say!("note: {name} is configured; inspecting the given version or source instead");
+            }
+            let origin = origin_of(req, &args.source)?;
+            let checkout = source::checkout(project, name, &origin, review_dest(project, name))?;
+            let (lock_text, _) =
+                lock::shipped_or_generated(&checkout.manifest_path(), &checkout.lock_path(), &[])?;
+            lock::check_root(&lock::parse(&lock_text)?, name, &checkout.version)?;
+            (
+                checkout,
+                origin,
+                args.features.clone(),
+                !args.no_default_features,
+                config.settings.targets.as_deref(),
+            )
+        }
+    };
+    let (auditor, _) = load_auditor(project, config, advisory_db::Policy::Auto)?;
+    let ignore = AuditIgnore::load(&project.audit_ignore_path(name))?;
+    say!("Resolving what {name} builds with each feature…");
+    let mut setup = setup::Setup::new(
+        name,
+        checkout,
+        matches!(origin, Origin::Git { .. }),
+        features.into_iter().collect(),
+        default_features,
+        targets.map(<[String]>::to_vec),
+        auditor,
+        ignore,
+        Vec::new(),
+    )?;
+    let recorded = review::recorded(&project.review_path(name))?;
+    let found = inspect::inspect(&mut setup, &recorded)?;
+    inspect::print(&found);
+    output::emit(output::Record::Inspect(found));
     Ok(())
 }
 
