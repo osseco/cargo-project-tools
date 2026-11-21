@@ -86,7 +86,9 @@ Never stage `site/dist/` or `site/node_modules/`.
 - `src/lock.rs`: lock parsing, root check, diff, `cargo update`.
 - `src/install.rs`: `cargo install --path` invocation, build settings → `--config`, install stamps.
 - `src/review.rs`: `build-review.toml`: collects build scripts (with the files they pull in), proc macros and shipped cargo config, checks them against the file, applies overrides and strips.
-- `src/review_tui.rs` and `src/review_tui/`: the review screen (ratatui, edtui), a submodule of `review`. `text.rs` sanitizes what it shows and writes overrides (no links, atomic), `tree.rs` builds the tree, `app.rs` holds the state and actions, `input.rs` and `render.rs` handle keys, mouse and drawing.
+- `src/review_tui.rs` and `src/review_tui/`: the review screen (ratatui, edtui), a submodule of `review`. `text.rs` reads what it shows and writes overrides (no links, atomic), `tree.rs` builds the tree, `app.rs` holds the state and actions, `input.rs` and `render.rs` handle keys, mouse and drawing.
+- `src/screen.rs`: the terminal guard for full-screen views (raw mode, alternate screen, mouse; restored on drop and panic).
+- `src/sanitize.rs`: makes untrusted text safe to draw (control, bidi, invisible and private-use characters become escapes).
 - `src/highlight.rs`: a small Rust and TOML lexer that colours the review screen's editor.
 - `src/build_files.rs`: the files a build script pulls in (`mod`, `#[path]`, `include!`), read with syn; falls back to the whole package when it can't tell.
 - `src/vendor.rs`: `cargo vendor` into `targets/<tool>/vendor`; builds use it through source replacement.

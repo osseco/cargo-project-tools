@@ -6,15 +6,13 @@
 //! - `app`: the screen's state and what its actions do.
 //! - `input` and `render`: keys and mouse, and drawing.
 
-use std::io;
 use std::path::Path;
 
-use anyhow::{Context, Result};
-use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture};
-use ratatui::crossterm::execute;
-use ratatui::crossterm::terminal::{Clear, ClearType};
+use anyhow::Result;
+use ratatui::crossterm::event;
 
 use crate::review::{Action, Known, Pending};
+use crate::screen::Terminal;
 
 #[path = "review_tui/app.rs"]
 mod app;
@@ -30,7 +28,7 @@ mod text;
 #[path = "review_tui/tree.rs"]
 mod tree;
 
-pub use text::{override_rel, shown};
+pub use text::override_rel;
 
 /// First line of an override copied from a file that can't be shown safely. `apply` refuses
 /// an override that still has it.
@@ -45,29 +43,6 @@ pub struct Choice {
     pub file: Option<String>,
 }
 
-/// Restores the terminal however the screen is left.
-struct Terminal(ratatui::DefaultTerminal);
-
-impl Terminal {
-    fn start() -> Result<Terminal> {
-        let terminal = ratatui::try_init().context("starting the review screen")?;
-        // Built before the terminal state it guards, so a failure below restores it too.
-        let terminal = Terminal(terminal);
-        // Not every terminal starts the alternate screen blank, and the first draw only
-        // writes cells that aren't.
-        execute!(io::stdout(), EnableMouseCapture, Clear(ClearType::All))
-            .context("preparing the terminal")?;
-        Ok(terminal)
-    }
-}
-
-impl Drop for Terminal {
-    fn drop(&mut self) {
-        let _ = execute!(io::stdout(), DisableMouseCapture);
-        ratatui::restore();
-    }
-}
-
 /// Show the review screen for `pending`, with the decisions `known` from other tools
 /// pre-selected. Returns a decision (or none) per item, or `None` when cancelled.
 pub fn run(
@@ -79,7 +54,7 @@ pub fn run(
     let mut app = app::App::new(tool, pending, known, crate_dir)?;
     let mut terminal = Terminal::start()?;
     while app.exit.is_none() {
-        terminal.0.draw(|f| app.render(f))?;
+        terminal.draw(|f| app.render(f))?;
         app.handle(event::read()?);
     }
     if app.exit == Some(app::Exit::Done) {

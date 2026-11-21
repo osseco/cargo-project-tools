@@ -10,10 +10,11 @@ use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
 
 use super::Choice;
-use super::text::{self, Content, commented_copy, override_rel, read_content, shown};
+use super::text::{self, Content, commented_copy, override_rel, read_content};
 use super::tree::{self, Node, NodeKind};
 use crate::highlight;
 use crate::review::{Action, Item, Kind, Known, Pending};
+use crate::sanitize::shown;
 use crate::source::registry::sha256_hex;
 
 /// The file in the editor.

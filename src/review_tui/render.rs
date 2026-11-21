@@ -9,9 +9,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, List, ListItem, Paragraph, Widget, Wrap};
 
 use super::app::{App, BUTTONS, Button, Focus, OpenContent, RADIOS};
-use super::text::{Warn, shown};
+use super::text::Warn;
 use super::tree::NodeKind;
 use crate::review::{Action, Kind};
+use crate::sanitize::shown;
 
 impl App {
     pub(super) fn render(&mut self, frame: &mut Frame) {
