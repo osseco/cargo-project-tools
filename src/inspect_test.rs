@@ -156,3 +156,46 @@ fn the_record_is_tagged_inspect() {
     assert_eq!(json["features"]["derive"][0], "dep:mac");
     assert_eq!(json["feature_changes"][0]["packages"][0]["name"], "mac");
 }
+
+#[test]
+fn features_the_selection_turns_on_are_implied() {
+    let features: BTreeMap<String, Vec<String>> = [
+        ("default", vec!["a"]),
+        ("a", vec!["b", "dep:x", "y?/z"]),
+        ("b", vec!["serde/derive"]),
+        ("serde", vec!["dep:serde"]),
+        ("y", vec!["dep:y"]),
+        ("c", vec![]),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.into_iter().map(String::from).collect()))
+    .collect();
+    let on = |start: &[&str]| implied(&features, start.iter().copied());
+    // `x/y` turns on feature `x`; `dep:` and `?/` turn on none.
+    assert_eq!(
+        on(&["default"]),
+        BTreeSet::from(["default", "a", "b", "serde"].map(String::from))
+    );
+    assert_eq!(on(&["c"]), BTreeSet::from(["c".to_string()]));
+    assert!(on(&["unknown"]).is_empty());
+}
+
+#[test]
+fn a_feature_already_on_through_the_selection_is_not_tried() {
+    let mut f = fixture(false);
+    // `derive` is selected and turns `extra` on too, so neither is tried: only turning the
+    // defaults on is.
+    f.setup
+        .features
+        .insert("derive".into(), vec!["dep:mac".into(), "extra".into()]);
+    f.setup
+        .set_features(BTreeSet::from(["derive".to_string()]), false)
+        .unwrap();
+    let found = inspect(&mut f.setup, &BTreeSet::new()).unwrap();
+    let tried: Vec<&str> = found
+        .feature_changes
+        .iter()
+        .map(|c| c.feature.as_str())
+        .collect();
+    assert_eq!(tried, ["default"]);
+}

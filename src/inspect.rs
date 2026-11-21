@@ -157,6 +157,32 @@ fn change(feature: &str, enable: bool, from: &State, to: &State) -> Change {
     }
 }
 
+/// The features `start` turns on, itself included, following what each enables. Only a
+/// value that names a feature counts: `dep:x` and `x?/y` turn on no feature of the tool,
+/// `x/y` turns on feature `x` when there is one.
+fn implied<'a>(
+    features: &BTreeMap<String, Vec<String>>,
+    start: impl Iterator<Item = &'a str>,
+) -> BTreeSet<String> {
+    let mut on = BTreeSet::new();
+    let mut todo: Vec<String> = start.map(str::to_string).collect();
+    while let Some(f) = todo.pop() {
+        if !features.contains_key(&f) || !on.insert(f.clone()) {
+            continue;
+        }
+        for value in &features[&f] {
+            let name = match value.split_once('/') {
+                _ if value.starts_with("dep:") => continue,
+                Some((dep, _)) if dep.ends_with('?') => continue,
+                Some((dep, _)) => dep,
+                None => value.as_str(),
+            };
+            todo.push(name.to_string());
+        }
+    }
+    on
+}
+
 /// Inspect the setup's current features, then try each other feature, and the defaults
 /// off, against them. The setup ends with the features it started with. `recorded`: the
 /// kinds and packages in the tool's `build-review.toml`.
@@ -166,22 +192,17 @@ pub fn inspect(setup: &mut Setup, recorded: &BTreeSet<(String, String)>) -> Resu
     let defaults = setup.default_features;
     let base = state(setup, &code, recorded);
 
-    // With the defaults on, the features they list add nothing.
-    let by_default: BTreeSet<&str> = if defaults {
-        setup
-            .features
-            .get("default")
-            .into_iter()
-            .flatten()
-            .map(String::as_str)
-            .collect()
-    } else {
-        BTreeSet::new()
-    };
+    // A feature the selection already turns on, directly or through others, adds nothing:
+    // don't spend a `cargo tree` on it.
+    let start = selected
+        .iter()
+        .map(String::as_str)
+        .chain(defaults.then_some("default"));
+    let on = implied(&setup.features, start);
     let candidates: Vec<String> = setup
         .features
         .keys()
-        .filter(|f| *f != "default" && !selected.contains(*f) && !by_default.contains(f.as_str()))
+        .filter(|f| *f != "default" && !on.contains(*f))
         .cloned()
         .collect();
     let mut changes = Vec::new();

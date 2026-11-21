@@ -241,7 +241,7 @@ It reports:
 - the tool's features and what each enables;
 - the packages built with the chosen features, and their advisories (ones in the tool's `audit-ignore.toml` are marked ignored);
 - the build scripts and proc macros among them, and whether the tool's `build-review.toml` has an entry for each;
-- for each feature that isn't on, what turning it on adds: packages, advisories, build scripts and proc macros. With the default features on, it also shows what `default-features = false` removes; with them off, what turning them on adds.
+- for each feature that isn't on, not even through the ones selected, what turning it on adds: packages, advisories, build scripts and proc macros. With the default features on, it also shows what `default-features = false` removes; with them off, what turning them on adds.
 
 Each feature costs one `cargo tree` run. Like `audit`, it lets cargo download the dependencies to read their manifests, and compiles nothing.
 
