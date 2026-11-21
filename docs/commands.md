@@ -13,6 +13,7 @@ Every command runs as `cargo project-tools <command>`. Apart from `init` and the
 | `audit [crates…]` | Check every lock against the RustSec advisory database, apply `audit-ignore.toml`, suggest fixes |
 | `audit-db update` | Fetch or revalidate the advisory database |
 | `list` | Show tools and their state |
+| `inspect <crate>[@ver]` | Show what a tool builds with its features, and what each other feature would add, without a terminal |
 | `self-update [<version>]` | Install a release of cargo-project-tools and make it active |
 | `self-use <version>` | Make an installed version active |
 | `self-list` | List installed versions |
@@ -56,6 +57,8 @@ cargo project-tools add -i cargo-nextest
 | `-F`, `--features <list>` | Features to enable, comma-separated |
 | `--no-default-features` | Turn off default features |
 | `--bin <name>` | Binaries to install (repeatable; default: all) |
+| `-F`, `--features <list>` | Build with these features, replacing the tool's list; `-F ""` clears it |
+| `--no-default-features`, `--default-features` | Build without, or again with, the default features |
 | `-i`, `--interactive` | Choose the version, features and dependency versions on the [setup screen](#interactive-setup) first |
 | `--approve-build` | Record the tool's build scripts, proc macros and cargo config in [`build-review.toml`](build-review.md) |
 
@@ -75,12 +78,13 @@ cargo project-tools update cargo-nextest rustls
 cargo project-tools update cargo-nextest rustls@0.23.10 --precise 0.23.18
 cargo project-tools update cargo-nextest --latest
 cargo project-tools update cargo-nextest --version 0.9.90
+cargo project-tools update cargo-nextest --no-default-features -F default-no-update
 cargo project-tools update -i cargo-nextest
 ```
 
 | Option | Meaning |
 | --- | --- |
-| `[deps…]` | Dependencies to update (`name` or `name@version`); all when omitted, unless the tool moves |
+| `[deps…]` | Dependencies to update (`name` or `name@version`); all when omitted, unless the tool moves or only features change |
 | `--precise <version>` | Update a single dependency to exactly this version |
 | `--recursive` | Also update the dependencies of the given dependencies |
 | `--latest` | Move the tool to its latest stable version; a git tool follows its tag or branch again |
@@ -91,6 +95,8 @@ cargo project-tools update -i cargo-nextest
 Runs `cargo update` against the tool's lock. The lock is only saved if cargo resolves it, and if every build script, proc macro and cargo config it builds is [recorded](build-review.md).
 
 With `--latest` or `--version`, the tool moves first. It starts from the new release's lock, then reapplies every dependency you had bumped past it, as long as cargo still resolves. If the new release ships no lock, it starts from yours instead: cargo keeps every pinned version that still fits and only resolves what the new version needs. Dependencies you name are updated after that. The new version (and commit, for git) is written to `project-tools.toml`.
+
+With `-F`, `--no-default-features` or `--default-features`, the build review covers what the new features build, and `features` and `default-features` are written to `project-tools.toml` once it passes. Without dependencies named, the lock isn't updated: only the features change. Use [`inspect`](#inspect) first to see what each feature adds.
 
 `upgrade <crate> [--version <req>]` still works and does the same as `update <crate> --latest` or `--version`, with a note that it's deprecated. It will be removed in a future major release.
 
@@ -111,7 +117,7 @@ The keys are the review screen's: `Ctrl-w` and `h`, `l` or `j` move to the tree,
 
 For example, cargo-nextest's default features include `self-update`. Turn off `default`, turn on `default-no-update`, and the tree no longer has what `self-update` pulls in.
 
-**Done** goes on to the build review with exactly that setup, then saves the lock, and writes `version`, `features` and `default-features` (and `rev` for git) to `project-tools.toml`. **Cancel** saves nothing. The screen needs a terminal.
+**Done** goes on to the build review with exactly that setup, then saves the lock, and writes `version`, `features` and `default-features` (and `rev` for git) to `project-tools.toml`. **Cancel** saves nothing. The screen needs a terminal; without one, use [`inspect`](#inspect).
 
 ## install
 
@@ -215,9 +221,33 @@ Fetches or revalidates the advisory database without auditing.
 
 Shows every configured tool with its version and source, and flags a missing `Cargo.lock` or an installed build.
 
+## inspect
+
+```bash
+cargo project-tools inspect cargo-nextest
+cargo project-tools inspect typos-cli@1.40.0 --no-default-features -F unstable-schema
+cargo project-tools inspect cargo-nextest --message-format json
+```
+
+Shows what the setup screen shows, as text or as a [JSON](#json-output) `inspect` record, so a script or an AI agent can choose features without a terminal. It records nothing.
+
+- For a configured tool, it uses the tool's lock, features and [`targets`](configuration.md#targets). `-F` and `--no-default-features` try other features instead.
+- For any other crate (or a configured one with `@version` or `--git`), it starts from the lock `add` would start from, with `-F`, `--no-default-features` and `--git`/`--branch`/`--tag`/`--rev` as for `add`. Only `.project-tools/targets/<crate>` is written.
+
+It reports:
+
+- the tool's features and what each enables;
+- the packages built with the chosen features, and their advisories (ones in the tool's `audit-ignore.toml` are marked ignored);
+- the build scripts and proc macros among them, and whether the tool's `build-review.toml` has an entry for each;
+- for each feature that isn't on, what turning it on adds: packages, advisories, build scripts and proc macros. With the default features on, it also shows what `default-features = false` removes; with them off, what turning them on adds.
+
+Each feature costs one `cargo tree` run. Like `audit`, it lets cargo download the dependencies to read their manifests, and compiles nothing.
+
+In JSON, the record has `tool`, `tool_version`, `features`, `default_features`, `selected`, `targets`, `packages` (`name`, `version`), `findings` (`package`, `version`, `type`, `id`, `title`, `patched`, `ignored`), `build_time` (`type`, `package`, `version`, `recorded`) and `feature_changes`. Each entry of `feature_changes` has `feature`, `enable`, and the `packages`, `findings` and `build_time` it adds. When `enable` is `false` (only for `default`), they are what it removes.
+
 ## JSON output
 
-With `--message-format json`, stdout holds only JSON records, one per line. All human text, and cargo's own output, goes to stderr instead. `add`, `update`, `install` and `audit` write these records:
+With `--message-format json`, stdout holds only JSON records, one per line. All human text, and cargo's own output, goes to stderr instead. `add`, `update`, `install`, `audit` and `inspect` write these records:
 
 | `kind` | When | Fields |
 | --- | --- | --- |
@@ -227,8 +257,9 @@ With `--message-format json`, stdout holds only JSON records, one per line. All 
 | `advisory` | A finding of the [audit](#audit) that isn't ignored | `tool`, `file`, `id`, `type`, `package`, `package_version`, `title`, `patched`, `severity`, `fix` |
 | `ignore-unused` | An ignore that matched nothing | `tool`, `file`, `id` |
 | `ignore-expired` | An ignore past its `expires` date | `tool`, `file`, `id`, `expires` |
+| `inspect` | What [`inspect`](#inspect) found | See [inspect](#inspect) |
 | `error` | The command failed | `message` |
-| `summary` | Always the last record | `ok`, `vulnerabilities`, `warnings`, `pending_reviews`, `missing_targets` |
+| `summary` | The last record of `add`, `update`, `install` and `audit` | `ok`, `vulnerabilities`, `warnings`, `pending_reviews`, `missing_targets` |
 
 Every record also has `"version": 1`. The version goes up when a record changes in a way that breaks readers.
 

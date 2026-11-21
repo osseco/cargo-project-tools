@@ -9,6 +9,7 @@ export const ORDER = [
   "configuration",
   "build-review",
   "ci",
+  "agents",
   "verifying-releases",
 ];
 

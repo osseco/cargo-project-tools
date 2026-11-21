@@ -95,11 +95,13 @@ Never stage `site/dist/` or `site/node_modules/`.
 - `src/graph.rs`: which locked packages a tool builds with its features and targets (`cargo tree` on a scratch copy).
 - `src/setup.rs`: the model behind interactive setup: a tool's features, the dependency tree they build (`cargo tree`), audit findings per package, why a package is built, version choices, and moving a dependency or the tool. Captures cargo's output.
 - `src/setup_tui.rs` and `src/setup_tui/`: the setup screen for `add -i`/`update -i` over a `Setup`: `app.rs` holds the state and the slow steps (run after `working…` is drawn), `input.rs` and `render.rs` handle keys, mouse and drawing.
+- `src/inspect.rs`: `inspect`, the setup model without the screen: what the features build, and what each other feature adds.
 - `src/targets.rs`: the host triple, the check that it and `--target` are approved targets, and the target suggestions for `init` (this machine and GitHub workflow runners).
 - `src/audit.rs`: matches locks against the advisory database with rustsec (root and git packages included), our own yanked check, ignore list, fix suggestions.
 - `src/advisory_db.rs`: downloads, revalidates (ETag, `advisory-db-max-age`) and swaps in the RustSec advisory database.
 - `src/sfw.rs`: re-executes package-downloading commands under sfw.
 - `src/net.rs`: ureq agent (honours `HTTPS_PROXY` and `SSL_CERT_FILE`).
+- `src/output.rs`: `--message-format`: the `say!` macro for human text (stderr in json mode) and the JSON records written to stdout.
 - `site/`: the GitHub Pages site (Vite + React, built from the [osseco web design guide](https://github.com/osseco/web-design-guide) templates). It renders `docs/*.md` and publishes them raw with `llms.txt`. Follow the guide's `AGENTS.md` and `docs/checklist.md` when changing it.
 - `docs/`: user docs. A change to a command or setting updates them in the same commit. Adding, renaming or removing a doc also updates `llms.txt` and the list in `README.md`.
 

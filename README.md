@@ -60,6 +60,7 @@ Add `.project-tools/bin` to your `PATH`. Commit `project-tools.toml` and `.proje
 - [Configuration](docs/configuration.md)
 - [Build review](docs/build-review.md)
 - [CI](docs/ci.md)
+- [AI agents](docs/agents.md)
 - [Verifying a release](docs/verifying-releases.md)
 
 Contributing: [CONTRIBUTING.md](CONTRIBUTING.md). Security: [SECURITY.md](SECURITY.md).
