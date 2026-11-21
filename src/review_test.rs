@@ -406,7 +406,7 @@ fn real_script(dir: &Path, package: &str) -> Item {
     fs::write(pkg.join("build.rs"), format!("fn main() {{ {package}() }}")).unwrap();
     let mut item = script(dir, package, "");
     item.location = pkg.join("build.rs");
-    item.hash = script_hash(&pkg, &item.location, &Pulled::default()).unwrap();
+    item.hash = script_hash(&pkg, &item.location, &Pulled::default(), true).unwrap();
     item.base = pkg;
     item
 }
@@ -622,17 +622,17 @@ fn script_hash_covers_its_directory_when_not_at_the_root() {
     let pkg = tmp.path();
     fs::write(pkg.join("build.rs"), "a").unwrap();
     assert_eq!(
-        script_hash(pkg, &pkg.join("build.rs"), &Pulled::default()).unwrap(),
+        script_hash(pkg, &pkg.join("build.rs"), &Pulled::default(), true).unwrap(),
         sha256_hex(b"a")
     );
 
     fs::create_dir_all(pkg.join("build")).unwrap();
     fs::write(pkg.join("build/main.rs"), "mod util;").unwrap();
     fs::write(pkg.join("build/util.rs"), "one").unwrap();
-    let first = script_hash(pkg, &pkg.join("build/main.rs"), &Pulled::default()).unwrap();
+    let first = script_hash(pkg, &pkg.join("build/main.rs"), &Pulled::default(), true).unwrap();
     fs::write(pkg.join("build/util.rs"), "two").unwrap();
     assert_ne!(
-        script_hash(pkg, &pkg.join("build/main.rs"), &Pulled::default()).unwrap(),
+        script_hash(pkg, &pkg.join("build/main.rs"), &Pulled::default(), true).unwrap(),
         first
     );
 }
@@ -654,14 +654,14 @@ fn script_hash_covers_the_files_it_pulls_in() {
 
     let pulled = pulled_by(pkg, &script).unwrap();
     assert_eq!(pulled.files, [pkg.join("helper.rs"), pkg.join("table.txt")]);
-    let first = script_hash(pkg, &script, &pulled).unwrap();
+    let first = script_hash(pkg, &script, &pulled, true).unwrap();
     // Not the old single-file hash, so such entries come up once as changed.
     assert_ne!(first, sha256_hex(&fs::read(&script).unwrap()));
     // Each pulled-in file counts; the rest of the package doesn't.
     fs::write(pkg.join("src/lib.rs"), "changed").unwrap();
-    assert_eq!(script_hash(pkg, &script, &pulled).unwrap(), first);
+    assert_eq!(script_hash(pkg, &script, &pulled, true).unwrap(), first);
     fs::write(pkg.join("table.txt"), "two").unwrap();
-    assert_ne!(script_hash(pkg, &script, &pulled).unwrap(), first);
+    assert_ne!(script_hash(pkg, &script, &pulled, true).unwrap(), first);
 
     // In a directory: files there are covered by it and aren't listed again.
     fs::create_dir_all(pkg.join("build")).unwrap();
@@ -680,8 +680,8 @@ fn script_hash_covers_the_files_it_pulls_in() {
     let pulled = pulled_by(pkg, &script).unwrap();
     assert!(pulled.whole_package.is_some());
     assert_eq!(
-        script_hash(pkg, &script, &pulled).unwrap(),
-        dir_hash(pkg).unwrap()
+        script_hash(pkg, &script, &pulled, true).unwrap(),
+        dir_hash(pkg, true).unwrap()
     );
 }
 
@@ -1027,4 +1027,18 @@ fn packages_outside_the_sources_are_refused() {
             .to_string();
         assert!(err.contains("outside the tool's checkout"), "{err}");
     }
+}
+
+#[test]
+fn a_vendored_packages_git_dir_is_hashed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path();
+    fs::write(pkg.join("build.rs"), "fn main() {}").unwrap();
+    fs::create_dir(pkg.join(".git")).unwrap();
+    fs::write(pkg.join(".git/config"), "a").unwrap();
+    let (vendored, ours) = (dir_hash(pkg, true).unwrap(), dir_hash(pkg, false).unwrap());
+    fs::write(pkg.join(".git/config"), "b").unwrap();
+    assert_ne!(dir_hash(pkg, true).unwrap(), vendored);
+    // In a checkout, `.git` is our own clone.
+    assert_eq!(dir_hash(pkg, false).unwrap(), ours);
 }

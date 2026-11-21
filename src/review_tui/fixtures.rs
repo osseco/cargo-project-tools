@@ -47,7 +47,8 @@ pub(super) fn dir_script(dir: &Path, package: &str) -> Item {
 }
 
 pub(super) fn proc_macro(dir: &Path, package: &str) -> Item {
-    let base = dir.join("vendor").join(package);
+    // In the tool's own checkout, whose `.git` is our clone and isn't shown.
+    let base = dir.join("checkout").join(package);
     write(&base.join("Cargo.toml"), "[package]\nname = \"m\"\n");
     write(&base.join("src/lib.rs"), "pub fn m() {}\n");
     write(&base.join(".git/HEAD"), "ref: x\n");
@@ -59,7 +60,7 @@ pub(super) fn proc_macro(dir: &Path, package: &str) -> Item {
         hash: "c".into(),
         location: base.clone(),
         base,
-        vendored: true,
+        vendored: false,
         pulled: Pulled::default(),
     }
 }

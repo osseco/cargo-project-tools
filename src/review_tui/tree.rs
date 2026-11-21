@@ -170,7 +170,8 @@ fn walk(dir: &Path, depth: usize, idx: usize, item: &Item, nodes: &mut Vec<Node>
                 Warn::None,
             ));
         } else if kind.is_dir() {
-            if entry.file_name() != ".git" {
+            // As hashed: a vendored package's `.git` is part of it.
+            if item.vendored || entry.file_name() != ".git" {
                 nodes.push(node(format!("{name}/"), NodeKind::Dir, Warn::None));
                 walk(&path, depth + 1, idx, item, nodes)?;
             }

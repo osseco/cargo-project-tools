@@ -6,7 +6,7 @@ Building a tool runs code before the tool itself ever runs: build scripts and pr
 
 | Kind | What | Pinned by |
 | --- | --- | --- |
-| `build-script` | The `build.rs` (or `package.build`) of the tool and of every dependency it builds | sha256 of the script file; when the script isn't at the package root, of every file in its directory; plus [the files it pulls in](#files-a-build-script-pulls-in) |
+| `build-script` | The `build.rs` (or `package.build`) of the tool and of every dependency it builds | sha256 of the script file; when the script isn't at the package root, of every file in its directory (a vendored package's `.git` included); plus [the files it pulls in](#files-a-build-script-pulls-in) |
 | `proc-macro` | Every proc-macro crate it builds | The crate checksum from `Cargo.lock`; for a git package its commit |
 | `cargo-config` | `.cargo/config.toml` and `.cargo/config` in the tool's source, from the package directory up to the root of the checkout | sha256 of the file |
 
@@ -21,9 +21,18 @@ A package whose directory leads outside the tool's checkout and vendored sources
 A build script can run code from other files in its package. Those count as part of it, and are followed through each file in turn:
 
 - its modules: `mod x;` (`x.rs` or `x/mod.rs`), `#[path = "…"]`, and `#[cfg_attr(…, path = "…")]`, with every possible file taken
-- what it includes: `include!`, `include_str!` and `include_bytes!`, with a plain path or `concat!(env!("CARGO_MANIFEST_DIR"), "…")`. Files under `OUT_DIR` are written by the script itself and are skipped.
+- what it includes: `include!`, `include_str!` and `include_bytes!`, with a plain path or `concat!(env!("CARGO_MANIFEST_DIR"), "…")`. A file under `OUT_DIR`, as `concat!(env!("OUT_DIR"), "…")` without `..`, is written by the script itself and is skipped.
 
-When that can't be worked out for sure, its sha256 covers the whole package instead, and the review screen says why. That happens when a path is computed some other way, when a file can't be parsed, or when a module is declared inside a macro or a function. A file outside the package, or a link, is refused.
+When that can't be worked out for sure, its sha256 covers the whole package instead, and the review screen says why. That happens when:
+
+- a path is computed some other way, or mentions `OUT_DIR` in any other way;
+- a module or included file it names isn't there;
+- a file can't be parsed;
+- a module is declared inside a macro or a function, or a module file (`mod x;`) in an included file;
+- an include macro is renamed (`use std::include as inc;`), used inside `macro_rules!`, or could be passed in to one (`$m!(…)`);
+- a `path` is nested in more than one `cfg_attr`.
+
+A file outside the package, inside `.git`, or a link, is refused.
 
 A script that pulls in files has a different sha256 than its file alone, so its entry comes up once as changed.
 

@@ -262,8 +262,9 @@ fn slash(rel: &Path) -> String {
 }
 
 /// The sha256 line (`<hash>  <path>`, like `sha256sum`) for each file under `dir`, with
-/// paths relative to `root`. Links are recorded by their target; `.git` is skipped.
-fn dir_lines(root: &Path, dir: &Path, lines: &mut Vec<String>) -> Result<()> {
+/// paths relative to `root`. Links are recorded by their target. `.git` is skipped unless
+/// `vendored`: in a checkout it's our own clone, but a vendored package's is part of it.
+fn dir_lines(root: &Path, dir: &Path, vendored: bool, lines: &mut Vec<String>) -> Result<()> {
     for entry in fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
         let entry = entry?;
         let path = entry.path();
@@ -273,8 +274,8 @@ fn dir_lines(root: &Path, dir: &Path, lines: &mut Vec<String>) -> Result<()> {
             let target = fs::read_link(&path)?;
             lines.push(format!("link {} -> {}\n", rel, target.display()));
         } else if kind.is_dir() {
-            if entry.file_name() != ".git" {
-                dir_lines(root, &path, lines)?;
+            if vendored || entry.file_name() != ".git" {
+                dir_lines(root, &path, vendored, lines)?;
             }
         } else {
             lines.push(file_line(root, &path)?);
@@ -295,9 +296,9 @@ fn lines_hash(mut lines: Vec<String>) -> String {
 }
 
 /// sha256 lines for every file under `dir`, sorted, and hashed.
-fn dir_hash(dir: &Path) -> Result<String> {
+fn dir_hash(dir: &Path, vendored: bool) -> Result<String> {
     let mut lines = Vec::new();
-    dir_lines(dir, dir, &mut lines)?;
+    dir_lines(dir, dir, vendored, &mut lines)?;
     Ok(lines_hash(lines))
 }
 
@@ -305,9 +306,9 @@ fn dir_hash(dir: &Path) -> Result<String> {
 /// which is where the modules it uses usually live; plus the files it pulls in from
 /// elsewhere, or else the whole package. Without such files, the hash is what it was before
 /// they were followed.
-fn script_hash(pkg_dir: &Path, script: &Path, pulled: &Pulled) -> Result<String> {
+fn script_hash(pkg_dir: &Path, script: &Path, pulled: &Pulled, vendored: bool) -> Result<String> {
     if pulled.whole_package.is_some() {
-        return dir_hash(pkg_dir);
+        return dir_hash(pkg_dir, vendored);
     }
     let parent = script
         .parent()
@@ -316,14 +317,14 @@ fn script_hash(pkg_dir: &Path, script: &Path, pulled: &Pulled) -> Result<String>
         return if parent == pkg_dir {
             Ok(sha256_hex(&fs::read(script)?))
         } else {
-            dir_hash(parent)
+            dir_hash(parent, vendored)
         };
     }
     let mut lines = Vec::new();
     if parent == pkg_dir {
         lines.push(file_line(pkg_dir, script)?);
     } else {
-        dir_lines(pkg_dir, parent, &mut lines)?;
+        dir_lines(pkg_dir, parent, vendored, &mut lines)?;
     }
     for f in &pulled.files {
         lines.push(file_line(pkg_dir, f)?);
@@ -340,8 +341,6 @@ fn pulled_by(pkg_dir: &Path, script: &Path) -> Result<Pulled> {
     Ok(pulled)
 }
 
-/// Fail when `path` is a link. Registry archives and `cargo vendor` have none, but a git
-/// repository can point a file anywhere.
 /// Fail unless `dir`, with links resolved, is inside one of `roots` (already resolved). A
 /// workspace member or path dependency that leads elsewhere, through a link or `..`, would
 /// let an override or strip write outside the tool's sources.
@@ -358,6 +357,8 @@ fn inside_sources(dir: &Path, roots: &[PathBuf]) -> Result<()> {
     Ok(())
 }
 
+/// Fail when `path` is a link. Registry archives and `cargo vendor` have none, but a git
+/// repository can point a file anywhere.
 fn refuse_link(path: &Path) -> Result<()> {
     let meta = path
         .symlink_metadata()
@@ -516,7 +517,7 @@ pub fn collect(
                     package: pkg.name.clone(),
                     version: pkg.version.clone(),
                     path: slash(rel),
-                    hash: script_hash(&pkg_dir, &t.src_path, &pulled)?,
+                    hash: script_hash(&pkg_dir, &t.src_path, &pulled, in_vendor)?,
                     location: t.src_path.clone(),
                     base: pkg_dir.clone(),
                     vendored: in_vendor,
@@ -540,7 +541,7 @@ pub fn collect(
                 (Some(sum), _) => sum.clone(),
                 (None, Some(commit)) => commit,
                 // A package of the tool's own workspace: pinned by its files.
-                (None, None) => dir_hash(&pkg_dir)?,
+                (None, None) => dir_hash(&pkg_dir, in_vendor)?,
             };
             items.push(Item {
                 kind: Kind::ProcMacro,
@@ -771,9 +772,9 @@ fn settle(
 /// or commit.
 fn snapshot(item: &Item) -> Result<String> {
     match item.kind {
-        Kind::BuildScript => script_hash(&item.base, &item.location, &item.pulled),
+        Kind::BuildScript => script_hash(&item.base, &item.location, &item.pulled, item.vendored),
         Kind::CargoConfig => Ok(sha256_hex(&fs::read(&item.location)?)),
-        Kind::ProcMacro => dir_hash(&item.location),
+        Kind::ProcMacro => dir_hash(&item.location, item.vendored),
     }
 }
 
