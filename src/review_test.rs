@@ -7,6 +7,7 @@ fn script(dir: &Path, package: &str, hash: &str) -> Item {
         version: "1.0.0".into(),
         path: "build.rs".into(),
         hash: hash.into(),
+        pin: Pin::None,
         location: dir.join(package).join("build.rs"),
         base: dir.join(package),
         vendored: true,
@@ -21,6 +22,7 @@ fn proc_macro(package: &str, checksum: &str) -> Item {
         version: "1.0.0".into(),
         path: String::new(),
         hash: checksum.into(),
+        pin: Pin::None,
         location: PathBuf::from("/v").join(package),
         base: PathBuf::from("/v").join(package),
         vendored: true,
@@ -196,6 +198,7 @@ fn paste_ready_entry_of_changed_code_keeps_its_decision() {
         package: "ring".into(),
         path: "build.rs".into(),
         hash: "old".into(),
+        pin: Pin::None,
         action: Action::Override,
         file: Some("overrides/ring.rs".into()),
     };
@@ -223,6 +226,7 @@ fn review_records_name_the_hash_and_what_it_replaces() {
         package: "ring".into(),
         path: "build.rs".into(),
         hash: "old".into(),
+        pin: Pin::None,
         action: Action::Strip,
         file: None,
     };
@@ -1041,4 +1045,100 @@ fn a_vendored_packages_git_dir_is_hashed() {
     assert_ne!(dir_hash(pkg, true).unwrap(), vendored);
     // In a checkout, `.git` is our own clone.
     assert_eq!(dir_hash(pkg, false).unwrap(), ours);
+}
+
+#[test]
+fn only_registry_packages_take_a_lock_checksum() {
+    let sums = BTreeMap::from([(("foo".to_string(), "1.0.0".to_string()), "abc".to_string())]);
+    let registry = "registry+https://github.com/rust-lang/crates.io-index";
+    let git = "git+https://example.com/foo.git#0123456789abcdef0123456789abcdef01234567";
+    assert_eq!(
+        crate_pin(Some(registry), "foo", "1.0.0", &sums),
+        Pin::Checksum("abc".into())
+    );
+    // A git or path package of the same name and version as a registry one in the lock.
+    assert_eq!(
+        crate_pin(Some(git), "foo", "1.0.0", &sums),
+        Pin::Commit("0123456789abcdef0123456789abcdef01234567".into())
+    );
+    assert_eq!(crate_pin(None, "foo", "1.0.0", &sums), Pin::None);
+}
+
+#[test]
+fn build_script_entries_carry_their_crate() {
+    let parsed = parse(
+        "[[build-script]]\npackage = \"a\"\npath = \"build.rs\"\nsha256 = \"h\"\nchecksum = \"c\"\naction = \"approve\"\n\n[[build-script]]\npackage = \"b\"\npath = \"build.rs\"\nsha256 = \"h\"\ncommit = \"r\"\naction = \"approve\"\n",
+    )
+    .unwrap();
+    assert_eq!(parsed[0].pin, Pin::Checksum("c".into()));
+    assert_eq!(parsed[1].pin, Pin::Commit("r".into()));
+    for bad in [
+        "[[build-script]]\npackage = \"a\"\npath = \"build.rs\"\nsha256 = \"h\"\nchecksum = \"c\"\ncommit = \"r\"\naction = \"approve\"\n",
+        "[[proc-macro]]\npackage = \"m\"\nchecksum = \"c\"\ncommit = \"r\"\naction = \"approve\"\n",
+    ] {
+        assert!(parse(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn an_entry_for_another_crate_comes_up_as_changed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join(FILE);
+    // Recorded before entries named their crate.
+    fs::write(
+        &file,
+        "[[build-script]]\npackage = \"libc\"\npath = \"build.rs\"\nsha256 = \"aa\"\naction = \"strip\"\n",
+    )
+    .unwrap();
+    let item = || {
+        let mut i = script(tmp.path(), "libc", "aa");
+        i.pin = Pin::Checksum("c1".into());
+        i
+    };
+    let err = check(
+        &file,
+        vec![item()],
+        Mode::Report,
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("1 piece"), "{err}");
+
+    let decided = check(
+        &file,
+        vec![item()],
+        Mode::ApproveAll,
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap();
+    // It keeps its action, now for this crate.
+    assert_eq!(decided[0].action, Action::Strip);
+    let entries = load(&file).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].pin, Pin::Checksum("c1".into()));
+    check(
+        &file,
+        vec![item()],
+        Mode::Report,
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap();
+
+    // Another version of the crate, same script.
+    let mut other = item();
+    other.pin = Pin::Checksum("c2".into());
+    assert!(
+        check(
+            &file,
+            vec![other],
+            Mode::Report,
+            &KnownMap::new(),
+            tmp.path()
+        )
+        .is_err()
+    );
 }

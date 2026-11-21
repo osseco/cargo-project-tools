@@ -272,6 +272,7 @@ Other fields:
   - `type` is `build-script`, `proc-macro` or `cargo-config`;
   - `package`, `version` and `path` are left out when they don't apply;
   - `sha256` is given for build scripts and cargo config, `checksum` for proc macros;
+  - a build script also has its crate's `checksum`, or `commit` for a git package;
   - `location` is the file or directory to read;
   - `previous` (`action`, plus `sha256` or `checksum`) is the entry it replaces;
   - `known` (`tool`, `action`) is a decision another tool records for it.

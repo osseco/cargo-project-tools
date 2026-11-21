@@ -137,8 +137,12 @@ pub struct ReviewItem {
     pub path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
+    /// A proc macro's crate checksum, or the crate a build script comes with.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checksum: Option<String>,
+    /// The git commit a build script comes with.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
     /// The file or directory to read, repo-relative.
     pub location: String,
     /// The recorded entry this one replaces.

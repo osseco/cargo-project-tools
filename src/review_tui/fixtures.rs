@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::build_files::Pulled;
-use crate::review::{Item, Kind};
+use crate::review::{Item, Kind, Pin};
 
 pub(super) fn write(path: &Path, text: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -21,6 +21,7 @@ pub(super) fn root_script(dir: &Path, package: &str, text: &str) -> Item {
         version: "1.0.0".into(),
         path: "build.rs".into(),
         hash: "h".into(),
+        pin: Pin::None,
         location: base.join("build.rs"),
         base,
         vendored: true,
@@ -39,6 +40,7 @@ pub(super) fn dir_script(dir: &Path, package: &str) -> Item {
         version: "1.0.0".into(),
         path: "build/main.rs".into(),
         hash: "h".into(),
+        pin: Pin::None,
         location: base.join("build/main.rs"),
         base,
         vendored: true,
@@ -58,6 +60,7 @@ pub(super) fn proc_macro(dir: &Path, package: &str) -> Item {
         version: "1.0.0".into(),
         path: String::new(),
         hash: "c".into(),
+        pin: Pin::None,
         location: base.clone(),
         base,
         vendored: false,
@@ -75,6 +78,7 @@ pub(super) fn cargo_config(dir: &Path, text: &str) -> Item {
         version: String::new(),
         path: ".cargo/config.toml".into(),
         hash: "h".into(),
+        pin: Pin::None,
         location: root.join(".cargo/config.toml"),
         base: root,
         vendored: false,
