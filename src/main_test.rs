@@ -176,6 +176,45 @@ fn update_moves_only_when_asked() {
     }
 }
 
+fn update_args(args: &[&str]) -> UpdateArgs {
+    let cli = Cli::try_parse_from(
+        ["cargo-project-tools", "update", "t"]
+            .iter()
+            .chain(args)
+            .copied()
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let Command::Update(args) = cli.command else {
+        panic!("not update");
+    };
+    args
+}
+
+#[test]
+fn update_features_replace_or_keep_the_tools() {
+    let config: Config = toml::from_str(
+        "[tool.t]\nversion = \"1.0.0\"\nfeatures = [\"a\", \"b\"]\ndefault-features = false\n",
+    )
+    .unwrap();
+    let tool = config.tool("t").unwrap();
+    let features = |args: &[&str]| updated_features(tool, &update_args(args));
+
+    assert_eq!(features(&[]), (vec!["a".into(), "b".into()], false, false));
+    // The same list in another order is no change.
+    assert_eq!(
+        features(&["-F", "b,a"]),
+        (vec!["b".into(), "a".into()], false, false)
+    );
+    assert_eq!(features(&["-F", "c"]), (vec!["c".into()], false, true));
+    assert_eq!(features(&["-F", ""]), (vec![], false, true));
+    assert_eq!(
+        features(&["--default-features"]),
+        (vec!["a".into(), "b".into()], true, true)
+    );
+    assert!(!features(&["--no-default-features"]).2);
+}
+
 #[test]
 fn a_git_tool_follows_its_branch_again_and_takes_no_version() {
     let config = tools();
@@ -210,12 +249,17 @@ fn update_flags() {
         &["--version", "1"],
         &["serde"],
         &["--recursive"],
+        &["-F", "x"],
+        &["--no-default-features"],
+        &["--default-features"],
     ] {
         let mut args = vec!["update", "t", "-i"];
         args.extend_from_slice(clash);
         assert!(parse(&args).is_err(), "{args:?}");
     }
     assert!(parse(&["add", "cargo-nextest", "-i", "--no-default-features"]).is_ok());
+    assert!(parse(&["update", "t", "--default-features", "--no-default-features"]).is_err());
+    assert!(parse(&["update", "t", "-F", "a,b", "--latest"]).is_ok());
     // `upgrade` still parses, but isn't listed.
     assert!(parse(&["upgrade", "t"]).is_ok());
     let help = <Cli as clap::CommandFactory>::command()

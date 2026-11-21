@@ -446,6 +446,9 @@ fn upgrade(project: &Project, config: &Config, args: UpgradeArgs) -> Result<()> 
             deps: Vec::new(),
             precise: None,
             recursive: false,
+            features: None,
+            no_default_features: false,
+            default_features: false,
             approve_build: args.approve_build,
         },
     )
@@ -566,18 +569,13 @@ fn update_interactive(project: &Project, config: &Config, args: UpdateArgs) -> R
         }
     }
     if features_changed {
-        let mut unset = Vec::new();
-        if features.is_empty() {
-            unset.push("features");
-        } else {
-            entries.push(("features", config::string_array(&features)));
-        }
-        if setup.default_features {
-            unset.push("default-features");
-        } else {
-            entries.push(("default-features", false.into()));
-        }
-        editor.unset_tool(name, &unset);
+        set_features(
+            &mut editor,
+            name,
+            &mut entries,
+            &features,
+            setup.default_features,
+        );
     }
     editor.set_tool(name, &entries);
     editor.save()?;
@@ -589,6 +587,47 @@ fn update_interactive(project: &Project, config: &Config, args: UpdateArgs) -> R
         );
     }
     Ok(())
+}
+
+/// Write `features` and `default-features` for `name`: into `entries` when they differ
+/// from cargo's defaults, else removed from project-tools.toml.
+fn set_features(
+    editor: &mut ConfigEditor,
+    name: &str,
+    entries: &mut Vec<(&str, toml_edit::Value)>,
+    features: &[String],
+    default_features: bool,
+) {
+    let mut unset = Vec::new();
+    if features.is_empty() {
+        unset.push("features");
+    } else {
+        entries.push(("features", config::string_array(features)));
+    }
+    if default_features {
+        unset.push("default-features");
+    } else {
+        entries.push(("default-features", false.into()));
+    }
+    editor.unset_tool(name, &unset);
+}
+
+/// The features `update` builds with: `-F` replaces the list, and the default-features flags
+/// override the tool's setting. Returns them and whether they differ from the tool's.
+fn updated_features(tool: &config::Tool, args: &UpdateArgs) -> (Vec<String>, bool, bool) {
+    let before = tool.default_features != Some(false);
+    let features: Vec<String> = match &args.features {
+        Some(list) => list.iter().filter(|f| !f.is_empty()).cloned().collect(),
+        None => tool.features.clone(),
+    };
+    let default_features = if args.no_default_features {
+        false
+    } else {
+        args.default_features || before
+    };
+    let sorted = |l: &[String]| l.iter().cloned().collect::<std::collections::BTreeSet<_>>();
+    let changed = sorted(&features) != sorted(&tool.features) || default_features != before;
+    (features, default_features, changed)
 }
 
 /// Where `update --version`/`--latest` moves the tool, or `None` when it stays.
@@ -692,8 +731,12 @@ fn update(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
             checkout
         }
     };
-    // Without dependencies named, a plain `update` updates them all; a move leaves them be.
-    if !args.deps.is_empty() || moved.is_none() {
+    let (features, default_features, features_changed) = updated_features(tool, &args);
+    let features_only =
+        args.features.is_some() || args.no_default_features || args.default_features;
+    // Without dependencies named, a plain `update` updates them all; a move or a change of
+    // features leaves them be.
+    if !args.deps.is_empty() || (moved.is_none() && !features_only) {
         let mut cargo_args = Vec::new();
         for dep in &args.deps {
             cargo_args.extend(["-p".to_string(), dep.clone()]);
@@ -716,31 +759,49 @@ fn update(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
     let moved = moved.is_some()
         && (checkout.version != tool.version
             || checkout.commit.is_some() && checkout.commit != tool.rev);
-    if changes.is_empty() && !moved {
+    if changes.is_empty() && !moved && !features_changed {
         if args.version.is_some() || args.latest {
             say!("{name} is already at {}", checkout.version);
+        } else if features_only {
+            say!("{name} already builds with these features");
         }
         return Ok(());
     }
     review_build(
         project,
         name,
-        &install::feature_args(tool),
+        &install::feature_flags(&features, default_features),
         config.targets_for(tool),
         &checkout,
         args.approve_build,
     )?;
     fs::copy(checkout.lock_path(), &ours_path)?;
-    if moved {
+    if moved || features_changed {
         let mut editor = ConfigEditor::open(&project.config_path())?;
-        let mut entries: Vec<(&str, toml_edit::Value)> =
-            vec![("version", checkout.version.as_str().into())];
-        if let Some(commit) = &checkout.commit {
-            entries.push(("rev", commit.as_str().into()));
+        let mut entries: Vec<(&str, toml_edit::Value)> = Vec::new();
+        if moved {
+            entries.push(("version", checkout.version.as_str().into()));
+            if let Some(commit) = &checkout.commit {
+                entries.push(("rev", commit.as_str().into()));
+            }
+        }
+        if features_changed {
+            set_features(&mut editor, name, &mut entries, &features, default_features);
         }
         editor.set_tool(name, &entries);
         editor.save()?;
+    }
+    if moved {
         say!("Moved {name} {} -> {}", tool.version, checkout.version);
+    }
+    if features_changed {
+        let list = if features.is_empty() {
+            "none".to_string()
+        } else {
+            features.join(", ")
+        };
+        let defaults = if default_features { "on" } else { "off" };
+        say!("{name} now builds with features: {list}; default features {defaults}");
     }
     Ok(())
 }

@@ -196,12 +196,25 @@ pub struct UpdateArgs {
     /// branch or tag again.
     #[arg(long)]
     pub latest: bool,
+    /// Features to enable, replacing the tool's list (`-F ""` clears it). Without
+    /// dependencies named, only the features change.
+    #[arg(long, short = 'F', value_delimiter = ',')]
+    pub features: Option<Vec<String>>,
+    /// Build without the default features.
+    #[arg(long, conflicts_with = "default_features")]
+    pub no_default_features: bool,
+    /// Build with the default features again.
+    #[arg(long)]
+    pub default_features: bool,
     /// Change the tool's version, features and dependency versions on a setup screen, with
     /// the dependency tree and its advisories, before the build review.
     #[arg(
         long,
         short = 'i',
-        conflicts_with_all = ["deps", "precise", "recursive", "version", "latest"]
+        conflicts_with_all = [
+            "deps", "precise", "recursive", "version", "latest", "features",
+            "no_default_features", "default_features"
+        ]
     )]
     pub interactive: bool,
     /// Record all new or changed build scripts, proc macros and cargo config in

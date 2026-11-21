@@ -57,6 +57,8 @@ cargo project-tools add -i cargo-nextest
 | `-F`, `--features <list>` | Features to enable, comma-separated |
 | `--no-default-features` | Turn off default features |
 | `--bin <name>` | Binaries to install (repeatable; default: all) |
+| `-F`, `--features <list>` | Build with these features, replacing the tool's list; `-F ""` clears it |
+| `--no-default-features`, `--default-features` | Build without, or again with, the default features |
 | `-i`, `--interactive` | Choose the version, features and dependency versions on the [setup screen](#interactive-setup) first |
 | `--approve-build` | Record the tool's build scripts, proc macros and cargo config in [`build-review.toml`](build-review.md) |
 
@@ -76,12 +78,13 @@ cargo project-tools update cargo-nextest rustls
 cargo project-tools update cargo-nextest rustls@0.23.10 --precise 0.23.18
 cargo project-tools update cargo-nextest --latest
 cargo project-tools update cargo-nextest --version 0.9.90
+cargo project-tools update cargo-nextest --no-default-features -F default-no-update
 cargo project-tools update -i cargo-nextest
 ```
 
 | Option | Meaning |
 | --- | --- |
-| `[deps…]` | Dependencies to update (`name` or `name@version`); all when omitted, unless the tool moves |
+| `[deps…]` | Dependencies to update (`name` or `name@version`); all when omitted, unless the tool moves or only features change |
 | `--precise <version>` | Update a single dependency to exactly this version |
 | `--recursive` | Also update the dependencies of the given dependencies |
 | `--latest` | Move the tool to its latest stable version; a git tool follows its tag or branch again |
@@ -92,6 +95,8 @@ cargo project-tools update -i cargo-nextest
 Runs `cargo update` against the tool's lock. The lock is only saved if cargo resolves it, and if every build script, proc macro and cargo config it builds is [recorded](build-review.md).
 
 With `--latest` or `--version`, the tool moves first. It starts from the new release's lock, then reapplies every dependency you had bumped past it, as long as cargo still resolves. If the new release ships no lock, it starts from yours instead: cargo keeps every pinned version that still fits and only resolves what the new version needs. Dependencies you name are updated after that. The new version (and commit, for git) is written to `project-tools.toml`.
+
+With `-F`, `--no-default-features` or `--default-features`, the build review covers what the new features build, and `features` and `default-features` are written to `project-tools.toml` once it passes. Without dependencies named, the lock isn't updated: only the features change. Use [`inspect`](#inspect) first to see what each feature adds.
 
 `upgrade <crate> [--version <req>]` still works and does the same as `update <crate> --latest` or `--version`, with a note that it's deprecated. It will be removed in a future major release.
 
