@@ -29,7 +29,7 @@ panic = "unwind"             # per-tool override
 
 ### targets
 
-The target triples tools are [reviewed](build-review.md), audited and installed for. Only build scripts, proc macros and dependencies used on these targets need approval, and `audit` checks only those dependencies. `install` refuses to build on a machine, or with a `--target`, that isn't listed; `--approve-target` adds it here. Without `targets`, every target counts.
+The target triples tools are [reviewed](build-review.md), audited and installed for. Only build scripts, proc macros and dependencies used on these targets need approval, and `audit` checks only those dependencies. `install` refuses to build on a machine, or with a `--target`, that isn't listed; `--approve-target` adds it here. Outside a terminal, for example in CI, add a runner's target where you review instead, and commit this file. Without `targets`, every target counts.
 
 `[tool.<name>].targets` replaces the list for one tool, for example a tool you only run in Linux CI.
 

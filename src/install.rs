@@ -10,6 +10,7 @@ use crate::cli::BuildArgs;
 use crate::config::{Build, Tool};
 use crate::graph;
 use crate::lock;
+use crate::output::say;
 use crate::process;
 use crate::project::Project;
 use crate::review;
@@ -43,6 +44,8 @@ pub struct Options<'a> {
     pub force: bool,
     /// Record new or changed build-time code in the review file.
     pub approve_build: bool,
+    /// Stop after checking the build review: build and write nothing.
+    pub check: bool,
     pub checksums: Checksums,
     /// The targets build-time code is reviewed for; all when `None`.
     pub targets: Option<&'a [String]>,
@@ -278,11 +281,15 @@ pub fn install(
             .all(|b| project.bin_dir().join(b).is_file())
         && checksum::check(project, name).is_ok_and(|m| m.is_empty())
     {
-        println!("{name} {} is up to date", tool.version);
+        say!("{name} {} is up to date", tool.version);
         return Ok(());
     }
 
-    println!("Installing {name} {}", tool.version);
+    if opts.check {
+        say!("Checking {name} {}", tool.version);
+    } else {
+        say!("Installing {name} {}", tool.version);
+    }
     let checkout = source::checkout(
         project,
         name,
@@ -302,6 +309,9 @@ pub fn install(
         features: &features,
         targets: opts.targets,
     };
+    if opts.check {
+        return review::check_only(project, name, selection, &checkout, &vendored, args.offline);
+    }
     let changes = review::review(
         project,
         name,

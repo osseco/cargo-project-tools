@@ -9,6 +9,8 @@ use semver::{Version, VersionReq};
 use crate::cli::SUBCOMMAND;
 use crate::config::{AuditIgnore, IgnoreEntry, SELF_AUDIT_IGNORE};
 use crate::graph::Built;
+use crate::output::{self, Record, Severity, say};
+use crate::project::TOOLS_DIR;
 use crate::source::registry::{self, IndexCache};
 
 /// Kind of the warning for an advisory matched on a git package by name and version only.
@@ -190,27 +192,53 @@ pub fn self_check(db: &Database) -> Vec<(Package, Advisory)> {
 /// Print the self-check findings, applying `self-audit-ignore.toml`. Returns how many are
 /// left.
 pub fn evaluate_self(found: &[(Package, Advisory)], ignore: &AuditIgnore, today: &str) -> usize {
-    let mut ignores = Ignores::new(ignore, today, &format!("cargo-{SUBCOMMAND}"));
+    let tool = format!("cargo-{SUBCOMMAND}");
+    let file = format!("{TOOLS_DIR}/{SELF_AUDIT_IGNORE}");
+    let mut ignores = Ignores::new(ignore, today, &tool, &file);
     let mut open = 0;
     for (package, advisory) in found {
         if let Some(entry) = ignores.matches(advisory) {
-            println!(
+            say!(
                 "  ignored  {} {}@{}: {}",
-                advisory.id, package.name, package.version, entry.reason
+                advisory.id,
+                package.name,
+                package.version,
+                entry.reason
             );
             continue;
         }
         open += 1;
-        println!(
-            "  error    {} {}@{}: {}\n           fix: upgrade cargo-{SUBCOMMAND}, or ignore it in .project-tools/{SELF_AUDIT_IGNORE}",
-            advisory.id, package.name, package.version, advisory.title
+        let fix = format!("upgrade cargo-{SUBCOMMAND}, or ignore it in {file}");
+        say!(
+            "  error    {} {}@{}: {}\n           fix: {fix}",
+            advisory.id,
+            package.name,
+            package.version,
+            advisory.title
         );
+        output::emit(Record::Advisory {
+            tool: tool.clone(),
+            file: file.clone(),
+            id: advisory.id.clone(),
+            kind: "vulnerability".into(),
+            package: package.name.clone(),
+            package_version: package.version.to_string(),
+            title: advisory.title.clone(),
+            patched: Vec::new(),
+            severity: Severity::Error,
+            fix: Some(fix),
+        });
     }
     for entry in ignores.unused() {
-        println!(
+        say!(
             "  warning: unused ignore {} in {SELF_AUDIT_IGNORE}; remove it",
             entry.id
         );
+        output::emit(Record::IgnoreUnused {
+            tool: tool.clone(),
+            file: file.clone(),
+            id: entry.id.clone(),
+        });
     }
     open
 }
@@ -298,15 +326,22 @@ struct Ignores<'a> {
 }
 
 impl<'a> Ignores<'a> {
-    fn new(file: &'a AuditIgnore, today: &str, tool: &str) -> Self {
+    /// `path` is the ignore file, repo-relative, for records.
+    fn new(file: &'a AuditIgnore, today: &str, tool: &str, path: &str) -> Self {
         let mut active = Vec::new();
         for entry in &file.ignore {
             match &entry.expires {
                 Some(exp) if exp.as_str() < today => {
-                    println!(
+                    say!(
                         "  warning: ignore for {} expired on {exp} ({tool})",
                         entry.id
                     );
+                    output::emit(Record::IgnoreExpired {
+                        tool: tool.to_string(),
+                        file: path.to_string(),
+                        id: entry.id.clone(),
+                        expires: exp.clone(),
+                    });
                 }
                 _ => active.push(entry),
             }
@@ -342,16 +377,45 @@ pub fn evaluate(
     today: &str,
     index: &mut IndexCache,
 ) -> Outcome {
-    let mut ignores = Ignores::new(ignore, today, tool);
+    let lock_file = format!("{TOOLS_DIR}/crates/{tool}/Cargo.lock");
+    let ignore_file = format!("{TOOLS_DIR}/crates/{tool}/audit-ignore.toml");
+    let mut ignores = Ignores::new(ignore, today, tool, &ignore_file);
     let mut outcome = Outcome::default();
+    let record = |id: &str,
+                  kind: &str,
+                  package: &Package,
+                  title: &str,
+                  patched: &[VersionReq],
+                  fix: Option<String>| {
+        let error = kind == "vulnerability";
+        output::emit(Record::Advisory {
+            tool: tool.to_string(),
+            file: lock_file.clone(),
+            id: id.to_string(),
+            kind: kind.to_string(),
+            package: package.name.clone(),
+            package_version: package.version.to_string(),
+            title: title.to_string(),
+            patched: patched.iter().map(ToString::to_string).collect(),
+            severity: if error {
+                Severity::Error
+            } else {
+                Severity::Warning
+            },
+            fix,
+        });
+    };
     // (name, version) → advisories still open for it
     let mut open: BTreeMap<(&str, &Version), Vec<&Vulnerability>> = BTreeMap::new();
 
     for v in &report.vulnerabilities {
         if let Some(entry) = ignores.matches(&v.advisory) {
-            println!(
+            say!(
                 "  ignored  {} {}@{}: {}",
-                v.advisory.id, v.package.name, v.package.version, entry.reason
+                v.advisory.id,
+                v.package.name,
+                v.package.version,
+                entry.reason
             );
             continue;
         }
@@ -361,8 +425,17 @@ pub fn evaluate(
             .push(v);
     }
     for ((name, version), vulns) in &open {
+        let fix = suggestion(tool, name, version, vulns, index);
         for v in vulns {
-            println!(
+            record(
+                &v.advisory.id,
+                "vulnerability",
+                &v.package,
+                &v.advisory.title,
+                &v.patched,
+                Some(fix.clone()),
+            );
+            say!(
                 "  error    {} {name}@{version}: {}\n           patched: {}",
                 v.advisory.id,
                 v.advisory.title,
@@ -373,10 +446,7 @@ pub fn evaluate(
                     .join(" or ")
             );
         }
-        println!(
-            "           fix: {}",
-            suggestion(tool, name, version, vulns, index)
-        );
+        say!("           fix: {fix}");
     }
 
     for (kind, list) in &report.warnings {
@@ -384,39 +454,54 @@ pub fn evaluate(
             if let Some(adv) = &w.advisory
                 && let Some(entry) = ignores.matches(adv)
             {
-                println!(
+                say!(
                     "  ignored  {} {}@{} ({kind}): {}",
-                    adv.id, w.package.name, w.package.version, entry.reason
+                    adv.id,
+                    w.package.name,
+                    w.package.version,
+                    entry.reason
                 );
                 continue;
             }
             outcome.warnings += 1;
             let id = w.advisory.as_ref().map_or("-", |a| a.id.as_str());
-            println!(
+            let fix = (w.kind == "yanked").then(|| {
+                format!(
+                    "cargo {SUBCOMMAND} update {tool} {}@{}",
+                    w.package.name, w.package.version
+                )
+            });
+            let title = w.advisory.as_ref().map_or("", |a| a.title.as_str());
+            record(id, &w.kind, &w.package, title, &w.patched, fix.clone());
+            say!(
                 "  warning  {id} {}@{} ({})",
-                w.package.name, w.package.version, w.kind
+                w.package.name,
+                w.package.version,
+                w.kind
             );
             if w.kind == GIT_SOURCE
                 && let Some(adv) = &w.advisory
             {
-                println!(
+                say!(
                     "           possibly affected (git source, matched by name and version): {}",
                     adv.title
                 );
-            } else if w.kind == "yanked" {
-                println!(
-                    "           fix: cargo {SUBCOMMAND} update {tool} {}@{}",
-                    w.package.name, w.package.version
-                );
+            } else if let Some(fix) = &fix {
+                say!("           fix: {fix}");
             }
         }
     }
 
     for entry in ignores.unused() {
-        println!(
+        say!(
             "  warning: unused ignore {} in audit-ignore.toml ({tool}); remove it",
             entry.id
         );
+        output::emit(Record::IgnoreUnused {
+            tool: tool.to_string(),
+            file: ignore_file.clone(),
+            id: entry.id.clone(),
+        });
     }
     outcome
 }

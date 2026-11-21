@@ -4,6 +4,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use cargo_lock::Lockfile;
 
+use crate::output::say;
 use crate::process;
 
 pub fn load(path: &Path) -> Result<Lockfile> {
@@ -92,10 +93,10 @@ pub fn diff(old: &Lockfile, new: &Lockfile) -> Vec<Change> {
 
 pub fn print_diff(changes: &[Change]) {
     if changes.is_empty() {
-        println!("  (no changes)");
+        say!("  (no changes)");
     }
     for c in changes {
-        println!("{c}");
+        say!("{c}");
     }
 }
 

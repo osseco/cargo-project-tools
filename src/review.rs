@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
-use std::io::{self, IsTerminal};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -10,9 +9,11 @@ use serde::Deserialize;
 use crate::build_files::{self, Pulled};
 use crate::graph;
 use crate::lock;
+use crate::output::{self, Record, say};
 use crate::process;
 use crate::project::Project;
 use crate::sanitize::shown;
+use crate::screen;
 use crate::source::registry::sha256_hex;
 use crate::source::{self, Checkout};
 use crate::vendor::Vendored;
@@ -605,7 +606,7 @@ fn known_elsewhere(crates_dir: &Path, name: &str) -> KnownMap {
         let entries = match load(&path) {
             Ok(e) => e,
             Err(e) => {
-                println!(
+                say!(
                     "  warning: skipping {}: {e:#}",
                     shown(&path.display().to_string())
                 );
@@ -758,7 +759,8 @@ fn unchanged(item: &Item, before: &str) -> Result<()> {
     Ok(())
 }
 
-/// Warn about unused entries, and fail listing what's pending.
+/// Warn about unused entries, and fail listing what's pending. All of it goes to stderr, so
+/// the list comes before the error on the same stream.
 fn report(
     path: &Path,
     pending: &[Pending],
@@ -767,9 +769,24 @@ fn report(
     root: &Path,
 ) -> Result<()> {
     let rel = |p: &Path| shown(&p.strip_prefix(root).unwrap_or(p).display().to_string());
+    // Records carry the raw text, which JSON escapes; humans get it `shown`.
+    let raw = |p: &Path| slash(p.strip_prefix(root).unwrap_or(p));
+    // `crates/<tool>/build-review.toml`
+    let tool = path
+        .parent()
+        .and_then(Path::file_name)
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     for e in stale {
         if !pending.iter().any(|(_, prev)| *prev == Some(*e)) {
-            println!(
+            output::emit(Record::ReviewUnused {
+                tool: tool.clone(),
+                file: raw(path),
+                kind: e.kind.table().to_string(),
+                package: e.package.clone(),
+                path: e.path.clone(),
+            });
+            eprintln!(
                 "  warning: unused [[{}]] {}{} in {}; --approve-build removes it",
                 e.kind,
                 shown(&e.package),
@@ -781,14 +798,14 @@ fn report(
     if pending.is_empty() {
         return Ok(());
     }
-    println!("  build-time code to review:");
+    eprintln!("  build-time code to review:");
     for (item, previous) in pending {
         let note = match (known_for(known, item), previous) {
             (Some(k), _) => format!(" (reviewed for {}: {})", shown(&k.tool), k.action.as_str()),
             (None, Some(p)) => format!(" (changed; was {})", p.action.as_str()),
             (None, None) => String::new(),
         };
-        println!(
+        eprintln!(
             "    {:<12} {}{}  {}",
             item.kind,
             shown(&item.describe()),
@@ -796,22 +813,76 @@ fn report(
             rel(&item.location)
         );
     }
-    println!(
+    eprintln!(
         "  to decide piece by piece, put these in {} with the action you choose:",
         rel(path)
     );
     for (item, previous) in pending {
-        let text = paste_ready(item, *previous, known_for(known, item), root);
-        print!("{}", shown(&text));
+        let found = known_for(known, item);
+        let text = paste_ready(item, *previous, found, root);
+        eprint!("{}", shown(&text));
+        output::emit(Record::ReviewPending {
+            tool: tool.clone(),
+            file: raw(path),
+            item: review_item(item, *previous, found, raw(&item.location)),
+            entry: text
+                .lines()
+                .map(|l| format!("{}\n", l.trim_start()))
+                .collect(),
+        });
     }
     let what = match pending.len() {
         1 => "1 piece of build-time code isn't".to_string(),
         n => format!("{n} pieces of build-time code aren't"),
     };
+    if screen::interactive() {
+        bail!(
+            "{what} recorded in {}; review it, then rerun with --approve-build",
+            rel(path)
+        )
+    }
     bail!(
-        "{what} recorded in {}; review it, then rerun with --approve-build",
+        "{what} recorded in {}; review it where you have a terminal (run this command there \
+         for the review screen, or with --approve-build after reading the files), then \
+         commit {}",
+        rel(path),
         rel(path)
     )
+}
+
+/// A pending item as a `review-pending` record describes it.
+fn review_item(
+    item: &Item,
+    previous: Option<&Entry>,
+    known: Option<&Known>,
+    location: String,
+) -> output::ReviewItem {
+    let hash = |kind: Kind, hash: &str| match kind {
+        Kind::ProcMacro => (None, Some(hash.to_string())),
+        _ => (Some(hash.to_string()), None),
+    };
+    let (sha256, checksum) = hash(item.kind, &item.hash);
+    output::ReviewItem {
+        kind: item.kind.table().to_string(),
+        package: item.package.clone(),
+        version: item.version.clone(),
+        path: item.path.clone(),
+        sha256,
+        checksum,
+        location,
+        previous: previous.map(|p| {
+            let (sha256, checksum) = hash(p.kind, &p.hash);
+            output::Previous {
+                action: p.action.as_str().to_string(),
+                sha256,
+                checksum,
+            }
+        }),
+        known: known.map(|k| output::Known {
+            tool: k.tool.clone(),
+            action: k.action.as_str().to_string(),
+        }),
+    }
 }
 
 /// The review-file entry for a pending item, indented: with the decision another tool
@@ -892,7 +963,7 @@ fn record(path: &Path, decisions: Vec<Decision>, stale: &[&Entry]) -> Result<Vec
             }
             None => add_entry(&mut doc, &item, action, file.as_deref()),
         }
-        println!(
+        say!(
             "  recorded {:<12} {} ({})",
             item.kind,
             item.describe(),
@@ -902,7 +973,7 @@ fn record(path: &Path, decisions: Vec<Decision>, stale: &[&Entry]) -> Result<Vec
     }
     for e in stale.iter().filter(|e| !reused.contains(e)) {
         remove_entry(&mut doc, e);
-        println!("  removed unused [[{}]] {}{}", e.kind, e.package, e.path);
+        say!("  removed unused [[{}]] {}{}", e.kind, e.package, e.path);
     }
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
@@ -1074,7 +1145,7 @@ pub fn review(
     let crate_dir = project.crate_dir(name);
     let mode = if approve {
         Mode::ApproveAll
-    } else if io::stdin().is_terminal() && io::stdout().is_terminal() {
+    } else if screen::interactive() {
         Mode::Interactive {
             tool: name,
             crate_dir: &crate_dir,
@@ -1091,6 +1162,28 @@ pub fn review(
         &project.root,
     )?;
     apply(&decided, &crate_dir)
+}
+
+/// Check the build-time code of the tool in `checkout` against its `build-review.toml`,
+/// without a review screen, and without recording or applying anything.
+pub fn check_only(
+    project: &Project,
+    name: &str,
+    selection: graph::Selection,
+    checkout: &Checkout,
+    vendored: &Vendored,
+    offline: bool,
+) -> Result<()> {
+    let items = collect(name, selection, checkout, vendored, offline)?;
+    let known = known_elsewhere(&project.tools_dir().join("crates"), name);
+    check(
+        &project.review_path(name),
+        items,
+        Mode::Report,
+        &known,
+        &project.root,
+    )?;
+    Ok(())
 }
 
 /// Digest of the review file and its override files, for the install stamp.

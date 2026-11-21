@@ -102,6 +102,10 @@ fn new_code_halts_until_approved() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("2 pieces of build-time code"), "{err}");
+    // Tests run with or without a terminal, and the hint follows it.
+    if !crate::screen::interactive() {
+        assert!(err.contains("where you have a terminal"), "{err}");
+    }
     assert!(!file.exists());
 
     let decided = check(
@@ -209,6 +213,46 @@ fn paste_ready_entry_of_changed_code_keeps_its_decision() {
     assert_eq!(entries[0].hash, "new");
     assert_eq!(entries[0].action, Action::Override);
     assert_eq!(entries[0].file.as_deref(), Some("overrides/ring.rs"));
+}
+
+#[test]
+fn review_records_name_the_hash_and_what_it_replaces() {
+    let tmp = tempfile::tempdir().unwrap();
+    let previous = Entry {
+        kind: Kind::BuildScript,
+        package: "ring".into(),
+        path: "build.rs".into(),
+        hash: "old".into(),
+        action: Action::Strip,
+        file: None,
+    };
+    let item = review_item(
+        &script(tmp.path(), "ring", "new"),
+        Some(&previous),
+        None,
+        "v/ring/build.rs".into(),
+    );
+    assert_eq!(item.kind, "build-script");
+    assert_eq!(item.sha256.as_deref(), Some("new"));
+    assert_eq!(item.checksum, None);
+    let previous = item.previous.unwrap();
+    assert_eq!(previous.action, "strip");
+    assert_eq!(previous.sha256.as_deref(), Some("old"));
+
+    let known = Known {
+        tool: "other".into(),
+        action: Action::Approve,
+        file: None,
+    };
+    let item = review_item(
+        &proc_macro("serde_derive", "cc"),
+        None,
+        Some(&known),
+        "v".into(),
+    );
+    assert_eq!(item.checksum.as_deref(), Some("cc"));
+    assert_eq!(item.sha256, None);
+    assert_eq!(item.known.unwrap().tool, "other");
 }
 
 #[test]
@@ -761,6 +805,40 @@ fn collect_finds_build_time_code_in_vendored_sources() {
             "proc-macro macro true",
         ]
     );
+}
+
+#[test]
+fn check_only_records_nothing() {
+    let f = Fixture::new();
+    let selection = || crate::graph::Selection {
+        features: &[],
+        targets: None,
+    };
+    let check = || {
+        check_only(
+            &f.project,
+            "tool",
+            selection(),
+            &f.checkout,
+            &f.vendored,
+            true,
+        )
+    };
+    let err = check().unwrap_err().to_string();
+    assert!(err.contains("4 pieces of build-time code"), "{err}");
+    assert!(!f.project.review_path("tool").exists());
+
+    review(
+        &f.project,
+        "tool",
+        selection(),
+        &f.checkout,
+        &f.vendored,
+        true,
+        true,
+    )
+    .unwrap();
+    check().unwrap();
 }
 
 fn packages(items: &[Item]) -> Vec<&str> {

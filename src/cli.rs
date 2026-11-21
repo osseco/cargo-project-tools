@@ -15,6 +15,11 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub no_sfw: bool,
 
+    /// `json`: one JSON record per line on stdout (findings, pending reviews, missing
+    /// targets, a summary), and the human text on stderr.
+    #[arg(long, global = true, value_enum, default_value_t)]
+    pub message_format: crate::output::Format,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -189,6 +194,10 @@ pub struct InstallArgs {
     /// Rebuild even if the install stamp is up to date.
     #[arg(long)]
     pub force: bool,
+    /// Check targets, the audit and the build review, then stop: build and record nothing.
+    /// Fails when anything is missing or not reviewed.
+    #[arg(long, conflicts_with_all = ["force", "approve_build", "approve_target"])]
+    pub check: bool,
     /// Record all new or changed build scripts, proc macros and cargo config in
     /// build-review.toml at once. Review them first. In a terminal, without this flag,
     /// a review screen lets you decide on each.
@@ -277,6 +286,18 @@ pub enum AuditDbCommand {
 }
 
 impl Command {
+    /// Commands whose JSON output ends with a `summary` record.
+    pub fn has_summary(&self) -> bool {
+        matches!(
+            self,
+            Command::Add(_)
+                | Command::Upgrade(_)
+                | Command::Update(_)
+                | Command::Install(_)
+                | Command::Audit(_)
+        )
+    }
+
     /// Commands that download packages and should run through sfw. `audit` and `audit-db`
     /// only fetch the advisory database, which isn't a package. `verify` only builds when
     /// repairing.
