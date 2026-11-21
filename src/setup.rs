@@ -260,18 +260,27 @@ impl Setup {
         Ok(self.run(cmd)?.lines().map(str::to_string).collect())
     }
 
-    /// Versions `name` could move to from `current`, newest first, yanked ones left out.
+    /// Versions `name` could move to from `current`, newest first, yanked ones left out. The
+    /// suggested one is the lowest that every open advisory with a patched range calls fixed;
+    /// there's none when a vulnerability has no fix at all.
     pub fn versions(&mut self, name: &str, current: &Version) -> Vec<Choice> {
-        let patched: Vec<Vec<VersionReq>> = self
+        let open: Vec<&Finding> = self
             .findings
             .get(&(name.to_string(), current.clone()))
             .into_iter()
             .flatten()
-            .filter(|f| f.is_vulnerability() && !f.ignored)
+            .filter(|f| !f.ignored)
+            .collect();
+        let unfixable = open
+            .iter()
+            .any(|f| f.is_vulnerability() && f.patched.is_empty());
+        let patched: Vec<Vec<VersionReq>> = open
+            .iter()
+            .filter(|f| !f.patched.is_empty())
             .map(|f| f.patched.clone())
             .collect();
         let entries = self.auditor.index.get(name);
-        let suggested = if patched.is_empty() || patched.iter().any(Vec::is_empty) {
+        let suggested = if patched.is_empty() || unfixable {
             None
         } else {
             registry::lowest_patched(entries, current, &patched).map(|e| e.vers.clone())
@@ -423,7 +432,7 @@ fn findings(
                     kind: kind.clone(),
                     id,
                     title,
-                    patched: Vec::new(),
+                    patched: w.patched.clone(),
                     ignored: ign,
                 });
         }

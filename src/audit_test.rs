@@ -293,6 +293,33 @@ fn informational_kinds() {
 }
 
 #[test]
+fn warnings_carry_the_fixed_versions() {
+    let (_dir, db) = db(&[
+        (
+            "RUSTSEC-2020-0013",
+            "b",
+            "informational = \"unsound\"",
+            "\">= 1.1.6\"",
+        ),
+        (
+            "RUSTSEC-2020-0014",
+            "a",
+            "informational = \"unmaintained\"",
+            "",
+        ),
+    ]);
+    let lock = lock_of(&[
+        ("root", "1.0.0", None),
+        ("a", "1.0.0", Some(REGISTRY)),
+        ("b", "1.0.7", Some(REGISTRY)),
+    ]);
+    let report = scan(&db, &lock, "root", false);
+    let unsound = &report.warnings["unsound"][0];
+    assert_eq!(unsound.patched, [VersionReq::parse(">= 1.1.6").unwrap()]);
+    assert!(report.warnings["unmaintained"][0].patched.is_empty());
+}
+
+#[test]
 fn sources_decide_what_is_checked() {
     let (_dir, db) = db(&[
         ("RUSTSEC-2020-0020", "sparse", "", "\">= 2.0.0\""),

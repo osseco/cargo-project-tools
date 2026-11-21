@@ -33,6 +33,11 @@ pub(crate) struct Fixture {
 }
 
 pub(crate) fn fixture(ignore: AuditIgnore) -> Fixture {
+    fixture_with(ignore, &[])
+}
+
+/// Like `fixture`, with more advisories: (id, package, `[advisory]` lines, patched list).
+fn fixture_with(ignore: AuditIgnore, advisories: &[(&str, &str, &str, &str)]) -> Fixture {
     let registry = Registry::new(&[
         ("dep", "1.0.0"),
         ("dep", "1.1.0"),
@@ -57,6 +62,14 @@ pub(crate) fn fixture(ignore: AuditIgnore) -> Fixture {
         &db.join("crates/dep/RUSTSEC-2024-0001.md"),
         "```toml\n[advisory]\nid = \"RUSTSEC-2024-0001\"\npackage = \"dep\"\ndate = \"2024-01-01\"\n\n[versions]\npatched = [\">= 1.1.0\"]\n```\n\n# Dep is broken\n\nDescription.\n",
     );
+    for (id, package, extra, patched) in advisories {
+        write(
+            &db.join(format!("crates/{package}/{id}.md")),
+            &format!(
+                "```toml\n[advisory]\nid = \"{id}\"\npackage = \"{package}\"\ndate = \"2024-01-01\"\n{extra}\n\n[versions]\npatched = [{patched}]\n```\n\n# About {package}\n\nDescription.\n"
+            ),
+        );
+    }
     let mut auditor = Auditor::new(rustsec::Database::open(&db).unwrap());
     auditor.index.insert(
         "dep",
@@ -67,9 +80,10 @@ pub(crate) fn fixture(ignore: AuditIgnore) -> Fixture {
             entry("dep", "2.0.0", false),
         ],
     );
-    auditor
-        .index
-        .insert("opt", vec![entry("opt", "0.1.0", false)]);
+    auditor.index.insert(
+        "opt",
+        vec![entry("opt", "0.1.0", false), entry("opt", "0.2.0", false)],
+    );
     auditor.index.insert("tool", Vec::new());
 
     let checkout = Checkout::at(src.clone(), src.clone(), src);
@@ -255,4 +269,77 @@ fn another_checkout_keeps_the_features_it_still_has() {
     assert_eq!(f.setup.selected, BTreeSet::from(["extra".to_string()]));
     assert_eq!(names(&f.setup), ["tool", "dep"]);
     assert_eq!(f.setup.counts(), (2, 0, 0));
+}
+
+#[test]
+fn warnings_with_a_fix_get_a_suggested_version() {
+    let mut f = fixture_with(
+        AuditIgnore::default(),
+        &[
+            (
+                "RUSTSEC-2024-0002",
+                "opt",
+                "informational = \"unsound\"",
+                "\">= 0.2.0\"",
+            ),
+            // No fix: it doesn't stand in the way of the one above.
+            (
+                "RUSTSEC-2024-0003",
+                "opt",
+                "informational = \"unmaintained\"",
+                "",
+            ),
+        ],
+    );
+    let found = &f.setup.findings[&("opt".to_string(), v("0.1.0"))];
+    let unsound = found.iter().find(|f| f.kind == "unsound").unwrap();
+    assert_eq!(unsound.patched, [VersionReq::parse(">= 0.2.0").unwrap()]);
+    let choices = f.setup.versions("opt", &v("0.1.0"));
+    let suggested: Vec<String> = choices
+        .iter()
+        .filter(|c| c.suggested)
+        .map(|c| c.version.to_string())
+        .collect();
+    assert_eq!(suggested, ["0.2.0"]);
+}
+
+#[test]
+fn a_warning_without_a_fix_suggests_nothing() {
+    let mut f = fixture_with(
+        AuditIgnore::default(),
+        &[(
+            "RUSTSEC-2024-0003",
+            "opt",
+            "informational = \"unmaintained\"",
+            "",
+        )],
+    );
+    assert!(
+        f.setup
+            .versions("opt", &v("0.1.0"))
+            .iter()
+            .all(|c| !c.suggested)
+    );
+}
+
+#[test]
+fn a_vulnerability_without_a_fix_suggests_nothing() {
+    let mut f = fixture_with(
+        AuditIgnore::default(),
+        &[
+            ("RUSTSEC-2024-0004", "opt", "", ""),
+            (
+                "RUSTSEC-2024-0002",
+                "opt",
+                "informational = \"unsound\"",
+                "\">= 0.2.0\"",
+            ),
+        ],
+    );
+    assert!(
+        f.setup
+            .versions("opt", &v("0.1.0"))
+            .iter()
+            .all(|c| !c.suggested)
+    );
 }
