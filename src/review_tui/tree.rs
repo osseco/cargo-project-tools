@@ -60,6 +60,12 @@ pub(super) fn build(items: &[Item]) -> Result<Vec<Node>> {
         for (idx, item) in items.iter().enumerate().filter(|(_, i)| i.kind == kind) {
             let label = shown(&item.describe());
             let script_dir = item.location.parent().filter(|p| *p != item.base);
+            if item.kind == Kind::BuildScript
+                && (item.pulled.whole_package.is_some() || !item.pulled.files.is_empty())
+            {
+                pulling_script(idx, item, label, script_dir, &mut nodes)?;
+                continue;
+            }
             let dir = match item.kind {
                 Kind::ProcMacro => Some(item.location.as_path()),
                 Kind::BuildScript => script_dir,
@@ -93,6 +99,48 @@ pub(super) fn build(items: &[Item]) -> Result<Vec<Node>> {
         }
     }
     Ok(nodes)
+}
+
+/// A build script that pulls in other files: a folder with its directory (or itself), then
+/// the files it pulls in by their path in the package, or the whole package.
+fn pulling_script(
+    idx: usize,
+    item: &Item,
+    label: String,
+    script_dir: Option<&Path>,
+    nodes: &mut Vec<Node>,
+) -> Result<()> {
+    nodes.push(Node {
+        depth: 1,
+        label,
+        item: Some(idx),
+        kind: NodeKind::ItemDir,
+        expanded: false,
+        warn: Warn::of(&item.location),
+    });
+    if item.pulled.whole_package.is_some() {
+        return walk(&item.base, 2, idx, item, nodes);
+    }
+    let file = |path: &Path, label: String| Node {
+        depth: 2,
+        label,
+        item: Some(idx),
+        kind: NodeKind::File(path.to_path_buf()),
+        expanded: false,
+        warn: Warn::of(path),
+    };
+    match script_dir {
+        Some(dir) => walk(dir, 2, idx, item, nodes)?,
+        None => {
+            let name = shown(&item.path);
+            nodes.push(file(&item.location, format!("{name}  ← build script")));
+        }
+    }
+    for path in &item.pulled.files {
+        let rel = path.strip_prefix(&item.base).unwrap_or(path);
+        nodes.push(file(path, shown(&rel.to_string_lossy())));
+    }
+    Ok(())
 }
 
 fn walk(dir: &Path, depth: usize, idx: usize, item: &Item, nodes: &mut Vec<Node>) -> Result<()> {

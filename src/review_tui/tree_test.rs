@@ -86,3 +86,31 @@ fn names_and_link_targets_are_sanitized() {
             .all(|n| !n.label.contains(['\u{202e}', '\x1b']))
     );
 }
+
+#[test]
+fn a_script_that_pulls_in_files_is_a_folder_of_them() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut item = root_script(tmp.path(), "a", "mod helper;");
+    crate::review::tui::fixtures::write(&item.base.join("helper.rs"), "");
+    item.pulled.files = vec![item.base.join("helper.rs")];
+    let mut whole = root_script(tmp.path(), "w", "x");
+    crate::review::tui::fixtures::write(&whole.base.join("src/lib.rs"), "");
+    whole.pulled.whole_package = Some("build.rs includes a file by a computed path".into());
+
+    let nodes = build(&[item, whole]).unwrap();
+    let labels: Vec<(usize, &str)> = nodes.iter().map(|n| (n.depth, n.label.as_str())).collect();
+    assert_eq!(
+        labels,
+        [
+            (0, "build-script"),
+            (1, "a@1.0.0 build.rs"),
+            (2, "build.rs  ← build script"),
+            (2, "helper.rs"),
+            (1, "w@1.0.0 build.rs"),
+            (2, "src/"),
+            (3, "lib.rs"),
+            (2, "build.rs  ← build script"),
+        ]
+    );
+    assert_eq!(nodes[1].kind, NodeKind::ItemDir);
+}

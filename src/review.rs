@@ -7,6 +7,7 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
+use crate::build_files::{self, Pulled};
 use crate::graph;
 use crate::lock;
 use crate::process;
@@ -99,6 +100,9 @@ pub struct Item {
     pub base: PathBuf,
     /// In the vendor directory, where edits must be dropped from `.cargo-checksum.json`.
     pub vendored: bool,
+    /// For a build script: the files it pulls in that its hash covers besides itself (and
+    /// its directory), or why it covers the whole package.
+    pub pulled: Pulled,
 }
 
 impl Item {
@@ -247,45 +251,83 @@ fn slash(rel: &Path) -> String {
         .join("/")
 }
 
-/// sha256 lines (`<hash>  <path>`, like `sha256sum`) for every file under `dir`, sorted, and
-/// hashed. Links are recorded by their target; `.git` is skipped.
-fn dir_hash(dir: &Path) -> Result<String> {
-    fn walk(root: &Path, dir: &Path, lines: &mut Vec<String>) -> Result<()> {
-        for entry in fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
-            let entry = entry?;
-            let path = entry.path();
-            let rel = slash(path.strip_prefix(root)?);
-            let kind = entry.file_type()?;
-            if kind.is_symlink() {
-                let target = fs::read_link(&path)?;
-                lines.push(format!("link {} -> {}\n", rel, target.display()));
-            } else if kind.is_dir() {
-                if entry.file_name() != ".git" {
-                    walk(root, &path, lines)?;
-                }
-            } else {
-                lines.push(format!("{}  {}\n", sha256_hex(&fs::read(&path)?), rel));
+/// The sha256 line (`<hash>  <path>`, like `sha256sum`) for each file under `dir`, with
+/// paths relative to `root`. Links are recorded by their target; `.git` is skipped.
+fn dir_lines(root: &Path, dir: &Path, lines: &mut Vec<String>) -> Result<()> {
+    for entry in fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
+        let entry = entry?;
+        let path = entry.path();
+        let rel = slash(path.strip_prefix(root)?);
+        let kind = entry.file_type()?;
+        if kind.is_symlink() {
+            let target = fs::read_link(&path)?;
+            lines.push(format!("link {} -> {}\n", rel, target.display()));
+        } else if kind.is_dir() {
+            if entry.file_name() != ".git" {
+                dir_lines(root, &path, lines)?;
             }
+        } else {
+            lines.push(file_line(root, &path)?);
         }
-        Ok(())
     }
-    let mut lines = Vec::new();
-    walk(dir, dir, &mut lines)?;
+    Ok(())
+}
+
+fn file_line(root: &Path, path: &Path) -> Result<String> {
+    let rel = slash(path.strip_prefix(root)?);
+    Ok(format!("{}  {}\n", sha256_hex(&fs::read(path)?), rel))
+}
+
+/// The lines, sorted and hashed.
+fn lines_hash(mut lines: Vec<String>) -> String {
     lines.sort();
-    Ok(sha256_hex(lines.concat().as_bytes()))
+    sha256_hex(lines.concat().as_bytes())
+}
+
+/// sha256 lines for every file under `dir`, sorted, and hashed.
+fn dir_hash(dir: &Path) -> Result<String> {
+    let mut lines = Vec::new();
+    dir_lines(dir, dir, &mut lines)?;
+    Ok(lines_hash(lines))
 }
 
 /// The build script's own file when it sits at the crate root, else its whole directory,
-/// which is where the modules it uses usually live.
-fn script_hash(pkg_dir: &Path, script: &Path) -> Result<String> {
+/// which is where the modules it uses usually live; plus the files it pulls in from
+/// elsewhere, or else the whole package. Without such files, the hash is what it was before
+/// they were followed.
+fn script_hash(pkg_dir: &Path, script: &Path, pulled: &Pulled) -> Result<String> {
+    if pulled.whole_package.is_some() {
+        return dir_hash(pkg_dir);
+    }
     let parent = script
         .parent()
         .context("build script without a directory")?;
-    if parent == pkg_dir {
-        Ok(sha256_hex(&fs::read(script)?))
-    } else {
-        dir_hash(parent)
+    if pulled.files.is_empty() {
+        return if parent == pkg_dir {
+            Ok(sha256_hex(&fs::read(script)?))
+        } else {
+            dir_hash(parent)
+        };
     }
+    let mut lines = Vec::new();
+    if parent == pkg_dir {
+        lines.push(file_line(pkg_dir, script)?);
+    } else {
+        dir_lines(pkg_dir, parent, &mut lines)?;
+    }
+    for f in &pulled.files {
+        lines.push(file_line(pkg_dir, f)?);
+    }
+    Ok(lines_hash(lines))
+}
+
+/// What the build script `script` pulls in beyond what `script_hash` already covers.
+fn pulled_by(pkg_dir: &Path, script: &Path) -> Result<Pulled> {
+    let mut pulled = build_files::find(pkg_dir, script)?;
+    if let Some(dir) = script.parent().filter(|d| *d != pkg_dir) {
+        pulled.files.retain(|f| !f.starts_with(dir));
+    }
+    Ok(pulled)
 }
 
 /// Fail when `path` is a link. Registry archives and `cargo vendor` have none, but a git
@@ -346,6 +388,7 @@ fn shipped_configs(checkout: &Checkout) -> Result<Vec<Item>> {
                 location: path,
                 base: checkout.root.clone(),
                 vendored: false,
+                pulled: Pulled::default(),
             });
         }
     }
@@ -433,15 +476,18 @@ pub fn collect(
                 // An override or strip writes these; through a link that would be elsewhere.
                 refuse_link(&t.src_path)?;
                 refuse_link(&pkg.manifest_path)?;
+                let pulled = pulled_by(&pkg_dir, &t.src_path)
+                    .with_context(|| format!("reading the build script of {}", pkg.name))?;
                 items.push(Item {
                     kind: Kind::BuildScript,
                     package: pkg.name.clone(),
                     version: pkg.version.clone(),
                     path: slash(rel),
-                    hash: script_hash(&pkg_dir, &t.src_path)?,
+                    hash: script_hash(&pkg_dir, &t.src_path, &pulled)?,
                     location: t.src_path.clone(),
                     base: pkg_dir.clone(),
                     vendored: in_vendor,
+                    pulled,
                 });
             }
         }
@@ -472,6 +518,7 @@ pub fn collect(
                 location: pkg_dir.clone(),
                 base: pkg_dir,
                 vendored: in_vendor,
+                pulled: Pulled::default(),
             });
         }
     }
@@ -513,6 +560,70 @@ impl<'a> Decision<'a> {
     }
 }
 
+/// A decision recorded for the same piece (kind, package, path and hash) in another tool's
+/// review file: that piece has been reviewed already.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Known {
+    pub tool: String,
+    pub action: Action,
+    /// With `override`: that tool's override file.
+    pub file: Option<PathBuf>,
+}
+
+/// Decisions in other tools' review files, by kind, package, path and hash.
+pub type KnownMap = BTreeMap<(Kind, String, String, String), Known>;
+
+fn known_for<'a>(known: &'a KnownMap, item: &Item) -> Option<&'a Known> {
+    known.get(&(
+        item.kind,
+        item.package.clone(),
+        item.path.clone(),
+        item.hash.clone(),
+    ))
+}
+
+/// The decisions in every other tool's review file under `crates_dir`. A file that can't be
+/// read is skipped with a warning; for a piece several tools record, the first tool by name
+/// wins.
+fn known_elsewhere(crates_dir: &Path, name: &str) -> KnownMap {
+    let mut known = KnownMap::new();
+    let Ok(dirs) = fs::read_dir(crates_dir) else {
+        return known;
+    };
+    let mut tools: Vec<String> = dirs
+        .filter_map(|d| d.ok()?.file_name().into_string().ok())
+        .filter(|t| t != name)
+        .collect();
+    tools.sort();
+    for tool in tools {
+        let dir = crates_dir.join(&tool);
+        let path = dir.join(FILE);
+        if !path.exists() {
+            continue;
+        }
+        let entries = match load(&path) {
+            Ok(e) => e,
+            Err(e) => {
+                println!(
+                    "  warning: skipping {}: {e:#}",
+                    tui::shown(&path.display().to_string())
+                );
+                continue;
+            }
+        };
+        for e in entries {
+            known
+                .entry((e.kind, e.package, e.path, e.hash))
+                .or_insert_with(|| Known {
+                    tool: tool.clone(),
+                    action: e.action,
+                    file: e.file.map(|f| dir.join(f)),
+                });
+        }
+    }
+    known
+}
+
 /// How `check` treats pending items.
 pub enum Mode<'a> {
     /// Fail listing them.
@@ -527,8 +638,15 @@ pub enum Mode<'a> {
 /// pending. `Mode::Report` fails listing them. `Mode::ApproveAll` records them, keeping the
 /// action of an entry for the same place whose content changed. `Mode::Interactive` records
 /// what's decided on the review screen and fails listing the rest. Entries that match nothing
-/// are reported, and removed when recording.
-pub fn check(path: &Path, items: Vec<Item>, mode: Mode, root: &Path) -> Result<Vec<Decided>> {
+/// are reported, and removed when recording. Decisions `known` from other tools are offered
+/// on the screen and in the listing.
+pub fn check(
+    path: &Path,
+    items: Vec<Item>,
+    mode: Mode,
+    known: &KnownMap,
+    root: &Path,
+) -> Result<Vec<Decided>> {
     let entries = load(path)?;
     let stale: Vec<&Entry> = entries
         .iter()
@@ -559,15 +677,19 @@ pub fn check(path: &Path, items: Vec<Item>, mode: Mode, root: &Path) -> Result<V
                 .iter()
                 .map(|(item, _)| snapshot(item))
                 .collect::<Result<Vec<_>>>()?;
-            match tui::run(tool, &pending, crate_dir)? {
-                Some(choices) => {
-                    decided.extend(settle(path, pending, choices, &before, &stale, root)?)
-                }
+            let hints: Vec<Option<Known>> = pending
+                .iter()
+                .map(|(item, _)| known_for(known, item).cloned())
+                .collect();
+            match tui::run(tool, &pending, &hints, crate_dir)? {
+                Some(choices) => decided.extend(settle(
+                    path, pending, choices, &before, &stale, known, root,
+                )?),
                 // Cancelled.
-                None => report(path, &pending, &stale, root)?,
+                None => report(path, &pending, &stale, known, root)?,
             }
         }
-        _ => report(path, &pending, &stale, root)?,
+        _ => report(path, &pending, &stale, known, root)?,
     }
     Ok(decided)
 }
@@ -580,6 +702,7 @@ fn settle(
     choices: Vec<Option<tui::Choice>>,
     before: &[String],
     stale: &[&Entry],
+    known: &KnownMap,
     root: &Path,
 ) -> Result<Vec<Decided>> {
     let mut decisions = Vec::new();
@@ -606,7 +729,7 @@ fn settle(
         .filter(|e| !keep.contains(e))
         .collect();
     let decided = record(path, decisions, &unused)?;
-    report(path, &rest, &[], root)?;
+    report(path, &rest, &[], known, root)?;
     Ok(decided)
 }
 
@@ -615,7 +738,7 @@ fn settle(
 /// or commit.
 fn snapshot(item: &Item) -> Result<String> {
     match item.kind {
-        Kind::BuildScript => script_hash(&item.base, &item.location),
+        Kind::BuildScript => script_hash(&item.base, &item.location, &item.pulled),
         Kind::CargoConfig => Ok(sha256_hex(&fs::read(&item.location)?)),
         Kind::ProcMacro => dir_hash(&item.location),
     }
@@ -635,7 +758,13 @@ fn unchanged(item: &Item, before: &str) -> Result<()> {
 }
 
 /// Warn about unused entries, and fail listing what's pending.
-fn report(path: &Path, pending: &[Pending], stale: &[&Entry], root: &Path) -> Result<()> {
+fn report(
+    path: &Path,
+    pending: &[Pending],
+    stale: &[&Entry],
+    known: &KnownMap,
+    root: &Path,
+) -> Result<()> {
     let shown = |p: &Path| tui::shown(&p.strip_prefix(root).unwrap_or(p).display().to_string());
     for e in stale {
         if !pending.iter().any(|(_, prev)| *prev == Some(*e)) {
@@ -653,9 +782,14 @@ fn report(path: &Path, pending: &[Pending], stale: &[&Entry], root: &Path) -> Re
     }
     println!("  build-time code to review:");
     for (item, previous) in pending {
-        let note = match previous {
-            Some(p) => format!(" (changed; was {})", p.action.as_str()),
-            None => String::new(),
+        let note = match (known_for(known, item), previous) {
+            (Some(k), _) => format!(
+                " (reviewed for {}: {})",
+                tui::shown(&k.tool),
+                k.action.as_str()
+            ),
+            (None, Some(p)) => format!(" (changed; was {})", p.action.as_str()),
+            (None, None) => String::new(),
         };
         println!(
             "    {:<12} {}{}  {}",
@@ -670,7 +804,8 @@ fn report(path: &Path, pending: &[Pending], stale: &[&Entry], root: &Path) -> Re
         shown(path)
     );
     for (item, previous) in pending {
-        print!("{}", tui::shown(&paste_ready(item, *previous)));
+        let text = paste_ready(item, *previous, known_for(known, item), root);
+        print!("{}", tui::shown(&text));
     }
     let what = match pending.len() {
         1 => "1 piece of build-time code isn't".to_string(),
@@ -682,18 +817,41 @@ fn report(path: &Path, pending: &[Pending], stale: &[&Entry], root: &Path) -> Re
     )
 }
 
-/// The review-file entry for a pending item, indented, with the action of the entry it
-/// replaces or `approve`.
-fn paste_ready(item: &Item, previous: Option<&Entry>) -> String {
+/// The review-file entry for a pending item, indented: with the decision another tool
+/// recorded for it, else the action of the entry it replaces, else `approve`.
+fn paste_ready(
+    item: &Item,
+    previous: Option<&Entry>,
+    known: Option<&Known>,
+    root: &Path,
+) -> String {
     let mut doc = toml_edit::DocumentMut::new();
-    let action = previous.map_or(Action::Approve, |p| p.action);
-    add_entry(
-        &mut doc,
-        item,
-        action,
-        previous.and_then(|p| p.file.as_deref()),
-    );
     let mut out = String::new();
+    let (action, file) = match known {
+        Some(k) => {
+            out.push_str(&format!("    # as recorded for {}\n", k.tool));
+            let ours = (k.action == Action::Override)
+                .then(|| tui::override_rel(item).ok())
+                .flatten();
+            if let (Some(theirs), Some(ours)) = (&k.file, &ours) {
+                let theirs = theirs.strip_prefix(root).unwrap_or(theirs);
+                out.push_str(&format!(
+                    "    # copy {} to {ours} in this tool's crate directory\n",
+                    theirs.display()
+                ));
+            }
+            match ours {
+                Some(f) => (Action::Override, Some(f)),
+                None if k.action == Action::Override => (Action::Approve, None),
+                None => (k.action, None),
+            }
+        }
+        None => (
+            previous.map_or(Action::Approve, |p| p.action),
+            previous.and_then(|p| p.file.clone()),
+        ),
+    };
+    add_entry(&mut doc, item, action, file.as_deref());
     if let Some(p) = previous {
         out.push_str(&format!(
             "    # replaces the entry with {} = \"{}\"\n",
@@ -927,7 +1085,14 @@ pub fn review(
     } else {
         Mode::Report
     };
-    let decided = check(&project.review_path(name), items, mode, &project.root)?;
+    let known = known_elsewhere(&project.tools_dir().join("crates"), name);
+    let decided = check(
+        &project.review_path(name),
+        items,
+        mode,
+        &known,
+        &project.root,
+    )?;
     apply(&decided, &crate_dir)
 }
 

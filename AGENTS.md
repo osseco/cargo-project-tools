@@ -85,9 +85,10 @@ Never stage `site/dist/` or `site/node_modules/`.
 - `src/source/mod.rs`: full checkouts and minimal scratch projects (manifest + target stubs).
 - `src/lock.rs`: lock parsing, root check, diff, `cargo update`.
 - `src/install.rs`: `cargo install --path` invocation, build settings → `--config`, install stamps.
-- `src/review.rs`: `build-review.toml`: collects build scripts, proc macros and shipped cargo config, checks them against the file, applies overrides and strips.
+- `src/review.rs`: `build-review.toml`: collects build scripts (with the files they pull in), proc macros and shipped cargo config, checks them against the file, applies overrides and strips.
 - `src/review_tui.rs` and `src/review_tui/`: the review screen (ratatui, edtui), a submodule of `review`. `text.rs` sanitizes what it shows and writes overrides (no links, atomic), `tree.rs` builds the tree, `app.rs` holds the state and actions, `input.rs` and `render.rs` handle keys, mouse and drawing.
 - `src/highlight.rs`: a small Rust and TOML lexer that colours the review screen's editor.
+- `src/build_files.rs`: the files a build script pulls in (`mod`, `#[path]`, `include!`), read with syn; falls back to the whole package when it can't tell.
 - `src/vendor.rs`: `cargo vendor` into `targets/<tool>/vendor`; builds use it through source replacement.
 - `src/graph.rs`: which locked packages a tool builds with its features and targets (`cargo tree` on a scratch copy).
 - `src/targets.rs`: the host triple, the check that it and `--target` are approved targets, and the target suggestions for `init` (this machine and GitHub workflow runners).

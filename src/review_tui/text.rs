@@ -154,7 +154,7 @@ impl Warn {
 }
 
 /// Where the override of `item` goes, relative to the tool's crate directory.
-pub(super) fn override_rel(item: &Item) -> Result<String> {
+pub fn override_rel(item: &Item) -> Result<String> {
     let rel = match item.kind {
         Kind::BuildScript => format!("overrides/{}/{}", item.package, item.path),
         Kind::CargoConfig => format!("overrides/cargo-config/{}", item.path),

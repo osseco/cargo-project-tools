@@ -14,7 +14,7 @@ use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{Clear, ClearType};
 
-use crate::review::{Action, Pending};
+use crate::review::{Action, Known, Pending};
 
 #[path = "review_tui/app.rs"]
 mod app;
@@ -30,7 +30,7 @@ mod text;
 #[path = "review_tui/tree.rs"]
 mod tree;
 
-pub use text::shown;
+pub use text::{override_rel, shown};
 
 /// First line of an override copied from a file that can't be shown safely. `apply` refuses
 /// an override that still has it.
@@ -68,18 +68,22 @@ impl Drop for Terminal {
     }
 }
 
-/// Show the review screen for `pending`. Returns a decision (or none) per item, or `None`
-/// when cancelled.
+/// Show the review screen for `pending`, with the decisions `known` from other tools
+/// pre-selected. Returns a decision (or none) per item, or `None` when cancelled.
 pub fn run(
     tool: &str,
     pending: &[Pending],
+    known: &[Option<Known>],
     crate_dir: &Path,
 ) -> Result<Option<Vec<Option<Choice>>>> {
-    let mut app = app::App::new(tool, pending, crate_dir)?;
+    let mut app = app::App::new(tool, pending, known, crate_dir)?;
     let mut terminal = Terminal::start()?;
     while app.exit.is_none() {
         terminal.0.draw(|f| app.render(f))?;
         app.handle(event::read()?);
+    }
+    if app.exit == Some(app::Exit::Done) {
+        app.copy_sources()?;
     }
     Ok(app.result())
 }
