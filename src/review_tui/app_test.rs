@@ -1,5 +1,9 @@
 use super::*;
 
+use std::path::PathBuf;
+
+use crate::review::tui::Choice;
+
 use std::path::Path;
 
 use ratatui::backend::TestBackend;
@@ -13,7 +17,13 @@ use crate::review::tui::text::commented_copy;
 
 fn app(dir: &Path, items: Vec<Item>) -> App {
     let pending: Vec<Pending> = items.into_iter().map(|i| (i, None)).collect();
-    App::new("tool", &pending, &dir.join("crate")).unwrap()
+    App::new(
+        "tool",
+        &pending,
+        &vec![None; pending.len()],
+        &dir.join("crate"),
+    )
+    .unwrap()
 }
 
 fn draw(app: &mut App) -> String {
@@ -491,4 +501,140 @@ fn a_blank_row_under_the_title_and_above_the_editor() {
     assert_eq!(radios.y, 2);
     assert_eq!(row(radios.y + 1, radios.x).trim(), "");
     assert_eq!(app.areas.editor.y, radios.y + 2);
+}
+
+/// An app whose pieces have these decisions recorded for other tools.
+fn app_knowing(dir: &Path, items: Vec<Item>, known: Vec<Option<Known>>) -> App {
+    let pending: Vec<Pending> = items.into_iter().map(|i| (i, None)).collect();
+    App::new("tool", &pending, &known, &dir.join("crate")).unwrap()
+}
+
+fn known(tool: &str, action: Action, file: Option<PathBuf>) -> Option<Known> {
+    Some(Known {
+        tool: tool.into(),
+        action,
+        file,
+    })
+}
+
+#[test]
+fn decisions_recorded_for_other_tools_are_pre_selected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut app = app_knowing(
+        tmp.path(),
+        vec![
+            root_script(tmp.path(), "a", "x\n"),
+            root_script(tmp.path(), "b", "y\n"),
+            root_script(tmp.path(), "c", "z\n"),
+        ],
+        vec![
+            known("nextest", Action::Approve, None),
+            known("deny", Action::Strip, None),
+            None,
+        ],
+    );
+    assert_eq!(
+        app.radio,
+        [Some(Action::Approve), Some(Action::Strip), None]
+    );
+    let screen = draw(&mut app);
+    assert!(screen.contains("approved in nextest"), "{screen}");
+    assert!(screen.contains("stripped in deny"), "{screen}");
+    // Pre-selected, not decided for you: it's recorded on Done.
+    assert_eq!(app.result(), None);
+    app.press(Button::Done);
+    assert_eq!(
+        app.result().unwrap()[1].as_ref().unwrap().action,
+        Action::Strip
+    );
+}
+
+#[test]
+fn another_tools_override_is_copied_on_done_only() {
+    let tmp = tempfile::tempdir().unwrap();
+    let theirs = tmp.path().join("crates/nextest/overrides/a/build.rs");
+    fixtures::write(&theirs, "fn main() { /* theirs */ }\n");
+    let items = || vec![root_script(tmp.path(), "a", "fn main() {}\n")];
+    let hint = || vec![known("nextest", Action::Override, Some(theirs.clone()))];
+    let ours = tmp.path().join("crate/overrides/a/build.rs");
+
+    let mut app = app_knowing(tmp.path(), items(), hint());
+    assert_eq!(app.files[0].as_deref(), Some("overrides/a/build.rs"));
+    // Shown from their file, named as such.
+    assert_eq!(editor_text(&app), "fn main() { /* theirs */ }\n");
+    let screen = draw(&mut app);
+    assert!(
+        screen.contains("overrides/a/build.rs from nextest"),
+        "{screen}"
+    );
+    app.press(Button::Cancel);
+    assert!(!ours.exists());
+
+    let mut app = app_knowing(tmp.path(), items(), hint());
+    app.press(Button::Done);
+    app.copy_sources().unwrap();
+    assert_eq!(
+        fs::read_to_string(&ours).unwrap(),
+        "fn main() { /* theirs */ }\n"
+    );
+    assert_eq!(
+        app.result().unwrap(),
+        [Some(Choice {
+            action: Action::Override,
+            file: Some("overrides/a/build.rs".into())
+        })]
+    );
+}
+
+#[test]
+fn an_override_of_ours_that_differs_is_kept_and_left_undecided() {
+    let tmp = tempfile::tempdir().unwrap();
+    let theirs = tmp.path().join("crates/nextest/overrides/a/build.rs");
+    fixtures::write(&theirs, "theirs\n");
+    let ours = tmp.path().join("crate/overrides/a/build.rs");
+    fixtures::write(&ours, "ours\n");
+    let app = app_knowing(
+        tmp.path(),
+        vec![root_script(tmp.path(), "a", "x\n")],
+        vec![known("nextest", Action::Override, Some(theirs))],
+    );
+    assert_eq!(app.radio, [None]);
+    assert!(
+        app.message
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("differs from nextest")
+    );
+    assert_eq!(fs::read_to_string(&ours).unwrap(), "ours\n");
+    // The same content is simply used.
+    fs::write(&ours, "theirs\n").unwrap();
+    let theirs = tmp.path().join("crates/nextest/overrides/a/build.rs");
+    let app = app_knowing(
+        tmp.path(),
+        vec![root_script(tmp.path(), "a", "x\n")],
+        vec![known("nextest", Action::Override, Some(theirs))],
+    );
+    assert_eq!(app.sources, [None]);
+    assert_eq!(app.radio, [Some(Action::Override)]);
+}
+
+#[test]
+fn editing_another_tools_override_saves_ours() {
+    let tmp = tempfile::tempdir().unwrap();
+    let theirs = tmp.path().join("crates/nextest/overrides/a/build.rs");
+    fixtures::write(&theirs, "theirs\n");
+    let mut app = app_knowing(
+        tmp.path(),
+        vec![root_script(tmp.path(), "a", "x\n")],
+        vec![known("nextest", Action::Override, Some(theirs.clone()))],
+    );
+    chord(&mut app, 'l');
+    typed(&mut app, "imine ");
+    press(&mut app, KeyCode::Esc);
+    app.press(Button::Save);
+    let ours = tmp.path().join("crate/overrides/a/build.rs");
+    assert_eq!(fs::read_to_string(&ours).unwrap(), "mine theirs\n");
+    assert_eq!(fs::read_to_string(&theirs).unwrap(), "theirs\n");
+    assert_eq!(app.sources, [None]);
 }

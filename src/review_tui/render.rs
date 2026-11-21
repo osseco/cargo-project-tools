@@ -11,7 +11,7 @@ use ratatui::widgets::{Block, Clear, List, ListItem, Paragraph, Widget, Wrap};
 use super::app::{App, BUTTONS, Button, Focus, OpenContent, RADIOS};
 use super::text::{Warn, shown};
 use super::tree::NodeKind;
-use crate::review::Kind;
+use crate::review::{Action, Kind};
 
 impl App {
     pub(super) fn render(&mut self, frame: &mut Frame) {
@@ -84,7 +84,17 @@ impl App {
                     };
                     spans.push(Span::styled(format!("{} ", self.glyph(item)), style));
                     spans.push(Span::raw(n.label.clone()));
-                    if let Some(prev) = self.previous[item] {
+                    if let Some(k) = &self.known[item] {
+                        let done = match k.action {
+                            Action::Approve => "approved",
+                            Action::Strip => "stripped",
+                            Action::Override => "overridden",
+                        };
+                        spans.push(Span::styled(
+                            format!("  {done} in {}", shown(&k.tool)),
+                            Style::default().fg(Color::Cyan),
+                        ));
+                    } else if let Some(prev) = self.previous[item] {
                         spans.push(Span::styled(
                             format!("  changed (was {})", prev.as_str()),
                             Style::default().fg(Color::Magenta),
@@ -186,6 +196,10 @@ impl App {
                     _ => format!("{}@{}/{}", item.package, item.version, rel.display()),
                 }
             }
+        };
+        let name = match &open.from {
+            Some(tool) => format!("{name} from {tool}"),
+            None => name,
         };
         let title = format!(" {} ({what}, {mode}) ", shown(&name));
         let block = Block::bordered().title(title).border_style(border);

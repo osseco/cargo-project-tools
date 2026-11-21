@@ -98,13 +98,20 @@ fn new_code_halts_until_approved() {
         ]
     };
 
-    let err = check(&file, items(), Mode::Report, tmp.path())
+    let err = check(&file, items(), Mode::Report, &KnownMap::new(), tmp.path())
         .unwrap_err()
         .to_string();
     assert!(err.contains("2 pieces of build-time code"), "{err}");
     assert!(!file.exists());
 
-    let decided = check(&file, items(), Mode::ApproveAll, tmp.path()).unwrap();
+    let decided = check(
+        &file,
+        items(),
+        Mode::ApproveAll,
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap();
     assert_eq!(decided.len(), 2);
     assert!(decided.iter().all(|d| d.action == Action::Approve));
     let entries = load(&file).unwrap();
@@ -118,7 +125,7 @@ fn new_code_halts_until_approved() {
     // Recorded: passes without the flag, and the file isn't rewritten.
     let before = fs::read_to_string(&file).unwrap();
     assert_eq!(
-        check(&file, items(), Mode::Report, tmp.path())
+        check(&file, items(), Mode::Report, &KnownMap::new(), tmp.path())
             .unwrap()
             .len(),
         2
@@ -137,12 +144,19 @@ fn changed_code_keeps_its_action_and_drops_the_old_entry() {
     .unwrap();
     let items = || vec![script(tmp.path(), "ring", "new")];
 
-    let err = check(&file, items(), Mode::Report, tmp.path())
+    let err = check(&file, items(), Mode::Report, &KnownMap::new(), tmp.path())
         .unwrap_err()
         .to_string();
     assert!(err.contains("1 piece of"), "{err}");
 
-    let decided = check(&file, items(), Mode::ApproveAll, tmp.path()).unwrap();
+    let decided = check(
+        &file,
+        items(),
+        Mode::ApproveAll,
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap();
     assert_eq!(decided[0].action, Action::Override);
     assert_eq!(decided[0].file.as_deref(), Some("overrides/ring.rs"));
     let entries = load(&file).unwrap();
@@ -159,8 +173,8 @@ fn changed_code_keeps_its_action_and_drops_the_old_entry() {
 #[test]
 fn paste_ready_entries_parse_back() {
     let tmp = tempfile::tempdir().unwrap();
-    let text = paste_ready(&script(tmp.path(), "libc", "aa"), None)
-        + &paste_ready(&proc_macro("serde_derive", "cc"), None);
+    let text = paste_ready(&script(tmp.path(), "libc", "aa"), None, None, tmp.path())
+        + &paste_ready(&proc_macro("serde_derive", "cc"), None, None, tmp.path());
     let entries = parse(&text).unwrap();
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].package, "libc");
@@ -181,7 +195,12 @@ fn paste_ready_entry_of_changed_code_keeps_its_decision() {
         action: Action::Override,
         file: Some("overrides/ring.rs".into()),
     };
-    let text = paste_ready(&script(tmp.path(), "ring", "new"), Some(&previous));
+    let text = paste_ready(
+        &script(tmp.path(), "ring", "new"),
+        Some(&previous),
+        None,
+        tmp.path(),
+    );
     assert!(
         text.contains("# replaces the entry with sha256 = \"old\""),
         "{text}"
@@ -236,9 +255,16 @@ fn two_versions_of_a_proc_macro_are_separate_entries() {
             proc_macro("thiserror-impl", "v2"),
         ]
     };
-    check(&file, items(), Mode::ApproveAll, tmp.path()).unwrap();
+    check(
+        &file,
+        items(),
+        Mode::ApproveAll,
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap();
     assert_eq!(load(&file).unwrap().len(), 2);
-    assert!(check(&file, items(), Mode::Report, tmp.path()).is_ok());
+    assert!(check(&file, items(), Mode::Report, &KnownMap::new(), tmp.path()).is_ok());
 }
 
 fn vendored_package(dir: &Path) -> PathBuf {
@@ -364,9 +390,17 @@ fn screen_decisions_are_recorded_and_the_undecided_still_fail() {
         None,
     ];
 
-    let err = settle(&file, pending, choices, &before, &stale, tmp.path())
-        .unwrap_err()
-        .to_string();
+    let err = settle(
+        &file,
+        pending,
+        choices,
+        &before,
+        &stale,
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("1 piece of"), "{err}");
     let entries = load(&file).unwrap();
     let packages: Vec<(&str, Action)> = entries
@@ -392,9 +426,17 @@ fn code_changed_during_the_review_is_not_recorded() {
     let a = real_script(tmp.path(), "a");
     let before = vec![snapshot(&a).unwrap()];
     fs::write(&a.location, "fn main() { swapped() }").unwrap();
-    let err = settle(&file, vec![(a, None)], approve(), &before, &[], tmp.path())
-        .unwrap_err()
-        .to_string();
+    let err = settle(
+        &file,
+        vec![(a, None)],
+        approve(),
+        &before,
+        &[],
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("changed during the review"), "{err}");
 
     // A proc macro: any file of its crate.
@@ -412,6 +454,7 @@ fn code_changed_during_the_review_is_not_recorded() {
         approve(),
         &before,
         &[],
+        &KnownMap::new(),
         tmp.path(),
     )
     .unwrap_err()
@@ -421,7 +464,16 @@ fn code_changed_during_the_review_is_not_recorded() {
 
     // Unchanged, it's recorded with its lock checksum.
     let before = vec![snapshot(&m).unwrap()];
-    settle(&file, vec![(m, None)], approve(), &before, &[], tmp.path()).unwrap();
+    settle(
+        &file,
+        vec![(m, None)],
+        approve(),
+        &before,
+        &[],
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap();
     assert_eq!(load(&file).unwrap()[0].hash, "lock-checksum");
 }
 
@@ -809,4 +861,71 @@ fn linked_build_scripts_are_refused() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("is a link"), "{err}");
+}
+
+#[test]
+fn decisions_are_read_from_other_tools() {
+    let tmp = tempfile::tempdir().unwrap();
+    let crates = tmp.path().join("crates");
+    let entry = |action: &str, extra: &str| {
+        format!(
+            "[[build-script]]\npackage = \"ring\"\npath = \"build.rs\"\nsha256 = \"h\"\naction = \"{action}\"\n{extra}"
+        )
+    };
+    for (tool, text) in [
+        ("alpha", entry("strip", "")),
+        ("beta", entry("approve", "")),
+        ("me", entry("override", "file = \"overrides/mine.rs\"\n")),
+        ("broken", "not toml [[".to_string()),
+    ] {
+        fs::create_dir_all(crates.join(tool)).unwrap();
+        fs::write(crates.join(tool).join(FILE), text).unwrap();
+    }
+    fs::create_dir_all(crates.join("no-file")).unwrap();
+
+    let known = known_elsewhere(&crates, "me");
+    let ring = script(tmp.path(), "ring", "h");
+    // The first tool by name wins; this tool's own file and broken files aren't used.
+    assert_eq!(
+        known_for(&known, &ring),
+        Some(&Known {
+            tool: "alpha".into(),
+            action: Action::Strip,
+            file: None
+        })
+    );
+    assert_eq!(known.len(), 1);
+    // Another hash isn't the same piece.
+    assert_eq!(
+        known_for(&known, &script(tmp.path(), "ring", "other")),
+        None
+    );
+}
+
+#[test]
+fn paste_ready_entries_use_what_another_tool_recorded() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ring = script(tmp.path(), "ring", "h");
+    let strip = Known {
+        tool: "alpha".into(),
+        action: Action::Strip,
+        file: None,
+    };
+    let text = paste_ready(&ring, None, Some(&strip), tmp.path());
+    assert!(text.contains("# as recorded for alpha"), "{text}");
+    assert_eq!(parse(&text).unwrap()[0].action, Action::Strip);
+
+    let over = Known {
+        tool: "alpha".into(),
+        action: Action::Override,
+        file: Some(tmp.path().join("crates/alpha/overrides/ring/build.rs")),
+    };
+    let text = paste_ready(&ring, None, Some(&over), tmp.path());
+    assert!(
+        text.contains("# copy crates/alpha/overrides/ring/build.rs to overrides/ring/build.rs"),
+        "{text}"
+    );
+    let entry = &parse(&text).unwrap()[0];
+    assert_eq!(entry.action, Action::Override);
+    assert_eq!(entry.file.as_deref(), Some("overrides/ring/build.rs"));
 }

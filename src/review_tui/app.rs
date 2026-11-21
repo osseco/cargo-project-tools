@@ -13,7 +13,7 @@ use super::Choice;
 use super::text::{self, Content, commented_copy, override_rel, read_content, shown};
 use super::tree::{self, Node, NodeKind};
 use crate::highlight;
-use crate::review::{Action, Item, Kind, Pending};
+use crate::review::{Action, Item, Kind, Known, Pending};
 use crate::source::registry::sha256_hex;
 
 /// The file in the editor.
@@ -24,6 +24,8 @@ pub(super) struct Open {
     /// The piece's own file, the one an override replaces.
     pub(super) own: bool,
     pub(super) showing_override: bool,
+    /// The other tool whose override is shown, before it's copied here.
+    pub(super) from: Option<String>,
     /// sha256 of the override file as loaded or last saved, to notice changes on disk.
     pub(super) on_disk: Option<String>,
     pub(super) content: OpenContent,
@@ -178,6 +180,10 @@ pub(super) struct App {
     pub(super) previous: Vec<Option<Action>>,
     pub(super) radio: Vec<Option<Action>>,
     pub(super) files: Vec<Option<String>>,
+    /// What other tools recorded for the same piece.
+    pub(super) known: Vec<Option<Known>>,
+    /// Another tool's override file, copied to `files` on Done.
+    pub(super) sources: Vec<Option<PathBuf>>,
     pub(super) nodes: Vec<Node>,
     pub(super) selected: usize,
     pub(super) tree_state: ListState,
@@ -196,7 +202,12 @@ pub(super) struct App {
 }
 
 impl App {
-    pub(super) fn new(tool: &str, pending: &[Pending], crate_dir: &Path) -> Result<App> {
+    pub(super) fn new(
+        tool: &str,
+        pending: &[Pending],
+        known: &[Option<Known>],
+        crate_dir: &Path,
+    ) -> Result<App> {
         let items: Vec<Item> = pending.iter().map(|(i, _)| i.clone()).collect();
         let nodes = tree::build(&items)?;
         let mut app = App {
@@ -207,6 +218,8 @@ impl App {
                 .iter()
                 .map(|(_, p)| p.and_then(|e| e.file.clone()))
                 .collect(),
+            known: known.to_vec(),
+            sources: vec![None; items.len()],
             items,
             nodes,
             selected: 0,
@@ -223,12 +236,80 @@ impl App {
             areas: Areas::default(),
             exit: None,
         };
+        app.take_known();
         // Start on the first piece rather than its group.
         if let Some(first) = app.nodes.iter().position(|n| n.item.is_some()) {
             app.selected = first;
         }
         app.open_selected();
         Ok(app)
+    }
+
+    /// Pre-select what other tools recorded; it's an exact match, so it wins over a changed
+    /// entry's decision. Another tool's override is shown from its file until Done copies
+    /// it here. An override of ours that differs from it is kept, and the piece left
+    /// undecided.
+    fn take_known(&mut self) {
+        for i in 0..self.items.len() {
+            let Some(k) = self.known[i].clone() else {
+                continue;
+            };
+            if k.action != Action::Override {
+                self.radio[i] = Some(k.action);
+                self.files[i] = None;
+                continue;
+            }
+            let (Some(theirs), Ok(rel)) = (k.file, override_rel(&self.items[i])) else {
+                continue;
+            };
+            if !plain_file(&theirs) {
+                continue;
+            }
+            let ours = self.crate_dir.join(&rel);
+            match fs::read(&ours) {
+                Ok(bytes) if fs::read(&theirs).is_ok_and(|t| t == bytes) => {}
+                Ok(_) => {
+                    self.radio[i] = None;
+                    self.files[i] = None;
+                    self.warn(format!(
+                        "kept {}, which differs from {}'s override",
+                        shown(&ours.to_string_lossy()),
+                        shown(&k.tool)
+                    ));
+                    continue;
+                }
+                Err(_) => self.sources[i] = Some(theirs),
+            }
+            self.radio[i] = Some(Action::Override);
+            self.files[i] = Some(rel);
+        }
+    }
+
+    /// Copy the other tools' overrides chosen here into this tool's crate directory.
+    pub(super) fn copy_sources(&mut self) -> Result<()> {
+        for i in 0..self.items.len() {
+            let (Some(Action::Override), Some(src), Some(rel)) =
+                (self.radio[i], &self.sources[i], &self.files[i])
+            else {
+                continue;
+            };
+            if !plain_file(src) {
+                bail!("{} isn't a plain file", src.display());
+            }
+            let bytes = fs::read(src)?;
+            match fs::read(self.crate_dir.join(rel)) {
+                Ok(ours) if ours == bytes => {}
+                Ok(_) => bail!(
+                    "{} appeared during the review and differs from the override it would copy",
+                    rel
+                ),
+                Err(_) => {
+                    text::write_override(&self.crate_dir, rel, &bytes)?;
+                }
+            }
+            self.sources[i] = None;
+        }
+        Ok(())
     }
 
     /// The decisions, one per pending item; `None` when cancelled.
@@ -356,11 +437,20 @@ impl App {
             return;
         };
         let own = upstream == self.items[item].location && self.items[item].kind != Kind::ProcMacro;
-        let override_file = self.files[item]
+        let overriding = own && self.radio[item] == Some(Action::Override);
+        let ours = self.files[item]
             .as_ref()
-            .filter(|_| own && self.radio[item] == Some(Action::Override))
+            .filter(|_| overriding)
             .map(|f| self.crate_dir.join(f))
             .filter(|p| p.exists());
+        // Another tool's override, until it's copied.
+        let theirs = self.sources[item]
+            .clone()
+            .filter(|_| overriding && ours.is_none());
+        let from = theirs
+            .as_ref()
+            .and_then(|_| self.known[item].as_ref().map(|k| k.tool.clone()));
+        let override_file = ours.or(theirs);
         let showing_override = override_file.is_some();
         let path = override_file.unwrap_or(upstream);
         let on_disk = if showing_override {
@@ -392,6 +482,7 @@ impl App {
             path,
             own,
             showing_override,
+            from,
             on_disk,
             content,
         });
@@ -447,7 +538,7 @@ impl App {
             }
             Content::Text(_, 0) => {
                 self.radio[item] = Some(Action::Override);
-                if dest.exists() {
+                if dest.exists() || self.sources[item].is_some() {
                     self.files[item] = Some(rel);
                 }
                 self.say("edit the file, then press Save override");
@@ -519,10 +610,12 @@ impl App {
         }
         let dest = text::write_override(&self.crate_dir, &rel, text.as_bytes())?;
         self.files[item] = Some(rel);
+        self.sources[item] = None;
         self.say(format!("saved override {}", shown(&dest.to_string_lossy())));
         if let Some(Open {
             path,
             showing_override,
+            from,
             on_disk,
             content: OpenContent::Text {
                 state, baseline, ..
@@ -533,6 +626,7 @@ impl App {
             *baseline = state.lines.to_string();
             *path = dest;
             *showing_override = true;
+            *from = None;
             *on_disk = Some(sha256_hex(text.as_bytes()));
         }
         Ok(Saved::Yes)
@@ -577,6 +671,11 @@ impl App {
             (Some(Action::Override), None) => "✎?",
         }
     }
+}
+
+/// Whether `path` is a plain file, not a link.
+fn plain_file(path: &Path) -> bool {
+    path.symlink_metadata().is_ok_and(|m| m.is_file())
 }
 
 #[cfg(test)]

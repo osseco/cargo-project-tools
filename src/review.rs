@@ -560,6 +560,70 @@ impl<'a> Decision<'a> {
     }
 }
 
+/// A decision recorded for the same piece (kind, package, path and hash) in another tool's
+/// review file: that piece has been reviewed already.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Known {
+    pub tool: String,
+    pub action: Action,
+    /// With `override`: that tool's override file.
+    pub file: Option<PathBuf>,
+}
+
+/// Decisions in other tools' review files, by kind, package, path and hash.
+pub type KnownMap = BTreeMap<(Kind, String, String, String), Known>;
+
+fn known_for<'a>(known: &'a KnownMap, item: &Item) -> Option<&'a Known> {
+    known.get(&(
+        item.kind,
+        item.package.clone(),
+        item.path.clone(),
+        item.hash.clone(),
+    ))
+}
+
+/// The decisions in every other tool's review file under `crates_dir`. A file that can't be
+/// read is skipped with a warning; for a piece several tools record, the first tool by name
+/// wins.
+fn known_elsewhere(crates_dir: &Path, name: &str) -> KnownMap {
+    let mut known = KnownMap::new();
+    let Ok(dirs) = fs::read_dir(crates_dir) else {
+        return known;
+    };
+    let mut tools: Vec<String> = dirs
+        .filter_map(|d| d.ok()?.file_name().into_string().ok())
+        .filter(|t| t != name)
+        .collect();
+    tools.sort();
+    for tool in tools {
+        let dir = crates_dir.join(&tool);
+        let path = dir.join(FILE);
+        if !path.exists() {
+            continue;
+        }
+        let entries = match load(&path) {
+            Ok(e) => e,
+            Err(e) => {
+                println!(
+                    "  warning: skipping {}: {e:#}",
+                    tui::shown(&path.display().to_string())
+                );
+                continue;
+            }
+        };
+        for e in entries {
+            known
+                .entry((e.kind, e.package, e.path, e.hash))
+                .or_insert_with(|| Known {
+                    tool: tool.clone(),
+                    action: e.action,
+                    file: e.file.map(|f| dir.join(f)),
+                });
+        }
+    }
+    known
+}
+
 /// How `check` treats pending items.
 pub enum Mode<'a> {
     /// Fail listing them.
@@ -574,8 +638,15 @@ pub enum Mode<'a> {
 /// pending. `Mode::Report` fails listing them. `Mode::ApproveAll` records them, keeping the
 /// action of an entry for the same place whose content changed. `Mode::Interactive` records
 /// what's decided on the review screen and fails listing the rest. Entries that match nothing
-/// are reported, and removed when recording.
-pub fn check(path: &Path, items: Vec<Item>, mode: Mode, root: &Path) -> Result<Vec<Decided>> {
+/// are reported, and removed when recording. Decisions `known` from other tools are offered
+/// on the screen and in the listing.
+pub fn check(
+    path: &Path,
+    items: Vec<Item>,
+    mode: Mode,
+    known: &KnownMap,
+    root: &Path,
+) -> Result<Vec<Decided>> {
     let entries = load(path)?;
     let stale: Vec<&Entry> = entries
         .iter()
@@ -606,15 +677,19 @@ pub fn check(path: &Path, items: Vec<Item>, mode: Mode, root: &Path) -> Result<V
                 .iter()
                 .map(|(item, _)| snapshot(item))
                 .collect::<Result<Vec<_>>>()?;
-            match tui::run(tool, &pending, crate_dir)? {
-                Some(choices) => {
-                    decided.extend(settle(path, pending, choices, &before, &stale, root)?)
-                }
+            let hints: Vec<Option<Known>> = pending
+                .iter()
+                .map(|(item, _)| known_for(known, item).cloned())
+                .collect();
+            match tui::run(tool, &pending, &hints, crate_dir)? {
+                Some(choices) => decided.extend(settle(
+                    path, pending, choices, &before, &stale, known, root,
+                )?),
                 // Cancelled.
-                None => report(path, &pending, &stale, root)?,
+                None => report(path, &pending, &stale, known, root)?,
             }
         }
-        _ => report(path, &pending, &stale, root)?,
+        _ => report(path, &pending, &stale, known, root)?,
     }
     Ok(decided)
 }
@@ -627,6 +702,7 @@ fn settle(
     choices: Vec<Option<tui::Choice>>,
     before: &[String],
     stale: &[&Entry],
+    known: &KnownMap,
     root: &Path,
 ) -> Result<Vec<Decided>> {
     let mut decisions = Vec::new();
@@ -653,7 +729,7 @@ fn settle(
         .filter(|e| !keep.contains(e))
         .collect();
     let decided = record(path, decisions, &unused)?;
-    report(path, &rest, &[], root)?;
+    report(path, &rest, &[], known, root)?;
     Ok(decided)
 }
 
@@ -682,7 +758,13 @@ fn unchanged(item: &Item, before: &str) -> Result<()> {
 }
 
 /// Warn about unused entries, and fail listing what's pending.
-fn report(path: &Path, pending: &[Pending], stale: &[&Entry], root: &Path) -> Result<()> {
+fn report(
+    path: &Path,
+    pending: &[Pending],
+    stale: &[&Entry],
+    known: &KnownMap,
+    root: &Path,
+) -> Result<()> {
     let shown = |p: &Path| tui::shown(&p.strip_prefix(root).unwrap_or(p).display().to_string());
     for e in stale {
         if !pending.iter().any(|(_, prev)| *prev == Some(*e)) {
@@ -700,9 +782,14 @@ fn report(path: &Path, pending: &[Pending], stale: &[&Entry], root: &Path) -> Re
     }
     println!("  build-time code to review:");
     for (item, previous) in pending {
-        let note = match previous {
-            Some(p) => format!(" (changed; was {})", p.action.as_str()),
-            None => String::new(),
+        let note = match (known_for(known, item), previous) {
+            (Some(k), _) => format!(
+                " (reviewed for {}: {})",
+                tui::shown(&k.tool),
+                k.action.as_str()
+            ),
+            (None, Some(p)) => format!(" (changed; was {})", p.action.as_str()),
+            (None, None) => String::new(),
         };
         println!(
             "    {:<12} {}{}  {}",
@@ -717,7 +804,8 @@ fn report(path: &Path, pending: &[Pending], stale: &[&Entry], root: &Path) -> Re
         shown(path)
     );
     for (item, previous) in pending {
-        print!("{}", tui::shown(&paste_ready(item, *previous)));
+        let text = paste_ready(item, *previous, known_for(known, item), root);
+        print!("{}", tui::shown(&text));
     }
     let what = match pending.len() {
         1 => "1 piece of build-time code isn't".to_string(),
@@ -729,18 +817,41 @@ fn report(path: &Path, pending: &[Pending], stale: &[&Entry], root: &Path) -> Re
     )
 }
 
-/// The review-file entry for a pending item, indented, with the action of the entry it
-/// replaces or `approve`.
-fn paste_ready(item: &Item, previous: Option<&Entry>) -> String {
+/// The review-file entry for a pending item, indented: with the decision another tool
+/// recorded for it, else the action of the entry it replaces, else `approve`.
+fn paste_ready(
+    item: &Item,
+    previous: Option<&Entry>,
+    known: Option<&Known>,
+    root: &Path,
+) -> String {
     let mut doc = toml_edit::DocumentMut::new();
-    let action = previous.map_or(Action::Approve, |p| p.action);
-    add_entry(
-        &mut doc,
-        item,
-        action,
-        previous.and_then(|p| p.file.as_deref()),
-    );
     let mut out = String::new();
+    let (action, file) = match known {
+        Some(k) => {
+            out.push_str(&format!("    # as recorded for {}\n", k.tool));
+            let ours = (k.action == Action::Override)
+                .then(|| tui::override_rel(item).ok())
+                .flatten();
+            if let (Some(theirs), Some(ours)) = (&k.file, &ours) {
+                let theirs = theirs.strip_prefix(root).unwrap_or(theirs);
+                out.push_str(&format!(
+                    "    # copy {} to {ours} in this tool's crate directory\n",
+                    theirs.display()
+                ));
+            }
+            match ours {
+                Some(f) => (Action::Override, Some(f)),
+                None if k.action == Action::Override => (Action::Approve, None),
+                None => (k.action, None),
+            }
+        }
+        None => (
+            previous.map_or(Action::Approve, |p| p.action),
+            previous.and_then(|p| p.file.clone()),
+        ),
+    };
+    add_entry(&mut doc, item, action, file.as_deref());
     if let Some(p) = previous {
         out.push_str(&format!(
             "    # replaces the entry with {} = \"{}\"\n",
@@ -974,7 +1085,14 @@ pub fn review(
     } else {
         Mode::Report
     };
-    let decided = check(&project.review_path(name), items, mode, &project.root)?;
+    let known = known_elsewhere(&project.tools_dir().join("crates"), name);
+    let decided = check(
+        &project.review_path(name),
+        items,
+        mode,
+        &known,
+        &project.root,
+    )?;
     apply(&decided, &crate_dir)
 }
 

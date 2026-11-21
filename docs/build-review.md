@@ -70,7 +70,7 @@ When something isn't recorded and both input and output are a terminal, `add`, `
 
 | Part | What it does |
 | --- | --- |
-| Tree (left) | The pending pieces by kind, and their files. A build script outside its package root shows its directory, which is what its sha256 covers. A proc macro shows its whole crate. `?` undecided, `✓` approve, `⊘` strip, `✎` override. A changed piece shows its previous decision and starts with it. |
+| Tree (left) | The pending pieces by kind, and their files. A build script outside its package root shows its directory, which is what its sha256 covers. A proc macro shows its whole crate. `?` undecided, `✓` approve, `⊘` strip, `✎` override. A changed piece shows its previous decision and starts with it; one [reviewed for another tool](#reviewed-for-another-tool) says so and starts with that tool's decision. |
 | Decision (top right) | Approve, Strip or Override for the selected piece. A proc macro can only be approved. |
 | Editor (right) | The selected file, with vim keys and Rust and TOML colours. Shipped files are view only. |
 | Title bar | How many pieces are approved, overridden, stripped and undecided. |
@@ -103,6 +103,12 @@ A file that needed escaping is marked `⚠` in the tree and gets a warning, and 
 
 Look-alike letters from other scripts (a Cyrillic `а` for a Latin `a`) aren't escaped, since that would hide ordinary non-English text.
 
+### Reviewed for another tool
+
+The same piece (kind, package, path and sha256) is often used by several tools, for example a common dependency's build script. When another tool's `build-review.toml` already records it, the screen starts with that decision and the tree says `approved in <tool>`, `stripped in <tool>` or `overridden in <tool>`. It's still only recorded when you press Done.
+
+For an override, the editor shows that tool's override file. Done copies it to this tool's `overrides/`. If this tool already has a different file there, yours is kept and the piece starts undecided.
+
 ### Done and Cancel
 
 **Done** records the decisions in `build-review.toml` and removes entries that no longer match anything. It first checks that nothing changed on disk while you were reviewing. For a proc macro, that covers every file of its crate. The command then still stops if any piece is undecided, or set to Override without a saved file. Run it again to decide on the rest.
@@ -125,6 +131,8 @@ Outside a terminal (in CI, or with input or output redirected), `add`, `upgrade`
     action = "approve"
 error: 1 piece of build-time code isn't recorded in .project-tools/crates/cargo-nextest/build-review.toml; review it, then rerun with --approve-build
 ```
+
+A piece another tool already records is listed with that tool's decision (`reviewed for <tool>: strip`), and its printed entry uses it. For an override, the entry also says which file to copy.
 
 After reviewing, run the same command with `--approve-build`. New pieces are recorded as `approve`. A changed piece keeps its action and file, and its entry is updated in place, so comments next to it stay. Entries that no longer match anything are removed, for example after you narrow `targets`. Without the flag they're only reported. `install --approve-build` reviews even when the tool is up to date.
 
