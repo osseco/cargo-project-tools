@@ -773,6 +773,9 @@ fn audit(project: &Project, config: &Config, args: AuditArgs) -> Result<ExitCode
 
 /// Audit every selected tool's lock first, so nothing is built when one of them fails.
 fn install(project: &Project, config: &Config, args: &InstallArgs) -> Result<()> {
+    if args.check {
+        return check_install(project, config, args);
+    }
     let tools = config.select(&args.names)?;
     let reloaded;
     let config = if check_targets(project, config, &tools, &args.build, args.approve_target)? {
@@ -802,11 +805,62 @@ fn install(project: &Project, config: &Config, args: &InstallArgs) -> Result<()>
             install::Options {
                 force: args.force,
                 approve_build: args.approve_build,
+                check: false,
                 checksums: install::Checksums::Write,
                 targets: config.targets_for(tool),
             },
         )?;
     }
+    Ok(())
+}
+
+/// `install --check`: the targets, the audit and each tool's build review, as `install`
+/// checks them, without building or recording anything. Keeps going after a failure, so
+/// one run reports everything.
+fn check_install(project: &Project, config: &Config, args: &InstallArgs) -> Result<()> {
+    let tools = config.select(&args.names)?;
+    let mut failed: Vec<String> = Vec::new();
+    if let Err(e) = check_targets(project, config, &tools, &args.build, false) {
+        eprintln!("error: {e:#}");
+        failed.push("targets".to_string());
+    }
+    if !args.no_audit
+        && let Err(e) = audit_gate(
+            project,
+            config,
+            &tools,
+            args.build.offline,
+            args.deny_warnings,
+        )
+    {
+        eprintln!("error: {e:#}");
+        failed.push("audit".to_string());
+    }
+    for (name, tool) in &tools {
+        let build = config.build.merged(tool.build.as_ref());
+        let checked = install::install(
+            project,
+            name,
+            tool,
+            &build,
+            &args.build,
+            install::Options {
+                force: false,
+                approve_build: false,
+                check: true,
+                checksums: install::Checksums::Write,
+                targets: config.targets_for(tool),
+            },
+        );
+        if let Err(e) = checked {
+            eprintln!("error: {e:#}");
+            failed.push(name.to_string());
+        }
+    }
+    if !failed.is_empty() {
+        bail!("check failed ({}); nothing was built", failed.join(", "));
+    }
+    println!("All checks passed; nothing was built");
     Ok(())
 }
 
@@ -902,6 +956,7 @@ fn verify(project: &Project, config: &Config, args: &VerifyArgs) -> Result<ExitC
                 install::Options {
                     force: true,
                     approve_build: false,
+                    check: false,
                     checksums: install::Checksums::Expect,
                     targets: config.targets_for(tool),
                 },

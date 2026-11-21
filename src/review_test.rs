@@ -767,6 +767,40 @@ fn collect_finds_build_time_code_in_vendored_sources() {
     );
 }
 
+#[test]
+fn check_only_records_nothing() {
+    let f = Fixture::new();
+    let selection = || crate::graph::Selection {
+        features: &[],
+        targets: None,
+    };
+    let check = || {
+        check_only(
+            &f.project,
+            "tool",
+            selection(),
+            &f.checkout,
+            &f.vendored,
+            true,
+        )
+    };
+    let err = check().unwrap_err().to_string();
+    assert!(err.contains("4 pieces of build-time code"), "{err}");
+    assert!(!f.project.review_path("tool").exists());
+
+    review(
+        &f.project,
+        "tool",
+        selection(),
+        &f.checkout,
+        &f.vendored,
+        true,
+        true,
+    )
+    .unwrap();
+    check().unwrap();
+}
+
 fn packages(items: &[Item]) -> Vec<&str> {
     items.iter().map(|i| i.package.as_str()).collect()
 }

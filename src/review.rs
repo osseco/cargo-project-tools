@@ -1103,6 +1103,28 @@ pub fn review(
     apply(&decided, &crate_dir)
 }
 
+/// Check the build-time code of the tool in `checkout` against its `build-review.toml`,
+/// without a review screen, and without recording or applying anything.
+pub fn check_only(
+    project: &Project,
+    name: &str,
+    selection: graph::Selection,
+    checkout: &Checkout,
+    vendored: &Vendored,
+    offline: bool,
+) -> Result<()> {
+    let items = collect(name, selection, checkout, vendored, offline)?;
+    let known = known_elsewhere(&project.tools_dir().join("crates"), name);
+    check(
+        &project.review_path(name),
+        items,
+        Mode::Report,
+        &known,
+        &project.root,
+    )?;
+    Ok(())
+}
+
 /// Digest of the review file and its override files, for the install stamp.
 pub fn file_digest(project: &Project, name: &str) -> Result<String> {
     let path = project.review_path(name);

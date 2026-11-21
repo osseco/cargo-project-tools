@@ -43,6 +43,8 @@ pub struct Options<'a> {
     pub force: bool,
     /// Record new or changed build-time code in the review file.
     pub approve_build: bool,
+    /// Stop after checking the build review: build and write nothing.
+    pub check: bool,
     pub checksums: Checksums,
     /// The targets build-time code is reviewed for; all when `None`.
     pub targets: Option<&'a [String]>,
@@ -282,7 +284,11 @@ pub fn install(
         return Ok(());
     }
 
-    println!("Installing {name} {}", tool.version);
+    if opts.check {
+        println!("Checking {name} {}", tool.version);
+    } else {
+        println!("Installing {name} {}", tool.version);
+    }
     let checkout = source::checkout(
         project,
         name,
@@ -302,6 +308,9 @@ pub fn install(
         features: &features,
         targets: opts.targets,
     };
+    if opts.check {
+        return review::check_only(project, name, selection, &checkout, &vendored, args.offline);
+    }
     let changes = review::review(
         project,
         name,

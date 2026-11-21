@@ -189,6 +189,10 @@ pub struct InstallArgs {
     /// Rebuild even if the install stamp is up to date.
     #[arg(long)]
     pub force: bool,
+    /// Check targets, the audit and the build review, then stop: build and record nothing.
+    /// Fails when anything is missing or not reviewed.
+    #[arg(long, conflicts_with_all = ["force", "approve_build", "approve_target"])]
+    pub check: bool,
     /// Record all new or changed build scripts, proc macros and cargo config in
     /// build-review.toml at once. Review them first. In a terminal, without this flag,
     /// a review screen lets you decide on each.

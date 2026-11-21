@@ -126,9 +126,12 @@ A `rust-toolchain` or `rust-toolchain.toml` in the tool's source is removed befo
 
 After building, it writes the sha256 of each of the tool's binaries to `.project-tools/bin/<tool>.sha256`, in `sha256sum` format, for [`verify`](#verify).
 
+With `--check` it checks the same things and then stops: this machine (and `--target`) against [`targets`](configuration.md#targets), the audit, and, for each tool that isn't up to date, its build-time code against `build-review.toml`. That still vendors the dependencies, but it builds nothing, and writes nothing to `project-tools.toml` or `build-review.toml`, and no binaries or install stamps (only the audit's `bin/.stamps/<tool>.built.json`). It reports every problem rather than stopping at the first, and fails if there are any. Use it in CI to fail fast before a long build, or in a job that only audits.
+
 | Option | Meaning |
 | --- | --- |
 | `--force` | Rebuild even when nothing changed |
+| `--check` | Check targets, the audit and the build review; build and record nothing |
 | `--approve-build` | Record new or changed build-time code in [`build-review.toml`](build-review.md); reviews even when the tool is up to date |
 | `--approve-target` | Add this machine, and `--target`, to the tool's [`targets`](configuration.md#targets) when they aren't listed |
 | `--no-audit` | Skip the audit |
