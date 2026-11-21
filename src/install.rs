@@ -97,6 +97,22 @@ pub fn feature_flags(features: &[String], default_features: bool) -> Vec<String>
 }
 
 /// `cargo install` arguments derived from the tool, its build settings and CLI flags.
+/// The build's `--config` values that can change what cargo resolves and builds:
+/// `build.rustflags` (a `--cfg` turns on platform-specific dependencies) and the user's own
+/// `--config`. The build review and the audit resolve with them too, so they see what the
+/// build builds.
+pub fn resolve_config(build: &Build, extra: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(flags) = &build.rustflags {
+        let arr: toml::Value = flags.clone().into();
+        out.extend(["--config".into(), format!("build.rustflags={arr}")]);
+    }
+    for c in extra {
+        out.extend(["--config".into(), c.clone()]);
+    }
+    out
+}
+
 pub fn cargo_args(tool: &Tool, build: &Build, args: &BuildArgs) -> Vec<String> {
     let mut out = feature_args(tool);
     for b in &tool.bins {
@@ -118,16 +134,10 @@ pub fn cargo_args(tool: &Tool, build: &Build, args: &BuildArgs) -> Vec<String> {
             format!("profile.{profile}.{key}={value}"),
         ]);
     }
-    if let Some(flags) = &build.rustflags {
-        let arr: toml::Value = flags.clone().into();
-        out.extend(["--config".into(), format!("build.rustflags={arr}")]);
-    }
     if let Some(t) = args.target.as_ref().or(build.target.as_ref()) {
         out.extend(["--target".into(), t.clone()]);
     }
-    for c in &args.config {
-        out.extend(["--config".into(), c.clone()]);
-    }
+    out.extend(resolve_config(build, &args.config));
     if let Some(j) = &args.jobs {
         out.extend(["--jobs".into(), j.clone()]);
     }
@@ -166,6 +176,7 @@ fn stamp_key(
     lock_text: &str,
     review: &str,
     cargo_args: &[String],
+    targets: Option<&[String]>,
 ) -> String {
     stamp_key_on(
         name,
@@ -173,6 +184,7 @@ fn stamp_key(
         lock_text,
         review,
         cargo_args,
+        targets,
         std::env::consts::OS,
         std::env::consts::ARCH,
     )
@@ -180,12 +192,14 @@ fn stamp_key(
 
 /// The stamp sits in `bin/`, which may be restored from a cache built elsewhere, so the
 /// platform is part of the key.
+#[allow(clippy::too_many_arguments)]
 fn stamp_key_on(
     name: &str,
     tool: &Tool,
     lock_text: &str,
     review: &str,
     cargo_args: &[String],
+    targets: Option<&[String]>,
     os: &str,
     arch: &str,
 ) -> String {
@@ -200,6 +214,8 @@ fn stamp_key_on(
         tool.branch.clone().unwrap_or_default(),
         registry_hash(lock_text.as_bytes()),
         review.to_string(),
+        // What the review covered: changing it must review again.
+        targets.map_or_else(|| "all".to_string(), |t| t.join(",")),
     ];
     let mut skip_next = false;
     for a in cargo_args {
@@ -266,7 +282,14 @@ pub fn install(
 
     let cargo_args = cargo_args(tool, build, args);
     let review_digest = review::file_digest(project, name)?;
-    let key = stamp_key(name, tool, &lock_text, &review_digest, &cargo_args);
+    let key = stamp_key(
+        name,
+        tool,
+        &lock_text,
+        &review_digest,
+        &cargo_args,
+        opts.targets,
+    );
     let target_dir = project.target_dir(name);
     let stamp_path = project.stamp_path(name);
     // Approving reviews now, even when the binaries are current.
@@ -305,9 +328,11 @@ pub fn install(
     checkout.put_lock(&lock_path)?;
     let vendored = vendor::vendor(project, name, &checkout, args.offline, &[])?;
     let features = feature_args(tool);
+    let config = resolve_config(build, &args.config);
     let selection = graph::Selection {
         features: &features,
         targets: opts.targets,
+        config: &config,
     };
     if opts.check {
         return review::check_only(project, name, selection, &checkout, &vendored, args.offline);
@@ -330,6 +355,7 @@ pub fn install(
         &lock_text,
         &review::file_digest(project, name)?,
         &cargo_args,
+        opts.targets,
     );
 
     // The tracking key contains the source path, so binaries from an earlier install are

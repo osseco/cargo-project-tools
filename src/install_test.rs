@@ -51,27 +51,63 @@ fn stamp_ignores_noise_flags() {
     );
     let c = cargo_args(&tool(), &build, &install_args(&["--debug"]));
     assert_eq!(
-        stamp_key("t", &tool(), "lock", "", &a),
-        stamp_key("t", &tool(), "lock", "", &b)
+        stamp_key("t", &tool(), "lock", "", &a, None),
+        stamp_key("t", &tool(), "lock", "", &b, None)
     );
     assert_ne!(
-        stamp_key("t", &tool(), "lock", "", &a),
-        stamp_key("t", &tool(), "lock", "", &c)
+        stamp_key("t", &tool(), "lock", "", &a, None),
+        stamp_key("t", &tool(), "lock", "", &c, None)
     );
     assert_ne!(
-        stamp_key("t", &tool(), "lock", "", &a),
-        stamp_key("t", &tool(), "lock2", "", &a)
+        stamp_key("t", &tool(), "lock", "", &a, None),
+        stamp_key("t", &tool(), "lock2", "", &a, None)
     );
     assert_ne!(
-        stamp_key("t", &tool(), "lock", "", &a),
-        stamp_key("t", &tool(), "lock", "review", &a)
+        stamp_key("t", &tool(), "lock", "", &a, None),
+        stamp_key("t", &tool(), "lock", "review", &a, None)
     );
 }
 
 #[test]
 fn stamp_depends_on_platform() {
     let args = cargo_args(&tool(), &Build::default(), &install_args(&[]));
-    let key = |os, arch| stamp_key_on("t", &tool(), "lock", "", &args, os, arch);
+    let key = |os, arch| stamp_key_on("t", &tool(), "lock", "", &args, None, os, arch);
     assert_ne!(key("macos", "x86_64"), key("macos", "aarch64"));
     assert_ne!(key("linux", "x86_64"), key("macos", "x86_64"));
+}
+
+#[test]
+fn the_review_resolves_with_the_builds_flags_and_config() {
+    let build: Build = toml::from_str(
+        "profile = \"release\"\nrustflags = [\"--cfg\", \"tokio_unstable\"]\n[profile-settings]\nopt-level = \"z\"\n",
+    )
+    .unwrap();
+    let resolve = resolve_config(&build, &["net.offline=true".to_string()]);
+    assert_eq!(
+        resolve,
+        [
+            "--config",
+            "build.rustflags=[\"--cfg\", \"tokio_unstable\"]",
+            "--config",
+            "net.offline=true",
+        ]
+    );
+    // And the build passes the same.
+    let args = cargo_args(
+        &tool(),
+        &build,
+        &install_args(&["--config", "net.offline=true"]),
+    )
+    .join(" ");
+    assert!(args.contains(&resolve.join(" ")), "{args}");
+}
+
+#[test]
+fn stamp_depends_on_targets() {
+    let args = cargo_args(&tool(), &Build::default(), &install_args(&[]));
+    let linux = ["x86_64-unknown-linux-gnu".to_string()];
+    let both = [linux[0].clone(), "aarch64-apple-darwin".to_string()];
+    let key = |t: Option<&[String]>| stamp_key("t", &tool(), "lock", "", &args, t);
+    assert_ne!(key(Some(&linux)), key(Some(&both)));
+    assert_ne!(key(Some(&linux)), key(None));
 }

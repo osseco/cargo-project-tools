@@ -50,6 +50,8 @@ The build directories are only restored when the bin cache isn't an exact hit, b
 
 `install` keeps a stamp (`bin/.stamps/<tool>.json`) and a `<tool>.sha256` for every tool in `.project-tools/bin`. The stamp includes the OS and architecture, so a bin cache restored on the wrong platform is rebuilt rather than used. A job that doesn't want to install can check restored binaries with [`cargo project-tools verify`](commands.md#verify), or with `sha256sum -c *.sha256` inside `bin`, but then the locks aren't audited.
 
+A restored bin cache vouches for itself: the stamp and checksums that let `install` skip a tool come from the same cache. GitHub only lets a branch restore caches written by itself or by the default branch, so keep writing the caches only from runs on the default branch that you trust.
+
 ## Audit the locks
 
 Use a separate job that installs cargo-project-tools and runs `audit`. It needs no other tools and builds nothing. To find out which dependencies a tool builds, cargo downloads them once; the answer is kept in `.project-tools/bin/.stamps`, so caching `.project-tools/bin` as above saves those downloads on later runs. Caching `.project-tools/advisory-db` is optional: a cached copy is revalidated with its ETag, so an unchanged database isn't downloaded again.

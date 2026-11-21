@@ -374,6 +374,19 @@ fn pulled_by(pkg_dir: &Path, script: &Path) -> Result<Pulled> {
     Ok(pulled)
 }
 
+/// A key in a shipped cargo config that makes cargo build something other than what was
+/// reviewed: other sources (`[source]`, `[patch]`, `paths`) or another target.
+fn changes_what_is_built(doc: &toml::Table) -> Option<&'static str> {
+    for key in ["source", "patch", "paths"] {
+        if doc.contains_key(key) {
+            return Some(key);
+        }
+    }
+    doc.get("build")
+        .and_then(|b| b.get("target"))
+        .map(|_| "build.target")
+}
+
 /// The crate a package comes from: its checksum for a registry package, its commit for a git
 /// one, nothing for a package of the checkout. `checksums` holds registry packages only.
 fn crate_pin(
@@ -471,6 +484,12 @@ fn shipped_configs(checkout: &Checkout) -> Result<Vec<Item>> {
                     path.display()
                 );
             }
+            if let Some(key) = changes_what_is_built(&doc) {
+                bail!(
+                    "{} sets `{key}`, which changes what's built behind the review; refusing it",
+                    path.display()
+                );
+            }
             items.push(Item {
                 kind: Kind::CargoConfig,
                 package: String::new(),
@@ -531,6 +550,7 @@ pub fn collect(
         "--manifest-path",
     ])
     .arg(&manifest)
+    .args(selection.config)
     .args(&vendored.config_args);
     if offline {
         cmd.arg("--offline");

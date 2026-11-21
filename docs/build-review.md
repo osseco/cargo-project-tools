@@ -10,9 +10,9 @@ Building a tool runs code before the tool itself ever runs: build scripts and pr
 | `proc-macro` | Every proc-macro crate it builds | The crate checksum from `Cargo.lock`; for a git package its commit |
 | `cargo-config` | `.cargo/config.toml` and `.cargo/config` in the tool's source, from the package directory up to the root of the checkout | sha256 of the file |
 
-Only what the tool builds with its [`features` and `default-features`](configuration.md#toolname) counts, for the [`targets`](configuration.md#targets) you chose, so one review holds on each of them. Without `targets` that's every target, including Windows-only crates when you only build on Linux. Installing on a machine that isn't listed needs `--approve-target`, and then usually `--approve-build` for what that target adds.
+Only what the tool builds with its [`features` and `default-features`](configuration.md#toolname) counts, for the [`targets`](configuration.md#targets) you chose, so one review holds on each of them. Without `targets` that's every target, including Windows-only crates when you only build on Linux. Installing on a machine that isn't listed needs `--approve-target`, and then usually `--approve-build` for what that target adds. What's built is worked out with the build's own `rustflags` and `--config`, since a `--cfg` can turn on platform-specific dependencies.
 
-Cargo never reads config from inside dependencies, and a config with `include`, or one that is a link, is refused. A `.cargo` between the checkout and the project root (in `.project-tools/targets/<tool>`, `.project-tools/targets` or `.project-tools`) is refused too: cargo would read it, and nobody reviewed it. A shipped `rust-toolchain` file is always removed instead.
+Cargo never reads config from inside dependencies, and a config with `include`, or one that is a link, is refused. So is a config that sets `[source]`, `[patch]`, `paths` or `build.target`, which would build something other than what was reviewed. A `.cargo` between the checkout and the project root (in `.project-tools/targets/<tool>`, `.project-tools/targets` or `.project-tools`) is refused too: cargo would read it, and nobody reviewed it. A shipped `rust-toolchain` file is always removed instead.
 
 A package whose directory leads outside the tool's checkout and vendored sources, through a link or `..`, is refused, so an override or strip never writes anywhere else.
 
@@ -157,4 +157,8 @@ To decide piece by piece, copy the printed entries into the file, set each `acti
 
 ## Limits
 
-A build script's files are found by reading its source, not by compiling it. A file it reads at run time (`std::fs::read`, say) isn't part of its sha256, but the crate as a whole is still checked against the lock.
+A build script's files are found by reading its source, not by compiling it. A file it reads at run time (`std::fs::read`, say) isn't part of its sha256, but its entry names the crate's checksum or commit, so any change to the crate comes up again.
+
+The libraries that build-time code runs aren't reviewed yet: a build script's build-dependencies (`cc`, `autocfg`, …) and a proc macro's own dependencies (`syn`, `quote`, …). They're checked against the lock and audited like any dependency, but a new version of one doesn't come up for review.
+
+On a nightly toolchain, a manifest can use `cargo-features` to run code without a build script (a custom codegen backend, say). That isn't detected.

@@ -755,6 +755,7 @@ impl Fixture {
         let selection = crate::graph::Selection {
             features: &[],
             targets,
+            config: &[],
         };
         collect("tool", selection, &self.checkout, &self.vendored, true).unwrap()
     }
@@ -817,6 +818,7 @@ fn check_only_records_nothing() {
     let selection = || crate::graph::Selection {
         features: &[],
         targets: None,
+        config: &[],
     };
     let check = || {
         check_only(
@@ -938,6 +940,7 @@ fn linked_build_scripts_are_refused() {
     let selection = crate::graph::Selection {
         features: &[],
         targets: None,
+        config: &[],
     };
     let err = collect("tool", selection, &f.checkout, &f.vendored, true)
         .unwrap_err()
@@ -1141,4 +1144,27 @@ fn an_entry_for_another_crate_comes_up_as_changed() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn config_that_changes_what_is_built_is_refused() {
+    for (text, key) in [
+        ("[source.crates-io]\nreplace-with = \"x\"\n", "source"),
+        (
+            "[patch.crates-io]\nserde = { path = \"../serde\" }\n",
+            "patch",
+        ),
+        ("paths = [\"third_party/serde\"]\n", "paths"),
+        (
+            "[build]\ntarget = \"x86_64-pc-windows-gnu\"\n",
+            "build.target",
+        ),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let checkout = checkout_at(tmp.path());
+        fs::create_dir_all(checkout.package_dir.join(".cargo")).unwrap();
+        fs::write(checkout.package_dir.join(".cargo/config.toml"), text).unwrap();
+        let err = shipped_configs(&checkout).unwrap_err().to_string();
+        assert!(err.contains(&format!("`{key}`")), "{err}");
+    }
 }

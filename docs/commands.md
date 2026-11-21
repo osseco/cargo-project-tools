@@ -126,7 +126,7 @@ cargo project-tools install
 cargo project-tools install cargo-nextest --force
 ```
 
-First it [audits](#audit) the lock of every selected tool. If any of them has a vulnerability that isn't ignored, nothing is built. Then it builds each tool with `cargo install --path … --locked` and installs it into `.project-tools/bin`. A tool whose version, lock and build settings haven't changed since the last install, and whose binaries still match their checksums, is skipped. What it was built from is recorded in `.project-tools/bin/.stamps`, so restoring `.project-tools/bin` alone is enough to skip it.
+First it [audits](#audit) the lock of every selected tool. If any of them has a vulnerability that isn't ignored, nothing is built. Then it builds each tool with `cargo install --path … --locked` and installs it into `.project-tools/bin`. A tool whose version, lock, build settings and targets haven't changed since the last install, and whose binaries still match their checksums, is skipped. `CARGO_BUILD_TARGET` and `--config build.target=…` are refused, because only `--target` and `[build].target` are checked against the tool's targets. What it was built from is recorded in `.project-tools/bin/.stamps`, so restoring `.project-tools/bin` alone is enough to skip it.
 
 The tool's dependencies are vendored first with `cargo vendor --locked` into `.project-tools/targets/<tool>/vendor`, and the build reads them from there instead of cargo's shared caches. Cargo checks each one against the lock, and nothing is compiled while vendoring. Then every build script, proc macro and cargo config the build would use must be in the tool's [`build-review.toml`](build-review.md), or nothing is built; overrides and strips from that file are applied to the vendored copies.
 
