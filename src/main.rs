@@ -326,8 +326,8 @@ fn origin_of(req: Option<&str>, source: &cli::SourceArgs) -> Result<Origin> {
 }
 
 /// `inspect`: a configured tool from its own lock and settings, or a crate that isn't added
-/// yet from the lock `add` would start with. Checks out under `targets/<tool>`, and writes
-/// nothing else.
+/// yet from the lock `add` would start with. Checks out into a temporary directory, never the
+/// one `install` builds from, and records nothing.
 fn inspect(project: &Project, config: &Config, args: InspectArgs) -> Result<()> {
     let (name, req) = split_spec(&args.spec);
     config::validate_tool_name(name)?;
@@ -340,7 +340,7 @@ fn inspect(project: &Project, config: &Config, args: InspectArgs) -> Result<()> 
             let ours = lock::load(&project.lock_path(name))?;
             lock::check_root(&ours, name, &tool.version)?;
             let origin = Origin::of(tool);
-            let checkout = source::checkout(project, name, &origin, review_dest(project, name))?;
+            let checkout = source::checkout(project, name, &origin, Dest::Temp)?;
             checkout.put_lock(&project.lock_path(name))?;
             let (features, default_features) =
                 if args.features.is_empty() && !args.no_default_features {
@@ -361,7 +361,7 @@ fn inspect(project: &Project, config: &Config, args: InspectArgs) -> Result<()> 
                 say!("note: {name} is configured; inspecting the given version or source instead");
             }
             let origin = origin_of(req, &args.source)?;
-            let checkout = source::checkout(project, name, &origin, review_dest(project, name))?;
+            let checkout = source::checkout(project, name, &origin, Dest::Temp)?;
             let (lock_text, _) =
                 lock::shipped_or_generated(&checkout.manifest_path(), &checkout.lock_path(), &[])?;
             lock::check_root(&lock::parse(&lock_text)?, name, &checkout.version)?;

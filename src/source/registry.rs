@@ -210,6 +210,14 @@ fn inner_path(path: &Path, prefix: &str) -> Result<Option<PathBuf>> {
     {
         bail!("unsafe path in archive: {}", path.display());
     }
+    // A `.git` in the source can hold config that makes git run commands. `cargo package`
+    // never ships one. Any case, for case-insensitive file systems.
+    if rest
+        .components()
+        .any(|c| c.as_os_str().eq_ignore_ascii_case(".git"))
+    {
+        bail!("crate archive contains .git: {}", path.display());
+    }
     Ok((!rest.as_os_str().is_empty()).then_some(rest))
 }
 
