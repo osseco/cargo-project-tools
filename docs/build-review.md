@@ -112,7 +112,7 @@ The screen escapes anything that could hide, reorder or disguise text. Control c
 - spaces other than the plain one, and line and paragraph separators
 - private-use characters and noncharacters
 
-This also covers file names and link targets in the tree.
+This also covers file names and link targets in the tree, and everything printed outside the screen: errors, the listing of what's pending, `inspect`. Names and paths in messages and errors are printed on one line, with line ends shown as `\n`, so they can't add lines of their own (which a CI runner might read as commands). An override path, or a build script's path, with control characters in it is refused.
 
 A file that needed escaping is marked `⚠` in the tree and gets a warning, and it can't be edited on the screen, so an override saved there only ever holds text you saw. Choosing Override for such a file writes a copy of the original with every line commented out under an `UNREVIEWED COPY` header, for you to edit in your own editor. An override already in place is kept. `install` refuses an override while that header is still there.
 

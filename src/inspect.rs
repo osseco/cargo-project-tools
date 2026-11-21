@@ -9,6 +9,7 @@ use semver::Version;
 use serde::Serialize;
 
 use crate::output::say;
+use crate::sanitize::shown_line;
 use crate::setup::Setup;
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -156,6 +157,32 @@ fn change(feature: &str, enable: bool, from: &State, to: &State) -> Change {
     }
 }
 
+/// The features `start` turns on, itself included, following what each enables. Only a
+/// value that names a feature counts: `dep:x` and `x?/y` turn on no feature of the tool,
+/// `x/y` turns on feature `x` when there is one.
+fn implied<'a>(
+    features: &BTreeMap<String, Vec<String>>,
+    start: impl Iterator<Item = &'a str>,
+) -> BTreeSet<String> {
+    let mut on = BTreeSet::new();
+    let mut todo: Vec<String> = start.map(str::to_string).collect();
+    while let Some(f) = todo.pop() {
+        if !features.contains_key(&f) || !on.insert(f.clone()) {
+            continue;
+        }
+        for value in &features[&f] {
+            let name = match value.split_once('/') {
+                _ if value.starts_with("dep:") => continue,
+                Some((dep, _)) if dep.ends_with('?') => continue,
+                Some((dep, _)) => dep,
+                None => value.as_str(),
+            };
+            todo.push(name.to_string());
+        }
+    }
+    on
+}
+
 /// Inspect the setup's current features, then try each other feature, and the defaults
 /// off, against them. The setup ends with the features it started with. `recorded`: the
 /// kinds and packages in the tool's `build-review.toml`.
@@ -165,22 +192,17 @@ pub fn inspect(setup: &mut Setup, recorded: &BTreeSet<(String, String)>) -> Resu
     let defaults = setup.default_features;
     let base = state(setup, &code, recorded);
 
-    // With the defaults on, the features they list add nothing.
-    let by_default: BTreeSet<&str> = if defaults {
-        setup
-            .features
-            .get("default")
-            .into_iter()
-            .flatten()
-            .map(String::as_str)
-            .collect()
-    } else {
-        BTreeSet::new()
-    };
+    // A feature the selection already turns on, directly or through others, adds nothing:
+    // don't spend a `cargo tree` on it.
+    let start = selected
+        .iter()
+        .map(String::as_str)
+        .chain(defaults.then_some("default"));
+    let on = implied(&setup.features, start);
     let candidates: Vec<String> = setup
         .features
         .keys()
-        .filter(|f| *f != "default" && !selected.contains(*f) && !by_default.contains(f.as_str()))
+        .filter(|f| *f != "default" && !on.contains(*f))
         .cloned()
         .collect();
     let mut changes = Vec::new();
@@ -243,11 +265,19 @@ fn finding_line(f: &Finding) -> String {
     )
 }
 
+/// `say!` with the line made safe to show: feature names, package names and advisory
+/// titles come from manifests, locks and the advisory database.
+macro_rules! safe {
+    ($($arg:tt)*) => {
+        say!("{}", shown_line(&format!($($arg)*)))
+    };
+}
+
 /// The human report.
 pub fn print(i: &Inspection) {
     let defaults = if i.default_features { "on" } else { "off" };
-    say!("{} {}", i.tool, i.tool_version);
-    say!(
+    safe!("{} {}", i.tool, i.tool_version);
+    safe!(
         "  default features {defaults}; selected: {}",
         if i.selected.is_empty() {
             "none".to_string()
@@ -256,11 +286,11 @@ pub fn print(i: &Inspection) {
         }
     );
     if let Some(t) = &i.targets {
-        say!("  targets: {}", t.join(", "));
+        safe!("  targets: {}", t.join(", "));
     }
-    say!("features:");
+    safe!("features:");
     for (name, enables) in &i.features {
-        say!("  {name} = [{}]", enables.join(", "));
+        safe!("  {name} = [{}]", enables.join(", "));
     }
     let open = |kind: bool| {
         i.findings
@@ -269,7 +299,7 @@ pub fn print(i: &Inspection) {
             .count()
     };
     let unrecorded = i.build_time.iter().filter(|b| !b.recorded).count();
-    say!(
+    safe!(
         "builds {} packages: {} vulnerabilities, {} warnings, {} build scripts, {} proc macros ({unrecorded} not in build-review.toml)",
         i.packages.len(),
         open(true),
@@ -278,20 +308,20 @@ pub fn print(i: &Inspection) {
         count(&i.build_time, "proc-macro"),
     );
     if !i.findings.is_empty() {
-        say!("advisories:");
+        safe!("advisories:");
         for f in &i.findings {
-            say!("  {}", finding_line(f));
+            safe!("  {}", finding_line(f));
         }
     }
     if !i.build_time.is_empty() {
-        say!("build-time code:");
+        safe!("build-time code:");
         for b in &i.build_time {
             let note = if b.recorded { "" } else { "  (not recorded)" };
-            say!("  {:<12} {}@{}{note}", b.kind, b.package, b.version);
+            safe!("  {:<12} {}@{}{note}", b.kind, b.package, b.version);
         }
     }
     if !i.feature_changes.is_empty() {
-        say!("feature changes:");
+        safe!("feature changes:");
     }
     for c in &i.feature_changes {
         let (sign, verb) = if c.enable {
@@ -300,10 +330,10 @@ pub fn print(i: &Inspection) {
             ("-", "removes")
         };
         if c.packages.is_empty() {
-            say!("  {sign}{}: {verb} nothing", c.feature);
+            safe!("  {sign}{}: {verb} nothing", c.feature);
             continue;
         }
-        say!(
+        safe!(
             "  {sign}{}: {verb} {} packages, {} build scripts, {} proc macros, {} advisories",
             c.feature,
             c.packages.len(),
@@ -316,9 +346,9 @@ pub fn print(i: &Inspection) {
             .iter()
             .map(|p| format!("{}@{}", p.name, p.version))
             .collect();
-        say!("      {}", names.join(" "));
+        safe!("      {}", names.join(" "));
         for f in &c.findings {
-            say!("      {}", finding_line(f));
+            safe!("      {}", finding_line(f));
         }
     }
 }

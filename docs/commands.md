@@ -241,7 +241,7 @@ It reports:
 - the tool's features and what each enables;
 - the packages built with the chosen features, and their advisories (ones in the tool's `audit-ignore.toml` are marked ignored);
 - the build scripts and proc macros among them, and whether the tool's `build-review.toml` has an entry for each;
-- for each feature that isn't on, what turning it on adds: packages, advisories, build scripts and proc macros. With the default features on, it also shows what `default-features = false` removes; with them off, what turning them on adds.
+- for each feature that isn't on, not even through the ones selected, what turning it on adds: packages, advisories, build scripts and proc macros. With the default features on, it also shows what `default-features = false` removes; with them off, what turning them on adds.
 
 Each feature costs one `cargo tree` run. Like `audit`, it lets cargo download the dependencies to read their manifests, and compiles nothing.
 
@@ -288,7 +288,7 @@ Other fields:
 {"version":1,"kind":"summary","ok":false,"vulnerabilities":0,"warnings":0,"pending_reviews":0,"missing_targets":1}
 ```
 
-JSON escapes control characters, but nothing else is changed. Check a value before you use it in a command or a CI annotation, above all one that comes from someone else:
+Control characters, DEL, C1 controls, and characters that hide or reorder text (bidi controls, zero-width and other invisible characters, line and paragraph separators) are written as `\uXXXX` escapes, so `cat`ing the records can't drive a terminal. The values themselves aren't changed. Check a value before you use it in a command or a CI annotation, above all one that comes from someone else:
 
 - From cargo-project-tools: `kind`, `version`, `tool` and `file`. A tool name is a crate name, checked when the tool is added, and `file` is always one of the paths above, built from it.
 - From the project's own files: `targets` in `target-missing`, and `id` and `expires` in `ignore-unused` and `ignore-expired`.

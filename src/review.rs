@@ -12,7 +12,7 @@ use crate::lock;
 use crate::output::{self, Record, say};
 use crate::process;
 use crate::project::Project;
-use crate::sanitize::shown;
+use crate::sanitize::{shown, shown_line};
 use crate::screen;
 use crate::source::registry::sha256_hex;
 use crate::source::{self, Checkout};
@@ -276,12 +276,13 @@ fn entry(kind: Kind, r: RawEntry) -> Result<Entry> {
 fn safe_relative(p: &str) -> Result<()> {
     let path = Path::new(p);
     if p.is_empty()
+        || p.chars().any(char::is_control)
         || path.is_absolute()
         || path
             .components()
             .any(|c| !matches!(c, Component::Normal(_)))
     {
-        bail!("unsafe override path `{p}`");
+        bail!("unsafe override path `{}`", shown_line(p));
     }
     Ok(())
 }
@@ -601,6 +602,14 @@ pub fn collect(
                 let rel = t.src_path.strip_prefix(&pkg_dir).with_context(|| {
                     format!("build script of {} is outside its package", pkg.name)
                 })?;
+                // The path goes into review files, comments and the screen as one line.
+                if rel.to_string_lossy().chars().any(char::is_control) {
+                    bail!(
+                        "build script of {} has control characters in its path: {}",
+                        pkg.name,
+                        shown_line(&rel.to_string_lossy())
+                    );
+                }
                 // An override or strip writes these; through a link that would be elsewhere.
                 refuse_link(&t.src_path)?;
                 refuse_link(&pkg.manifest_path)?;
@@ -959,6 +968,13 @@ fn report(
         rel(path)
     );
     for (item, previous) in pending {
+        // Never an absolute path in a record: what's built lives under the project.
+        if !item.location.starts_with(root) {
+            bail!(
+                "{} is outside the project",
+                shown_line(&item.location.to_string_lossy())
+            );
+        }
         let found = known_for(known, item);
         let text = paste_ready(item, *previous, found, root);
         eprint!("{}", shown(&text));
@@ -1045,15 +1061,17 @@ fn paste_ready(
     let mut out = String::new();
     let (action, file) = match known {
         Some(k) => {
-            out.push_str(&format!("    # as recorded for {}\n", k.tool));
+            out.push_str(&format!("    # as recorded for {}\n", shown_line(&k.tool)));
             let ours = (k.action == Action::Override)
                 .then(|| tui::override_rel(item).ok())
                 .flatten();
             if let (Some(theirs), Some(ours)) = (&k.file, &ours) {
                 let theirs = theirs.strip_prefix(root).unwrap_or(theirs);
+                // One comment line each, whatever the paths hold.
                 out.push_str(&format!(
-                    "    # copy {} to {ours} in this tool's crate directory\n",
-                    theirs.display()
+                    "    # copy {} to {} in this tool's crate directory\n",
+                    shown_line(&theirs.to_string_lossy()),
+                    shown_line(ours)
                 ));
             }
             match ours {
@@ -1114,14 +1132,18 @@ fn record(path: &Path, decisions: Vec<Decision>, stale: &[&Entry]) -> Result<Vec
         say!(
             "  recorded {:<12} {} ({})",
             item.kind,
-            item.describe(),
+            shown_line(&item.describe()),
             action.as_str()
         );
         decided.push(Decided { item, action, file });
     }
     for e in stale.iter().filter(|e| !reused.contains(e)) {
         remove_entry(&mut doc, e);
-        say!("  removed unused [[{}]] {}{}", e.kind, e.package, e.path);
+        say!(
+            "  removed unused [[{}]] {}",
+            e.kind,
+            shown_line(&format!("{}{}", e.package, e.path))
+        );
     }
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;

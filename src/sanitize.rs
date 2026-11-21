@@ -6,7 +6,7 @@
 /// variation selectors and other characters that draw nothing, spaces other than U+0020,
 /// line and paragraph separators, private-use characters and noncharacters. Control
 /// characters are handled before this.
-fn hidden(c: char) -> bool {
+pub fn hidden(c: char) -> bool {
     let code = c as u32;
     matches!(code,
         // Format characters (general category Cf).
@@ -90,6 +90,13 @@ pub fn sanitize(text: &str) -> (String, usize) {
 /// `text` made safe to draw.
 pub fn shown(text: &str) -> String {
     sanitize(text).0
+}
+
+/// `text` made safe to draw on one line: like `shown`, and line ends and tabs become `\n`
+/// and `\t`, so a name or path can't start a line of its own (one a CI runner might read
+/// as a command, say).
+pub fn shown_line(text: &str) -> String {
+    shown(text).replace('\n', "\\n").replace('\t', "\\t")
 }
 
 #[cfg(test)]

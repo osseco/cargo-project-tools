@@ -14,7 +14,7 @@ use super::text::{self, Content, commented_copy, override_rel, read_content};
 use super::tree::{self, Node, NodeKind};
 use crate::highlight;
 use crate::review::{Action, Item, Kind, Known, Pending};
-use crate::sanitize::shown;
+use crate::sanitize::{shown, shown_line};
 use crate::source::registry::sha256_hex;
 
 /// The file in the editor.
@@ -377,12 +377,13 @@ impl App {
         })
     }
 
+    /// Messages quote paths, names and cargo's errors: drawn safe, on one line.
     pub(super) fn say(&mut self, text: impl Into<String>) {
-        self.message = Some((text.into(), false));
+        self.message = Some((shown_line(&text.into()), false));
     }
 
     pub(super) fn warn(&mut self, text: impl Into<String>) {
-        self.message = Some((text.into(), true));
+        self.message = Some((shown_line(&text.into()), true));
     }
 
     fn ask(&mut self, ask: Ask) {

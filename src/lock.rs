@@ -119,8 +119,9 @@ pub fn print_diff(changes: &[Change]) {
     if changes.is_empty() {
         say!("  (no changes)");
     }
+    // Package names in a lock aren't checked when it's read.
     for c in changes {
-        say!("{c}");
+        say!("{}", crate::sanitize::shown_line(&c.to_string()));
     }
 }
 

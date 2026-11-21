@@ -47,7 +47,7 @@ fn main() -> ExitCode {
     let code = match &result {
         Ok(code) => *code,
         Err(e) => {
-            eprintln!("error: {e:#}");
+            output::print_error(e);
             ExitCode::FAILURE
         }
     };
@@ -696,11 +696,15 @@ fn move_tool(
             ],
         );
         match ok {
-            Ok(()) => say!("  kept {dep} {to} (new lock has {from})"),
+            Ok(()) => say!(
+                "  kept {} {to} (new lock has {from})",
+                sanitize::shown_line(&dep)
+            ),
             Err(_) => {
                 fs::write(&lock_path, backup)?;
                 say!(
-                    "  dropped {dep} {to}: does not resolve with {name} {}",
+                    "  dropped {} {to}: does not resolve with {name} {}",
+                    sanitize::shown_line(&dep),
                     checkout.version
                 );
             }
@@ -979,7 +983,7 @@ fn check_install(project: &Project, config: &Config, args: &InstallArgs) -> Resu
     let tools = config.select(&args.names)?;
     let mut failed: Vec<String> = Vec::new();
     if let Err(e) = check_targets(project, config, &tools, &args.build, false) {
-        eprintln!("error: {e:#}");
+        output::print_error(&e);
         failed.push("targets".to_string());
     }
     if !args.no_audit
@@ -991,7 +995,7 @@ fn check_install(project: &Project, config: &Config, args: &InstallArgs) -> Resu
             args.deny_warnings,
         )
     {
-        eprintln!("error: {e:#}");
+        output::print_error(&e);
         failed.push("audit".to_string());
     }
     for (name, tool) in &tools {
@@ -1011,7 +1015,7 @@ fn check_install(project: &Project, config: &Config, args: &InstallArgs) -> Resu
             },
         );
         if let Err(e) = checked {
-            eprintln!("error: {e:#}");
+            output::print_error(&e);
             failed.push(name.to_string());
         }
     }
@@ -1140,7 +1144,7 @@ fn verify(project: &Project, config: &Config, args: &VerifyArgs) -> Result<ExitC
                     say!("{name}: repaired");
                     failed.retain(|f| *f != name);
                 }
-                Err(e) => eprintln!("error: {e:#}"),
+                Err(e) => output::print_error(&e),
             }
         }
     }

@@ -15,6 +15,13 @@ fn script(dir: &Path, package: &str, hash: &str) -> Item {
     }
 }
 
+/// `item` placed under `dir`, as everything that's built is under the project.
+fn under(mut item: Item, dir: &Path) -> Item {
+    item.location = dir.join(&item.package);
+    item.base = item.location.clone();
+    item
+}
+
 fn proc_macro(package: &str, checksum: &str) -> Item {
     Item {
         kind: Kind::ProcMacro,
@@ -96,7 +103,7 @@ fn new_code_halts_until_approved() {
     let items = || {
         vec![
             script(tmp.path(), "libc", "aa"),
-            proc_macro("serde_derive", "cc"),
+            under(proc_macro("serde_derive", "cc"), tmp.path()),
         ]
     };
 
@@ -299,8 +306,8 @@ fn two_versions_of_a_proc_macro_are_separate_entries() {
     let file = tmp.path().join(FILE);
     let items = || {
         vec![
-            proc_macro("thiserror-impl", "v1"),
-            proc_macro("thiserror-impl", "v2"),
+            under(proc_macro("thiserror-impl", "v1"), tmp.path()),
+            under(proc_macro("thiserror-impl", "v2"), tmp.path()),
         ]
     };
     check(
@@ -1174,4 +1181,45 @@ fn config_that_changes_what_is_built_is_refused() {
         let err = shipped_configs(&checkout).unwrap_err().to_string();
         assert!(err.contains(&format!("`{key}`")), "{err}");
     }
+}
+
+#[test]
+fn another_tools_file_stays_in_its_comment() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ring = script(tmp.path(), "ring", "h");
+    // Written by hand, or by an attacker, past `safe_relative`.
+    let forged = "x\n[[build-script]]\npackage = \"evil\"\npath = \"build.rs\"\nsha256 = \"e\"\naction = \"approve\"\n#";
+    let over = Known {
+        tool: "alpha".into(),
+        action: Action::Override,
+        file: Some(tmp.path().join(forged)),
+    };
+    let text = paste_ready(&ring, None, Some(&over), tmp.path());
+    let entries = parse(&text).unwrap();
+    assert_eq!(entries.len(), 1, "{text}");
+    assert_eq!(entries[0].package, "ring");
+}
+
+#[test]
+fn override_paths_with_control_characters_are_refused() {
+    assert!(safe_relative("overrides/a\nb.rs").is_err());
+    assert!(safe_relative("overrides/a\u{1b}[2J.rs").is_err());
+    safe_relative("overrides/a/build.rs").unwrap();
+}
+
+#[test]
+fn pieces_outside_the_project_are_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("project").join(FILE);
+    let elsewhere = script(tmp.path(), "libc", "aa");
+    let err = check(
+        &file,
+        vec![elsewhere],
+        Mode::Report,
+        &KnownMap::new(),
+        &tmp.path().join("project"),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("outside the project"), "{err}");
 }

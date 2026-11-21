@@ -57,3 +57,11 @@ fn ordinary_text_is_left_alone() {
     let plain = "fn main() {\n\tprintln!(\"åäö 日本 Ωμέγα é 🦀\");\n}\n";
     assert_eq!(sanitize(plain), (plain.to_string(), 0));
 }
+
+#[test]
+fn one_line_text_keeps_to_one_line() {
+    assert_eq!(
+        shown_line("a\n::error::forged\tb\x1b[2J"),
+        "a\\n::error::forged\\tb\\x1b[2J"
+    );
+}
