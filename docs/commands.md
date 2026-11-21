@@ -275,6 +275,7 @@ Other fields:
   - `known` (`tool`, `action`) is a decision another tool records for it.
 - `entry` is the TOML to put in `file`, with the action it would get.
 - In an `advisory`:
+  - `package_version` is the package's version (not `version`, which is the schema's);
   - `type` is `vulnerability`, `unmaintained`, `unsound`, `notice`, `yanked` or `git-source`;
   - `severity` is `error` for a vulnerability and `warning` otherwise. With `--deny-warnings`, warnings fail the run too, and `summary.ok` says so;
   - `fix` is the command to run, when one exists.
@@ -284,7 +285,11 @@ Other fields:
 {"version":1,"kind":"summary","ok":false,"vulnerabilities":0,"warnings":0,"pending_reviews":0,"missing_targets":1}
 ```
 
-Every value comes from locks, sources and advisories you don't control. JSON escapes control characters, but nothing else is changed: check a value before you use it in a command or a CI annotation.
+JSON escapes control characters, but nothing else is changed. Check a value before you use it in a command or a CI annotation, above all one that comes from someone else:
+
+- From cargo-project-tools: `kind`, `version`, `tool` and `file`. A tool name is a crate name, checked when the tool is added, and `file` is always one of the paths above, built from it.
+- From the project's own files: `targets` in `target-missing`, and `id` and `expires` in `ignore-unused` and `ignore-expired`.
+- From the locks, the tools' sources and the advisory database, which you don't control: everything else. That covers `package`, `package_version`, `item` (its `path` and `location` among them), `entry`, an advisory's `id`, `title` and `patched`, `fix`, `message`, and everything in an `inspect` record except `tool`.
 
 ## Managing cargo-project-tools itself
 
