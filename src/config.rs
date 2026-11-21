@@ -310,6 +310,15 @@ impl ConfigEditor {
         }
     }
 
+    /// Remove `keys` from `[tool.<name>]`, where present.
+    pub fn unset_tool(&mut self, name: &str, keys: &[&str]) {
+        if let Some(table) = self.tools().get_mut(name).and_then(|t| t.as_table_mut()) {
+            for k in keys {
+                table.remove(k);
+            }
+        }
+    }
+
     /// Add `triples` to `[tool.<tool>].targets` when given, else to `[settings].targets`.
     pub fn add_targets(&mut self, tool: Option<&str>, triples: &[String]) {
         let table = match tool {

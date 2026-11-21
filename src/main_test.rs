@@ -204,6 +204,18 @@ fn update_flags() {
     };
     assert!(parse(&["update", "t", "--version", "1", "--latest"]).is_err());
     assert!(parse(&["update", "t", "--latest", "serde"]).is_ok());
+    assert!(parse(&["update", "t", "-i"]).is_ok());
+    for clash in [
+        &["--latest"][..],
+        &["--version", "1"],
+        &["serde"],
+        &["--recursive"],
+    ] {
+        let mut args = vec!["update", "t", "-i"];
+        args.extend_from_slice(clash);
+        assert!(parse(&args).is_err(), "{args:?}");
+    }
+    assert!(parse(&["add", "cargo-nextest", "-i", "--no-default-features"]).is_ok());
     // `upgrade` still parses, but isn't listed.
     assert!(parse(&["upgrade", "t"]).is_ok());
     let help = <Cli as clap::CommandFactory>::command()

@@ -123,6 +123,10 @@ pub struct AddArgs {
     /// Binaries to install (default: all).
     #[arg(long = "bin")]
     pub bins: Vec<String>,
+    /// Choose features and dependency versions on a setup screen, with the dependency tree
+    /// and its advisories, before the build review.
+    #[arg(long, short = 'i')]
+    pub interactive: bool,
     /// Record all new or changed build scripts, proc macros and cargo config in
     /// build-review.toml at once. Review them first. In a terminal, without this flag,
     /// a review screen lets you decide on each.
@@ -163,6 +167,14 @@ pub struct UpdateArgs {
     /// branch or tag again.
     #[arg(long)]
     pub latest: bool,
+    /// Change the tool's version, features and dependency versions on a setup screen, with
+    /// the dependency tree and its advisories, before the build review.
+    #[arg(
+        long,
+        short = 'i',
+        conflicts_with_all = ["deps", "precise", "recursive", "version", "latest"]
+    )]
+    pub interactive: bool,
     /// Record all new or changed build scripts, proc macros and cargo config in
     /// build-review.toml at once. Review them first. In a terminal, without this flag,
     /// a review screen lets you decide on each.

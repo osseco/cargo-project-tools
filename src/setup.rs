@@ -433,4 +433,4 @@ fn findings(
 
 #[cfg(test)]
 #[path = "setup_test.rs"]
-mod tests;
+pub(crate) mod tests;

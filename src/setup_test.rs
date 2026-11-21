@@ -26,13 +26,13 @@ fn entry(name: &str, version: &str, yanked: bool) -> IndexEntry {
 
 /// `tool` with an optional `opt` behind its default feature `extra`, and `dep` = "1".
 /// `dep` 1.0.0 has an advisory patched in >= 1.1.0; the lock starts on 1.0.0.
-struct Fixture {
-    _dir: tempfile::TempDir,
-    _registry: Registry,
-    setup: Setup,
+pub(crate) struct Fixture {
+    pub(crate) _dir: tempfile::TempDir,
+    pub(crate) _registry: Registry,
+    pub(crate) setup: Setup,
 }
 
-fn fixture(ignore: AuditIgnore) -> Fixture {
+pub(crate) fn fixture(ignore: AuditIgnore) -> Fixture {
     let registry = Registry::new(&[
         ("dep", "1.0.0"),
         ("dep", "1.1.0"),

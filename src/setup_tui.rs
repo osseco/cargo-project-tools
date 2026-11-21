@@ -1,0 +1,35 @@
+//! The setup screen for `add -i` and `update -i`: the tool's version, its features and the
+//! dependency tree they build, with advisories, so features can be turned off and versions
+//! moved before the build review.
+//!
+//! - `app`: the screen's state and what its actions do.
+//! - `input` and `render`: keys and mouse, and drawing.
+
+use anyhow::Result;
+use ratatui::crossterm::event;
+
+use crate::screen::Terminal;
+use crate::setup::Setup;
+
+mod app;
+mod input;
+mod render;
+
+pub use app::{App, Mover};
+
+/// Show the setup screen. Returns the setup as chosen, or `None` when cancelled.
+pub fn run(setup: Setup, mover: Mover) -> Result<Option<Setup>> {
+    let mut app = App::new(setup, mover);
+    let mut terminal = Terminal::start()?;
+    while app.exit.is_none() {
+        terminal.draw(|f| app.render(f))?;
+        if app.pending.is_some() {
+            // `working…` is on screen; now do the slow part.
+            app.run_pending();
+        } else {
+            app.handle(event::read()?);
+        }
+    }
+    drop(terminal);
+    Ok(app.finish())
+}

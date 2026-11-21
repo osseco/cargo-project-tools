@@ -14,10 +14,9 @@ mod project;
 mod review;
 mod sanitize;
 mod screen;
-// Used by the setup screen, which comes next.
 mod selfinstall;
-#[cfg_attr(not(test), allow(dead_code))]
 mod setup;
+mod setup_tui;
 mod sfw;
 mod source;
 mod targets;
@@ -238,11 +237,40 @@ fn add(project: &Project, config: &Config, args: AddArgs) -> Result<()> {
         lock::Start::Generated => "a generated Cargo.lock (it ships none)",
     };
     lock::check_root(&lock::parse(&lock_text)?, name, &checkout.version)?;
-    let features = install::feature_flags(&args.features, !args.no_default_features);
+    let (checkout, features, default_features, lock_text) = if args.interactive {
+        let mover: setup_tui::Mover = Box::new(|to| {
+            let origin = moved_to(&origin, to);
+            let checkout = source::checkout(project, name, &origin, review_dest(project, name))?;
+            lock::shipped_or_generated(&checkout.manifest_path(), &checkout.lock_path(), &[])?;
+            Ok(checkout)
+        });
+        let start = Start {
+            features: &args.features,
+            default_features: !args.no_default_features,
+            targets: config.settings.targets.as_deref(),
+        };
+        let Some(setup) =
+            interactive_setup(project, config, name, checkout, &origin, start, mover)?
+        else {
+            println!("Cancelled; {name} wasn't added");
+            return Ok(());
+        };
+        let lock_text = fs::read_to_string(setup.lock_path())?;
+        lock::check_root(&lock::parse(&lock_text)?, name, &setup.checkout.version)?;
+        let features: Vec<String> = setup.selected.iter().cloned().collect();
+        (setup.checkout, features, setup.default_features, lock_text)
+    } else {
+        (
+            checkout,
+            args.features.clone(),
+            !args.no_default_features,
+            lock_text,
+        )
+    };
     review_build(
         project,
         name,
-        &features,
+        &install::feature_flags(&features, default_features),
         config.settings.targets.as_deref(),
         &checkout,
         args.approve_build,
@@ -263,10 +291,10 @@ fn add(project: &Project, config: &Config, args: AddArgs) -> Result<()> {
             entries.push(("rev", commit.as_str().into()));
         }
     }
-    if !args.features.is_empty() {
-        entries.push(("features", config::string_array(&args.features)));
+    if !features.is_empty() {
+        entries.push(("features", config::string_array(&features)));
     }
-    if args.no_default_features {
+    if !default_features {
         entries.push(("default-features", false.into()));
     }
     if !args.bins.is_empty() {
@@ -326,6 +354,7 @@ fn upgrade(project: &Project, config: &Config, args: UpgradeArgs) -> Result<()> 
         project,
         config,
         UpdateArgs {
+            interactive: false,
             latest: version.is_none(),
             version,
             name: args.name,
@@ -335,6 +364,146 @@ fn upgrade(project: &Project, config: &Config, args: UpgradeArgs) -> Result<()> 
             approve_build: args.approve_build,
         },
     )
+}
+
+/// Where a tool from `origin` goes for the setup screen's move: that exact version, or for
+/// `None` the newest (a git tool: the head of its branch or tag again).
+fn moved_to(origin: &Origin, to: Option<&semver::Version>) -> Origin {
+    match origin {
+        Origin::Registry { .. } => Origin::Registry {
+            version_req: to.map(|v| format!("={v}")),
+        },
+        Origin::Git { url, reference } => {
+            let mut reference = reference.clone();
+            reference.rev = None;
+            Origin::Git {
+                url: url.clone(),
+                reference,
+            }
+        }
+    }
+}
+
+/// Where the setup screen starts: the features, and the targets the tree is for.
+struct Start<'a> {
+    features: &'a [String],
+    default_features: bool,
+    targets: Option<&'a [String]>,
+}
+
+/// Open the setup screen for `name` in `checkout`. `None` when cancelled.
+fn interactive_setup(
+    project: &Project,
+    config: &Config,
+    name: &str,
+    checkout: source::Checkout,
+    origin: &Origin,
+    start: Start,
+    mover: setup_tui::Mover,
+) -> Result<Option<setup::Setup>> {
+    use std::io::IsTerminal;
+    if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
+        bail!("--interactive needs a terminal");
+    }
+    let (auditor, _) = load_auditor(project, config, advisory_db::Policy::Auto)?;
+    let ignore = AuditIgnore::load(&project.audit_ignore_path(name))?;
+    println!("Resolving what {name} builds…");
+    let setup = setup::Setup::new(
+        name,
+        checkout,
+        matches!(origin, Origin::Git { .. }),
+        start.features.iter().cloned().collect(),
+        start.default_features,
+        start.targets.map(<[String]>::to_vec),
+        auditor,
+        ignore,
+        Vec::new(),
+    )?;
+    setup_tui::run(setup, mover)
+}
+
+/// `update -i`: the setup screen from the tool's current version, features and lock.
+fn update_interactive(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
+    let tool = config.tool(&args.name)?;
+    let name = args.name.as_str();
+    let ours_path = project.lock_path(name);
+    let ours = lock::load(&ours_path)?;
+    lock::check_root(&ours, name, &tool.version)?;
+    let origin = Origin::of(tool);
+    let checkout = source::checkout(project, name, &origin, review_dest(project, name))?;
+    checkout.put_lock(&ours_path)?;
+    let mover: setup_tui::Mover =
+        Box::new(|to| move_tool(project, name, &moved_to(&origin, to), &ours));
+    let start = Start {
+        features: &tool.features,
+        default_features: tool.default_features != Some(false),
+        targets: config.targets_for(tool),
+    };
+    let Some(setup) = interactive_setup(project, config, name, checkout, &origin, start, mover)?
+    else {
+        println!("Cancelled; nothing changed");
+        return Ok(());
+    };
+
+    let updated = lock::load(&setup.lock_path())?;
+    lock::check_root(&updated, name, &setup.checkout.version)?;
+    let changes = lock::diff(&ours, &updated);
+    let features: Vec<String> = setup.selected.iter().cloned().collect();
+    let before: std::collections::BTreeSet<&String> = tool.features.iter().collect();
+    let features_changed = setup
+        .selected
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>()
+        != before
+        || setup.default_features != (tool.default_features != Some(false));
+    let moved = setup.checkout.version != tool.version
+        || setup.checkout.commit.is_some() && setup.checkout.commit != tool.rev;
+    println!("Changes to {name}'s lock:");
+    lock::print_diff(&changes);
+    if changes.is_empty() && !features_changed && !moved {
+        println!("Nothing changed");
+        return Ok(());
+    }
+    review_build(
+        project,
+        name,
+        &setup.feature_args(),
+        config.targets_for(tool),
+        &setup.checkout,
+        args.approve_build,
+    )?;
+    fs::copy(setup.lock_path(), &ours_path)?;
+    let mut editor = ConfigEditor::open(&project.config_path())?;
+    let mut entries: Vec<(&str, toml_edit::Value)> = Vec::new();
+    if moved {
+        entries.push(("version", setup.checkout.version.as_str().into()));
+        if let Some(commit) = &setup.checkout.commit {
+            entries.push(("rev", commit.as_str().into()));
+        }
+    }
+    if features_changed {
+        let mut unset = Vec::new();
+        if features.is_empty() {
+            unset.push("features");
+        } else {
+            entries.push(("features", config::string_array(&features)));
+        }
+        if setup.default_features {
+            unset.push("default-features");
+        } else {
+            entries.push(("default-features", false.into()));
+        }
+        editor.unset_tool(name, &unset);
+    }
+    editor.set_tool(name, &entries);
+    editor.save()?;
+    if moved {
+        println!(
+            "Moved {name} {} -> {}",
+            tool.version, setup.checkout.version
+        );
+    }
+    Ok(())
 }
 
 /// Where `update --version`/`--latest` moves the tool, or `None` when it stays.
@@ -415,6 +584,9 @@ fn move_tool(
 }
 
 fn update(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
+    if args.interactive {
+        return update_interactive(project, config, args);
+    }
     let tool = config.tool(&args.name)?;
     let name = args.name.as_str();
     if args.precise.is_some() && args.deps.len() != 1 {
