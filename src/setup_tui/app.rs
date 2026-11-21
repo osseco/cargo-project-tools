@@ -8,6 +8,7 @@ use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
 use semver::Version;
 
+use crate::sanitize::shown_line;
 use crate::setup::{Choice, Setup};
 use crate::source::Checkout;
 
@@ -172,12 +173,13 @@ impl<'a> App<'a> {
         (self.exit == Some(Exit::Done)).then_some(self.setup)
     }
 
+    /// Messages quote paths, names and cargo's errors: drawn safe, on one line.
     pub(super) fn say(&mut self, text: impl Into<String>) {
-        self.message = Some((text.into(), false));
+        self.message = Some((shown_line(&text.into()), false));
     }
 
     pub(super) fn warn(&mut self, text: impl Into<String>) {
-        self.message = Some((text.into(), true));
+        self.message = Some((shown_line(&text.into()), true));
     }
 
     /// A stable name for a row, to find it again after the tree is rebuilt.

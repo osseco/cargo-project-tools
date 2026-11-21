@@ -92,6 +92,13 @@ pub fn shown(text: &str) -> String {
     sanitize(text).0
 }
 
+/// `text` made safe to draw on one line: like `shown`, and line ends and tabs become `\n`
+/// and `\t`, so a name or path can't start a line of its own (one a CI runner might read
+/// as a command, say).
+pub fn shown_line(text: &str) -> String {
+    shown(text).replace('\n', "\\n").replace('\t', "\\t")
+}
+
 #[cfg(test)]
 #[path = "sanitize_test.rs"]
 mod tests;

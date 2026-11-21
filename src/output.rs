@@ -265,6 +265,12 @@ pub fn emit(record: Record) {
     }
 }
 
+/// Print `error: …` on stderr, on one line and safe to show: errors quote paths and names
+/// from sources.
+pub fn print_error(e: &anyhow::Error) {
+    eprintln!("error: {}", crate::sanitize::shown_line(&format!("{e:#}")));
+}
+
 /// At exit: an `error` record for a failure, then the `summary` when the command has one.
 pub fn finish(error: Option<&anyhow::Error>, ok: bool) {
     if let Some(e) = error {
