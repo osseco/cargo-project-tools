@@ -48,6 +48,37 @@ fn root_check() {
 }
 
 #[test]
+fn only_https_sources() {
+    let lock = |source: &str| {
+        format!(
+            "version = 4\n\n[[package]]\nname = \"tool\"\nversion = \"1.0.0\"\n\n[[package]]\nname = \"dep\"\nversion = \"1.0.0\"\nsource = \"{source}\"\n"
+        )
+    };
+    assert!(
+        parse(&lock(
+            "registry+https://github.com/rust-lang/crates.io-index"
+        ))
+        .is_ok()
+    );
+    assert!(parse(&lock("sparse+https://index.crates.io/")).is_ok());
+    assert!(
+        parse(&lock(
+            "git+https://example.com/dep.git#0123456789abcdef0123456789abcdef01234567"
+        ))
+        .is_ok()
+    );
+    for bad in [
+        "git+ssh://git@example.com/dep.git#0123456789abcdef0123456789abcdef01234567",
+        "git+http://example.com/dep.git#0123456789abcdef0123456789abcdef01234567",
+        "git+file:///home/me/secret#0123456789abcdef0123456789abcdef01234567",
+        "registry+http://example.com/index",
+    ] {
+        let err = parse(&lock(bad)).unwrap_err().to_string();
+        assert!(err.contains("only https"), "{bad}: {err}");
+    }
+}
+
+#[test]
 fn diffs_locks() {
     let changes = diff(&parse(LOCK_A).unwrap(), &parse(LOCK_B).unwrap());
     assert_eq!(

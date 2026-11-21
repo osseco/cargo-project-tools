@@ -203,6 +203,27 @@ pub fn search_dirs(checkout: &Checkout) -> Result<Vec<PathBuf>> {
         .collect())
 }
 
+/// Fail when a `.cargo` sits between the checkout and the project root (`targets/<tool>`,
+/// `targets`, `.project-tools`): cargo would read its config for the build, and nobody
+/// reviewed it. Build code could have left one there. The project root's own is the user's.
+pub fn refuse_config_above(project_root: &Path, checkout: &Checkout) -> Result<()> {
+    for dir in checkout
+        .root
+        .ancestors()
+        .skip(1)
+        .take_while(|d| d.starts_with(project_root) && *d != project_root)
+    {
+        let cargo = dir.join(".cargo");
+        if cargo.symlink_metadata().is_ok() {
+            bail!(
+                "{} would be read by cargo but isn't reviewed; remove it",
+                cargo.display()
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Remove toolchain files the source ships: `cargo install <crate>` ignores them too, and a
 /// `path` toolchain would run local binaries.
 fn strip_toolchain(checkout: &Checkout) -> Result<()> {
