@@ -395,3 +395,16 @@ fn pre_releases_are_labelled() {
         ]
     );
 }
+
+#[test]
+fn cargo_runs_without_colour() {
+    // CI sets CARGO_TERM_COLOR=always; cargo's messages are parsed and shown, so every
+    // run here turns colour off.
+    let f = fixture(AuditIgnore::default());
+    let cmd = f.setup.cargo("tree");
+    let colour = cmd
+        .get_envs()
+        .find(|(k, _)| *k == "CARGO_TERM_COLOR")
+        .and_then(|(_, v)| v);
+    assert_eq!(colour, Some(std::ffi::OsStr::new("never")));
+}

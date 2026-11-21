@@ -138,7 +138,10 @@ impl Setup {
 
     fn cargo(&self, sub: &str) -> Command {
         let mut cmd = process::cargo();
-        cmd.arg(sub)
+        // Plain text: the output is parsed and shown on the screen, whatever
+        // `CARGO_TERM_COLOR` says.
+        cmd.env("CARGO_TERM_COLOR", "never")
+            .arg(sub)
             .arg("--manifest-path")
             .arg(self.checkout.manifest_path());
         cmd
