@@ -542,10 +542,14 @@ pub fn collect(
     let manifest = checkout.manifest_path();
     let built = graph::tree(&manifest, selection, &vendored.config_args, offline, name)?;
 
+    // Every feature, so the packages listed cover whatever `built` holds: without them,
+    // cargo lists only what the default features build, and a build script or proc macro
+    // behind another feature would be missed. `built` decides what counts.
     let mut cmd = process::cargo();
     cmd.args([
         "metadata",
         "--locked",
+        "--all-features",
         "--format-version",
         "1",
         "--manifest-path",
