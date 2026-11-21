@@ -488,6 +488,27 @@ pub struct Decided {
 /// An item with no matching entry, and the entry for the same place whose content changed.
 type Pending<'a> = (Item, Option<&'a Entry>);
 
+/// A decision about a pending item, to be written to the review file.
+struct Decision<'a> {
+    item: Item,
+    /// The entry for the same place whose content changed; it's updated in place.
+    previous: Option<&'a Entry>,
+    action: Action,
+    file: Option<String>,
+}
+
+impl<'a> Decision<'a> {
+    /// Keep the action and file of the changed entry, or approve new code.
+    fn keep_or_approve((item, previous): Pending<'a>) -> Self {
+        Decision {
+            item,
+            previous,
+            action: previous.map_or(Action::Approve, |p| p.action),
+            file: previous.and_then(|p| p.file.clone()),
+        }
+    }
+}
+
 /// Match `items` against the review file at `path`. Items without a matching entry are
 /// pending: without `approve` that's an error listing them; with it they're recorded, keeping
 /// the action of an entry for the same place whose content changed. Entries that match
@@ -514,7 +535,8 @@ pub fn check(path: &Path, items: Vec<Item>, approve: bool, root: &Path) -> Resul
         }
     }
     if approve {
-        decided.extend(record(path, pending, &stale)?);
+        let decisions = pending.into_iter().map(Decision::keep_or_approve).collect();
+        decided.extend(record(path, decisions, &stale)?);
     } else {
         report(path, &pending, &stale, root)?;
     }
@@ -552,6 +574,13 @@ fn report(path: &Path, pending: &[Pending], stale: &[&Entry], root: &Path) -> Re
             shown(&item.location)
         );
     }
+    println!(
+        "  to decide piece by piece, put these in {} with the action you choose:",
+        shown(path)
+    );
+    for (item, previous) in pending {
+        print!("{}", paste_ready(item, *previous));
+    }
     let what = match pending.len() {
         1 => "1 piece of build-time code isn't".to_string(),
         n => format!("{n} pieces of build-time code aren't"),
@@ -562,10 +591,34 @@ fn report(path: &Path, pending: &[Pending], stale: &[&Entry], root: &Path) -> Re
     )
 }
 
-/// Write `pending` into the review file and drop `stale` entries. Returns the decisions for
-/// the pending items.
-fn record(path: &Path, pending: Vec<Pending>, stale: &[&Entry]) -> Result<Vec<Decided>> {
-    if pending.is_empty() && stale.is_empty() {
+/// The review-file entry for a pending item, indented, with the action of the entry it
+/// replaces or `approve`.
+fn paste_ready(item: &Item, previous: Option<&Entry>) -> String {
+    let mut doc = toml_edit::DocumentMut::new();
+    let action = previous.map_or(Action::Approve, |p| p.action);
+    add_entry(
+        &mut doc,
+        item,
+        action,
+        previous.and_then(|p| p.file.as_deref()),
+    );
+    let mut out = String::new();
+    if let Some(p) = previous {
+        out.push_str(&format!(
+            "    # replaces the entry with {} = \"{}\"\n",
+            p.kind.hash_key(),
+            p.hash
+        ));
+    }
+    for line in doc.to_string().lines() {
+        out.push_str(&format!("    {line}\n"));
+    }
+    out
+}
+
+/// Write `decisions` into the review file and drop `stale` entries. Returns what was decided.
+fn record(path: &Path, decisions: Vec<Decision>, stale: &[&Entry]) -> Result<Vec<Decided>> {
+    if decisions.is_empty() && stale.is_empty() {
         return Ok(Vec::new());
     }
     // A new file gets the header; it's added after editing, as a comment-only document's
@@ -579,19 +632,20 @@ fn record(path: &Path, pending: Vec<Pending>, stale: &[&Entry]) -> Result<Vec<De
     let mut decided = Vec::new();
     // An entry whose content changed is updated in place, so comments on it stay.
     let mut reused: Vec<&Entry> = Vec::new();
-    for (item, previous) in pending {
-        let previous = previous.filter(|p| !reused.contains(p));
-        let (action, file) = match previous {
+    for Decision {
+        item,
+        previous,
+        action,
+        file,
+    } in decisions
+    {
+        match previous.filter(|p| !reused.contains(p)) {
             Some(p) => {
-                set_hash(&mut doc, p, &item.hash);
+                update_entry(&mut doc, p, &item.hash, action, file.as_deref());
                 reused.push(p);
-                (p.action, p.file.clone())
             }
-            None => {
-                add_entry(&mut doc, &item, Action::Approve, None);
-                (Action::Approve, None)
-            }
-        };
+            None => add_entry(&mut doc, &item, action, file.as_deref()),
+        }
         println!(
             "  recorded {:<12} {} ({})",
             item.kind,
@@ -629,9 +683,23 @@ fn is_entry(t: &toml_edit::Table, e: &Entry) -> bool {
     get("package") == e.package && get("path") == e.path && get(e.kind.hash_key()) == e.hash
 }
 
-fn set_hash(doc: &mut toml_edit::DocumentMut, e: &Entry, hash: &str) {
+/// Point entry `e` at new content and decision, keeping its place and comments.
+fn update_entry(
+    doc: &mut toml_edit::DocumentMut,
+    e: &Entry,
+    hash: &str,
+    action: Action,
+    file: Option<&str>,
+) {
     if let Some(t) = tables_of(doc, e.kind).iter_mut().find(|t| is_entry(t, e)) {
         t[e.kind.hash_key()] = toml_edit::value(hash);
+        t["action"] = toml_edit::value(action.as_str());
+        match file {
+            Some(f) => t["file"] = toml_edit::value(f),
+            None => {
+                t.remove("file");
+            }
+        }
     }
 }
 

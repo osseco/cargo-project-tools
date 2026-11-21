@@ -60,12 +60,19 @@ When something isn't recorded, `add`, `upgrade`, `update` and `install` stop bef
 ```text
   build-time code to review:
     build-script zstd-sys@2.1.2+zstd.1.5.7 build.rs (changed; was approve)  .project-tools/targets/cargo-nextest/vendor/zstd-sys-2.1.2+zstd.1.5.7/build.rs
+  to decide piece by piece, put these in .project-tools/crates/cargo-nextest/build-review.toml with the action you choose:
+    # replaces the entry with sha256 = "5b0c…"
+    [[build-script]]
+    package = "zstd-sys"
+    path = "build.rs"
+    sha256 = "9e41…"
+    action = "approve"
 error: 1 piece of build-time code isn't recorded in .project-tools/crates/cargo-nextest/build-review.toml; review it, then rerun with --approve-build
 ```
 
 After reviewing, run the same command with `--approve-build`. New pieces are recorded as `approve`. A changed piece keeps its action and file, and its entry is updated in place, so comments next to it stay. Entries that no longer match anything are removed, for example after you narrow `targets`. Without the flag they're only reported. `install --approve-build` reviews even when the tool is up to date.
 
-To override or strip something, edit its `action` (and `file`) and run `install`. A changed decision makes `install` rebuild the tool from scratch, since cargo doesn't notice edits to vendored sources.
+To decide piece by piece, copy the printed entries into the file, set each `action` (and `file` for `override`), and rerun. For a changed piece, replace the old entry named in the comment. To change a recorded decision, edit its `action` (and `file`) and run `install`. A changed decision makes `install` rebuild the tool from scratch, since cargo doesn't notice edits to vendored sources.
 
 ## Limits
 

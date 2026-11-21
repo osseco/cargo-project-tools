@@ -150,6 +150,76 @@ fn changed_code_keeps_its_action_and_drops_the_old_entry() {
 }
 
 #[test]
+fn paste_ready_entries_parse_back() {
+    let tmp = tempfile::tempdir().unwrap();
+    let text = paste_ready(&script(tmp.path(), "libc", "aa"), None)
+        + &paste_ready(&proc_macro("serde_derive", "cc"), None);
+    let entries = parse(&text).unwrap();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].package, "libc");
+    assert_eq!(entries[0].hash, "aa");
+    assert_eq!(entries[0].action, Action::Approve);
+    assert_eq!(entries[1].kind, Kind::ProcMacro);
+    assert_eq!(entries[1].hash, "cc");
+}
+
+#[test]
+fn paste_ready_entry_of_changed_code_keeps_its_decision() {
+    let tmp = tempfile::tempdir().unwrap();
+    let previous = Entry {
+        kind: Kind::BuildScript,
+        package: "ring".into(),
+        path: "build.rs".into(),
+        hash: "old".into(),
+        action: Action::Override,
+        file: Some("overrides/ring.rs".into()),
+    };
+    let text = paste_ready(&script(tmp.path(), "ring", "new"), Some(&previous));
+    assert!(
+        text.contains("# replaces the entry with sha256 = \"old\""),
+        "{text}"
+    );
+    let entries = parse(&text).unwrap();
+    assert_eq!(entries[0].hash, "new");
+    assert_eq!(entries[0].action, Action::Override);
+    assert_eq!(entries[0].file.as_deref(), Some("overrides/ring.rs"));
+}
+
+#[test]
+fn a_new_decision_for_changed_code_updates_the_entry_in_place() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join(FILE);
+    fs::write(
+        &file,
+        "# why we override ring\n[[build-script]]\npackage = \"ring\"\npath = \"build.rs\"\nsha256 = \"old\"\naction = \"override\"\nfile = \"overrides/ring.rs\"\n",
+    )
+    .unwrap();
+    let previous = load(&file).unwrap().remove(0);
+    let decided = record(
+        &file,
+        vec![Decision {
+            item: script(tmp.path(), "ring", "new"),
+            previous: Some(&previous),
+            action: Action::Strip,
+            file: None,
+        }],
+        &[&previous],
+    )
+    .unwrap();
+    assert_eq!(decided[0].action, Action::Strip);
+    let entries = load(&file).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].hash, "new");
+    assert_eq!(entries[0].action, Action::Strip);
+    assert_eq!(entries[0].file, None);
+    assert!(
+        fs::read_to_string(&file)
+            .unwrap()
+            .starts_with("# why we override ring")
+    );
+}
+
+#[test]
 fn two_versions_of_a_proc_macro_are_separate_entries() {
     let tmp = tempfile::tempdir().unwrap();
     let file = tmp.path().join(FILE);
