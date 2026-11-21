@@ -72,3 +72,30 @@ fn control_characters_are_escaped() {
         r#"{"version":1,"kind":"error","message":"a\nb\u001b[2J"}"#
     );
 }
+
+#[test]
+fn held_lines_wait_for_the_screen_to_close() {
+    {
+        let _hold = hold();
+        say!("kept {}", 1);
+        note("note: kept too".into());
+        assert_eq!(
+            HELD.with_borrow(|h| h.clone()),
+            [
+                (false, "kept 1".to_string()),
+                (true, "note: kept too".to_string())
+            ]
+        );
+    }
+    assert!(!holding());
+    assert!(HELD.with_borrow(|h| h.is_empty()));
+}
+
+#[test]
+fn a_held_command_failure_carries_its_stderr() {
+    let _hold = hold();
+    let err = crate::process::run(crate::process::cargo().arg("no-such-command-here"))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("no such command"), "{err}");
+}

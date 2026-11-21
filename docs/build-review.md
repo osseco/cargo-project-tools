@@ -85,9 +85,9 @@ When something isn't recorded and both input and output are a terminal, `add`, `
 
 | Part | What it does |
 | --- | --- |
-| Tree (left) | The pending pieces by kind, and their files. A build script outside its package root shows its directory, which is what its sha256 covers. A proc macro shows its whole crate. `?` undecided, `✓` approve, `⊘` strip, `✎` override. A changed piece shows its previous decision and starts with it; one [reviewed for another tool](#reviewed-for-another-tool) says so and starts with that tool's decision. |
+| Tree (left) | The pending pieces by kind, and their files. A build script outside its package root shows its directory, which is what its sha256 covers. A proc macro shows its whole crate. `?` undecided, `✓` approve, `⊘` strip, `✎` override. A changed piece shows its previous decision, and starts on it when that was strip or override; one that was approved starts undecided, since its new content needs a look. One [reviewed for another tool](#reviewed-for-another-tool) says so and starts with that tool's decision. |
 | Decision (top right) | Approve, Strip or Override for the selected piece. A proc macro can only be approved. |
-| Editor (right) | The selected file, with vim keys and Rust and TOML colours. Shipped files are view only. |
+| Editor (right) | The selected file, with vim keys and Rust and TOML colours. Shipped files are view only, and long lines wrap, so nothing hides past the right edge. Choosing Override opens the piece's own file, where an existing override shows. |
 | Title bar | How many pieces are approved, overridden, stripped and undecided. |
 | Buttons (bottom) | Tree, Editor, Save override, Done, Cancel. |
 
@@ -120,9 +120,11 @@ Look-alike letters from other scripts (a Cyrillic `а` for a Latin `a`) aren't e
 
 ### Reviewed for another tool
 
-The same piece (kind, package, path and sha256) is often used by several tools, for example a common dependency's build script. When another tool's `build-review.toml` already records it, the screen starts with that decision and the tree says `approved in <tool>`, `stripped in <tool>` or `overridden in <tool>`. It's still only recorded when you press Done.
+The same piece (kind, package, path, sha256 and crate) is often used by several tools, for example a common dependency's build script. When another tool in `project-tools.toml` already records it, the screen starts with that decision and the tree says `approved in <tool>`, `stripped in <tool>` or `overridden in <tool>`. It's still only recorded when you press Done.
 
-For an override, the editor shows that tool's override file. Done copies it to this tool's `overrides/`. If this tool already has a different file there, yours is kept and the piece starts undecided.
+Only tools in `project-tools.toml` count, not every directory under `.project-tools/crates`. When those tools decided differently on a piece, it starts undecided. And another tool's decision never replaces this tool's own earlier strip or override of a changed piece.
+
+For an override, the editor shows that tool's override file. Done copies it to this tool's `overrides/`, only if it still has the content it had when the screen opened. If this tool already has a different file there, yours is kept and the piece starts undecided. An override reached through a link under that tool's directory isn't used.
 
 ### Done and Cancel
 

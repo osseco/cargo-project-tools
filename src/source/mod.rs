@@ -233,7 +233,10 @@ fn strip_toolchain(checkout: &Checkout) -> Result<()> {
             if path.symlink_metadata().is_ok() {
                 fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
                 let shown = path.strip_prefix(&checkout.root).unwrap_or(&path);
-                eprintln!("note: ignored {} shipped with the source", shown.display());
+                crate::output::note(format!(
+                    "note: ignored {} shipped with the source",
+                    shown.display()
+                ));
             }
         }
     }

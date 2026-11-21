@@ -117,7 +117,7 @@ The keys are the review screen's: `Ctrl-w` and `h`, `l` or `j` move to the tree,
 
 For example, cargo-nextest's default features include `self-update`. Turn off `default`, turn on `default-no-update`, and the tree no longer has what `self-update` pulls in.
 
-**Done** goes on to the build review with exactly that setup, then saves the lock, and writes `version`, `features` and `default-features` (and `rev` for git) to `project-tools.toml`. **Cancel** saves nothing. The screen needs a terminal; without one, use [`inspect`](#inspect).
+**Done** goes on to the build review with exactly that setup, then saves the lock, and writes `version`, `features` and `default-features` (and `rev` for git) to `project-tools.toml`. **Cancel** saves nothing. The screen needs a terminal; without one, use [`inspect`](#inspect). Messages from moving the tool or a dependency, such as dependency bumps kept or dropped, are printed once the screen closes.
 
 ## install
 

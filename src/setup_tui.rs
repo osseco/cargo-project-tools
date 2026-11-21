@@ -8,6 +8,7 @@
 use anyhow::Result;
 use ratatui::crossterm::event;
 
+use crate::output;
 use crate::screen::Terminal;
 use crate::setup::Setup;
 
@@ -20,6 +21,8 @@ pub use app::{App, Mover};
 /// Show the setup screen. Returns the setup as chosen, or `None` when cancelled.
 pub fn run(setup: Setup, mover: Mover) -> Result<Option<Setup>> {
     let mut app = App::new(setup, mover);
+    // What a version move prints waits until the screen is gone.
+    let _hold = output::hold();
     let mut terminal = Terminal::start()?;
     while app.exit.is_none() {
         terminal.draw(|f| app.render(f))?;

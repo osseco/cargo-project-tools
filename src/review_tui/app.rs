@@ -183,8 +183,9 @@ pub(super) struct App {
     pub(super) files: Vec<Option<String>>,
     /// What other tools recorded for the same piece.
     pub(super) known: Vec<Option<Known>>,
-    /// Another tool's override file, copied to `files` on Done.
-    pub(super) sources: Vec<Option<PathBuf>>,
+    /// Another tool's override file and its sha256 when first read, copied to `files` on Done
+    /// only while it still has that content.
+    pub(super) sources: Vec<Option<(PathBuf, String)>>,
     pub(super) nodes: Vec<Node>,
     pub(super) selected: usize,
     pub(super) tree_state: ListState,
@@ -214,7 +215,12 @@ impl App {
         let mut app = App {
             tool: tool.to_string(),
             previous: pending.iter().map(|(_, p)| p.map(|e| e.action)).collect(),
-            radio: pending.iter().map(|(_, p)| p.map(|e| e.action)).collect(),
+            // A changed piece starts on its earlier strip or override, but not on approve:
+            // approving new content takes a look at it.
+            radio: pending
+                .iter()
+                .map(|(_, p)| p.map(|e| e.action).filter(|a| *a != Action::Approve))
+                .collect(),
             files: pending
                 .iter()
                 .map(|(_, p)| p.and_then(|e| e.file.clone()))
@@ -247,14 +253,17 @@ impl App {
     }
 
     /// Pre-select what other tools recorded; it's an exact match, so it wins over a changed
-    /// entry's decision. Another tool's override is shown from its file until Done copies
-    /// it here. An override of ours that differs from it is kept, and the piece left
-    /// undecided.
+    /// entry's approve, but never over its strip or override. Another tool's override is
+    /// shown from its file until Done copies it here. An override of ours that differs from
+    /// it is kept, and the piece left undecided.
     fn take_known(&mut self) {
         for i in 0..self.items.len() {
             let Some(k) = self.known[i].clone() else {
                 continue;
             };
+            if self.previous[i].is_some_and(|p| p != Action::Approve && p != k.action) {
+                continue;
+            }
             if k.action != Action::Override {
                 self.radio[i] = Some(k.action);
                 self.files[i] = None;
@@ -263,12 +272,17 @@ impl App {
             let (Some(theirs), Ok(rel)) = (k.file, override_rel(&self.items[i])) else {
                 continue;
             };
-            if !plain_file(&theirs) {
+            // `crates/<tool>/…`, with no link anywhere below the tool's directory.
+            let their_dir = self.crate_dir.with_file_name(&k.tool);
+            if !plain_below(&their_dir, &theirs) {
                 continue;
             }
+            let Ok(their_bytes) = fs::read(&theirs) else {
+                continue;
+            };
             let ours = self.crate_dir.join(&rel);
             match fs::read(&ours) {
-                Ok(bytes) if fs::read(&theirs).is_ok_and(|t| t == bytes) => {}
+                Ok(bytes) if bytes == their_bytes => {}
                 Ok(_) => {
                     self.radio[i] = None;
                     self.files[i] = None;
@@ -279,7 +293,7 @@ impl App {
                     ));
                     continue;
                 }
-                Err(_) => self.sources[i] = Some(theirs),
+                Err(_) => self.sources[i] = Some((theirs, sha256_hex(&their_bytes))),
             }
             self.radio[i] = Some(Action::Override);
             self.files[i] = Some(rel);
@@ -289,7 +303,7 @@ impl App {
     /// Copy the other tools' overrides chosen here into this tool's crate directory.
     pub(super) fn copy_sources(&mut self) -> Result<()> {
         for i in 0..self.items.len() {
-            let (Some(Action::Override), Some(src), Some(rel)) =
+            let (Some(Action::Override), Some((src, seen)), Some(rel)) =
                 (self.radio[i], &self.sources[i], &self.files[i])
             else {
                 continue;
@@ -298,6 +312,12 @@ impl App {
                 bail!("{} isn't a plain file", src.display());
             }
             let bytes = fs::read(src)?;
+            if sha256_hex(&bytes) != *seen {
+                bail!(
+                    "{} changed during the review; run the command again",
+                    shown(&src.to_string_lossy())
+                );
+            }
             match fs::read(self.crate_dir.join(rel)) {
                 Ok(ours) if ours == bytes => {}
                 Ok(_) => bail!(
@@ -446,7 +466,8 @@ impl App {
             .filter(|p| p.exists());
         // Another tool's override, until it's copied.
         let theirs = self.sources[item]
-            .clone()
+            .as_ref()
+            .map(|(p, _)| p.clone())
             .filter(|_| overriding && ours.is_none());
         let from = theirs
             .as_ref()
@@ -514,6 +535,17 @@ impl App {
         } else {
             self.radio[item] = Some(action);
             self.files[item] = None;
+        }
+        // An override file is recorded only as shown: open the piece's own file, where it is.
+        let other_file_open = self.open.as_ref().is_some_and(|o| o.item == item && !o.own);
+        if action == Action::Override && self.files[item].is_some() && other_file_open {
+            let location = self.items[item].location.clone();
+            if let Some(own) = (0..self.nodes.len()).find(|n| {
+                self.file_of(*n)
+                    .is_some_and(|(i, p)| i == item && p == location)
+            }) {
+                self.selected = own;
+            }
         }
         if self.open.as_ref().is_some_and(|o| o.item == item) {
             self.open_selected();
@@ -677,6 +709,24 @@ impl App {
 /// Whether `path` is a plain file, not a link.
 fn plain_file(path: &Path) -> bool {
     path.symlink_metadata().is_ok_and(|m| m.is_file())
+}
+
+/// `path` is a plain file inside `dir`, and nothing between them is a link.
+fn plain_below(dir: &Path, path: &Path) -> bool {
+    let Ok(rel) = path.strip_prefix(dir) else {
+        return false;
+    };
+    let mut at = dir.to_path_buf();
+    for c in rel.components() {
+        if !matches!(c, std::path::Component::Normal(_)) {
+            return false;
+        }
+        at.push(c);
+        if !at.symlink_metadata().is_ok_and(|m| !m.is_symlink()) {
+            return false;
+        }
+    }
+    plain_file(path)
 }
 
 #[cfg(test)]

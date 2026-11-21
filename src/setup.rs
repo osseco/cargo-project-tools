@@ -152,7 +152,10 @@ impl Setup {
         cmd.args(&self.cargo_args);
         let out = cmd.output().context("starting cargo")?;
         if !out.status.success() {
-            bail!("{}", cargo_error(&String::from_utf8_lossy(&out.stderr)));
+            bail!(
+                "{}",
+                process::error_line(&String::from_utf8_lossy(&out.stderr))
+            );
         }
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }
@@ -398,25 +401,6 @@ impl Setup {
     /// The lock as it is now.
     pub fn lock_path(&self) -> std::path::PathBuf {
         self.checkout.lock_path()
-    }
-}
-
-/// Cargo's error on one line: from its first `error` line on, or all of it.
-fn cargo_error(stderr: &str) -> String {
-    let lines: Vec<&str> = stderr
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .collect();
-    let start = lines
-        .iter()
-        .position(|l| l.starts_with("error"))
-        .unwrap_or(0);
-    let msg = lines.get(start..).unwrap_or_default().join(" ");
-    if msg.is_empty() {
-        "cargo failed".into()
-    } else {
-        msg
     }
 }
 

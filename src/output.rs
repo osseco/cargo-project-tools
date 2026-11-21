@@ -1,6 +1,7 @@
 //! `--message-format`: human text, or JSON records on stdout with the human text moved to
 //! stderr. One record per line, each with `"version"`, so consumers can pin the schema.
 
+use std::cell::{Cell, RefCell};
 use std::io::Write;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -39,17 +40,72 @@ pub fn json() -> bool {
     FORMAT.get() == Some(&Format::Json)
 }
 
-/// `println!` for human text: on stderr in json mode, so stdout holds only records.
+/// `println!` for human text: on stderr in json mode, so stdout holds only records. Kept
+/// for later while a full-screen view is up.
 macro_rules! say {
-    ($($arg:tt)*) => {
-        if $crate::output::json() {
-            eprintln!($($arg)*)
-        } else {
-            println!($($arg)*)
+    ($($arg:tt)*) => {{
+        let json = $crate::output::json();
+        if !$crate::output::keep(json, format!($($arg)*)) {
+            if json {
+                eprintln!($($arg)*)
+            } else {
+                println!($($arg)*)
+            }
         }
-    };
+    }};
 }
 pub(crate) use say;
+
+thread_local! {
+    /// On the thread that runs a full-screen view, which also runs what it starts.
+    static HOLDING: Cell<bool> = const { Cell::new(false) };
+    /// Lines held meanwhile, and whether each goes to stderr.
+    static HELD: RefCell<Vec<(bool, String)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// While the returned guard lives, human text is kept instead of printed over the screen,
+/// and commands run through `process` have their output captured. Dropping it prints what
+/// was kept.
+pub fn hold() -> Hold {
+    HOLDING.set(true);
+    Hold
+}
+
+pub struct Hold;
+
+impl Drop for Hold {
+    fn drop(&mut self) {
+        HOLDING.set(false);
+        let lines = HELD.take();
+        for (stderr, line) in lines {
+            if stderr {
+                eprintln!("{line}");
+            } else {
+                println!("{line}");
+            }
+        }
+    }
+}
+
+pub fn holding() -> bool {
+    HOLDING.get()
+}
+
+/// Keep `line` for later when holding; false when it should be printed now.
+pub fn keep(stderr: bool, line: String) -> bool {
+    if !holding() {
+        return false;
+    }
+    HELD.with_borrow_mut(|held| held.push((stderr, line)));
+    true
+}
+
+/// A note on stderr, kept for later while a full-screen view is up.
+pub fn note(line: String) {
+    if !keep(true, line.clone()) {
+        eprintln!("{line}");
+    }
+}
 
 #[derive(Debug, Serialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "kebab-case")]

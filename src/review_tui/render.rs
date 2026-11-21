@@ -225,7 +225,8 @@ impl App {
                     .block(block);
                 EditorView::new(state)
                     .theme(theme)
-                    .wrap(false)
+                    // Shipped files wrap, so nothing hides past the right edge.
+                    .wrap(!editable)
                     .line_numbers(LineNumbers::Absolute)
                     .render(editor, frame.buffer_mut());
             }
