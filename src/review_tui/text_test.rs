@@ -13,6 +13,20 @@ fn control_characters_become_hex_escapes() {
 }
 
 #[test]
+fn crlf_is_a_line_ending_and_a_lone_cr_is_not() {
+    // As in generic-array 0.14.7's build.rs.
+    let crlf = "fn main() {\r\n    println!(\"x\");\r\n}\r\n";
+    assert_eq!(
+        sanitize(crlf),
+        ("fn main() {\n    println!(\"x\");\n}\n".to_string(), 0)
+    );
+    // A `\r` that would draw over its line, and one at the very end.
+    let (text, n) = sanitize("safe();\rEVIL\r\n\r");
+    assert_eq!(text, "safe();\\x0dEVIL\n\\x0d");
+    assert_eq!(n, 2);
+}
+
+#[test]
 fn characters_that_hide_or_disguise_text_become_code_points() {
     for (c, name) in [
         ('\u{202e}', "bidi override"),

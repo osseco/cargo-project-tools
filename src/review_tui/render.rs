@@ -35,8 +35,13 @@ impl App {
             .title(counts);
         let inner = outer.inner(area);
         frame.render_widget(outer, area);
-        let [main, bottom] =
-            Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(inner);
+        // A blank row under the title, and the message above the buttons.
+        let [_, main, bottom] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(0),
+            Constraint::Length(2),
+        ])
+        .areas(inner);
         let [left, right] =
             Layout::horizontal([Constraint::Percentage(35), Constraint::Min(0)]).areas(main);
         self.render_tree(frame, left);
@@ -114,7 +119,8 @@ impl App {
             _ => None,
         });
         let banner_height = if warning.is_some() { 2 } else { 0 };
-        let [radios, banner, editor] = Layout::vertical([
+        let [radios, _, banner, editor] = Layout::vertical([
+            Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(banner_height),
             Constraint::Min(0),
@@ -181,10 +187,18 @@ impl App {
                 let top = state.viewport_offset().1.saturating_sub(height);
                 let end = (top + 3 * height).min(rows.len());
                 state.set_highlights(rows.get(top..end).unwrap_or(&[]).concat());
-                let mut theme = EditorTheme::default().block(block);
-                if !focused {
-                    theme = theme.hide_cursor();
-                }
+                // The terminal's own colours, so highlights (foreground only) match the rest.
+                // Unfocused, the cursor style is empty, which leaves its cell as drawn.
+                let cursor = if focused {
+                    Style::default().add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default()
+                };
+                let theme = EditorTheme::default()
+                    .base(Style::default())
+                    .line_numbers_style(Style::default().fg(Color::DarkGray))
+                    .cursor_style(cursor)
+                    .block(block);
                 EditorView::new(state)
                     .theme(theme)
                     .wrap(false)
@@ -246,18 +260,20 @@ impl App {
 
     fn render_bottom(&mut self, frame: &mut Frame, area: Rect) {
         self.areas.buttons.clear();
+        let [message, row] =
+            Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
         let save_enabled = self.modified();
         let labels: Vec<String> = BUTTONS
             .iter()
             .map(|b| format!("[ {} ]", b.label()))
             .collect();
-        let total: u16 = labels.iter().map(|l| l.chars().count() as u16 + 1).sum();
-        let start = area.right().saturating_sub(total);
+        let total: u16 = labels.iter().map(|l| l.chars().count() as u16).sum::<u16>()
+            + labels.len().saturating_sub(1) as u16;
         let focused = self.focus == Focus::Buttons && self.dialog.is_none();
-        let mut x = start;
+        let mut x = row.x + row.width.saturating_sub(total) / 2;
         for (i, (button, label)) in BUTTONS.iter().zip(&labels).enumerate() {
             let width = label.chars().count() as u16;
-            let rect = Rect::new(x, area.y, width, 1).intersection(area);
+            let rect = Rect::new(x, row.y, width, 1).intersection(row);
             let mut style = Style::default().bold();
             if *button == Button::Save && !save_enabled {
                 style = Style::default().add_modifier(Modifier::DIM);
@@ -275,8 +291,7 @@ impl App {
             } else {
                 Style::default().fg(Color::Green)
             };
-            let rect = Rect::new(area.x, area.y, start.saturating_sub(area.x + 1), 1);
-            frame.render_widget(Paragraph::new(format!(" {text}")).style(style), rect);
+            frame.render_widget(Paragraph::new(format!(" {text}")).style(style), message);
         }
     }
 

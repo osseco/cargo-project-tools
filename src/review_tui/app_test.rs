@@ -410,3 +410,85 @@ fn title_counts_follow_the_decisions() {
         "{screen}"
     );
 }
+
+fn buffer(app: &mut App) -> ratatui::buffer::Buffer {
+    let mut terminal = ratatui::Terminal::new(TestBackend::new(140, 30)).unwrap();
+    terminal.draw(|f| app.render(f)).unwrap();
+    terminal.backend().buffer().clone()
+}
+
+/// The first cell of `text` drawn in the editor.
+fn editor_cell(app: &App, buf: &ratatui::buffer::Buffer, text: &str) -> (u16, u16) {
+    let e = app.areas.editor;
+    let chars: Vec<char> = text.chars().collect();
+    for y in e.top()..e.bottom() {
+        for x in e.left()..e.right() {
+            let hit = chars.iter().enumerate().all(|(k, c)| {
+                buf.cell((x + k as u16, y))
+                    .is_some_and(|cell| cell.symbol() == c.to_string())
+            });
+            if hit {
+                return (x, y);
+            }
+        }
+    }
+    panic!("{text} not in the editor");
+}
+
+#[test]
+fn the_unfocused_cursor_leaves_its_cell_alone() {
+    use ratatui::style::{Color, Modifier};
+    let tmp = tempfile::tempdir().unwrap();
+    let mut app = app(
+        tmp.path(),
+        vec![root_script(tmp.path(), "a", "fn main() {}\n")],
+    );
+    // The cursor is on `f`, the editor isn't focused: `fn` is drawn like any keyword.
+    let buf = buffer(&mut app);
+    let (x, y) = editor_cell(&app, &buf, "fn main");
+    for cell in [&buf[(x, y)], &buf[(x + 1, y)]] {
+        assert_eq!(cell.fg, Color::Magenta);
+        assert_eq!(cell.bg, Color::Reset);
+        assert!(!cell.modifier.contains(Modifier::REVERSED));
+    }
+    chord(&mut app, 'l');
+    let buf = buffer(&mut app);
+    assert!(buf[(x, y)].modifier.contains(Modifier::REVERSED));
+    assert!(!buf[(x + 1, y)].modifier.contains(Modifier::REVERSED));
+}
+
+#[test]
+fn buttons_are_centred_with_the_message_above() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut app = app(tmp.path(), vec![root_script(tmp.path(), "a", "x\n")]);
+    app.say("hello");
+    let buf = buffer(&mut app);
+    let first = app.areas.buttons.first().unwrap().0;
+    let last = app.areas.buttons.last().unwrap().0;
+    // Inside the outer border: columns 1..139.
+    let (left, right) = (first.x - 1, 139 - last.right());
+    assert!(left.abs_diff(right) <= 1, "{left} vs {right}");
+    let row: String = (1..139)
+        .map(|x| buf[(x, first.y - 1)].symbol().to_string())
+        .collect();
+    assert!(row.trim_start().starts_with("hello"), "{row}");
+}
+
+#[test]
+fn a_blank_row_under_the_title_and_above_the_editor() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut app = app(tmp.path(), vec![root_script(tmp.path(), "a", "x\n")]);
+    let buf = buffer(&mut app);
+    let row = |y: u16, from: u16| -> String {
+        (from..139)
+            .map(|x| buf[(x, y)].symbol().to_string())
+            .collect()
+    };
+    assert_eq!(row(1, 1).trim(), "");
+    // The tree's border starts below that row.
+    assert_eq!(buf[(1, 2)].symbol(), "┌");
+    let radios = app.areas.radios[0].0;
+    assert_eq!(radios.y, 2);
+    assert_eq!(row(radios.y + 1, radios.x).trim(), "");
+    assert_eq!(app.areas.editor.y, radios.y + 2);
+}

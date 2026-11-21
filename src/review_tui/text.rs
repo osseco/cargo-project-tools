@@ -71,14 +71,18 @@ fn hidden(c: char) -> bool {
 }
 
 /// Make untrusted text safe to draw: control characters become `\xNN`, and characters
-/// that could hide or disguise text (see `hidden`) become `<U+XXXX>`. Returns the text and
-/// how many characters were replaced.
+/// that could hide or disguise text (see `hidden`) become `<U+XXXX>`. A CRLF line ending
+/// becomes `\n`; a `\r` on its own is escaped, since it moves the cursor back over the line.
+/// Returns the text and how many characters were replaced.
 pub fn sanitize(text: &str) -> (String, usize) {
     let mut out = String::with_capacity(text.len());
     let mut replaced = 0;
-    for c in text.chars() {
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
         let code = c as u32;
-        if c == '\n' || c == '\t' {
+        if c == '\r' && chars.peek() == Some(&'\n') {
+            // The `\n` comes next.
+        } else if c == '\n' || c == '\t' {
             out.push(c);
         } else if code < 0x20 || (0x7f..0xa0).contains(&code) {
             out.push_str(&format!("\\x{code:02x}"));

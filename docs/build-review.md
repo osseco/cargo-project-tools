@@ -79,7 +79,7 @@ Saving is careful with what's already there:
 
 ### What you see is what's there
 
-The screen escapes anything that could hide, reorder or disguise text. Control characters show as `\x1b`. These show as `<U+202E>`:
+The screen escapes anything that could hide, reorder or disguise text. Control characters show as `\x1b`; a Windows line ending (CRLF) is an ordinary line end, but a carriage return on its own, which can draw over its line, is escaped too. These show as `<U+202E>`:
 
 - bidi controls, zero-width characters and other format characters, including tag characters
 - variation selectors and characters that draw nothing
