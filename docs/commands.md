@@ -7,8 +7,7 @@ Every command runs as `cargo project-tools <command>`. Apart from `init` and the
 | `init` | Create `project-tools.toml` and `.project-tools/` |
 | `add <crate>[@ver]` | Add a tool |
 | `remove <crate>` | Remove a tool, its lock, build dir and binaries |
-| `upgrade <crate>` | Move to a new tool version, keeping your dependency bumps where they still resolve |
-| `update <crate> [deps…]` | Update dependencies in the tool's lock |
+| `update <crate> [deps…]` | Update dependencies in the tool's lock, or move the tool to another version (`--latest`, `--version`) |
 | `install [crates…]` | Audit, then build and install; skipped when nothing changed |
 | `verify [crates…]` | Check installed binaries against their recorded checksums; `--repair` rebuilds |
 | `audit [crates…]` | Check every lock against the RustSec advisory database, apply `audit-ignore.toml`, suggest fixes |
@@ -64,33 +63,30 @@ Before anything is written, it [reviews the build-time code](build-review.md) th
 
 Removes the `[tool.<name>]` entry, the tool's lock folder, its build directory and its binaries.
 
-## upgrade
-
-```bash
-cargo project-tools upgrade cargo-nextest
-cargo project-tools upgrade cargo-nextest --version 0.9.90
-```
-
-Moves to the latest stable version, or the one matching `--version`. Starts from the new release's lock, then reapplies every dependency you had bumped past it, as long as cargo still resolves. If the new release ships no lock, it starts from yours instead: cargo keeps every pinned version that still fits and only resolves what the new version needs. A git tool follows its tag or branch again.
-
-New or changed [build-time code](build-review.md) stops it before the lock is saved; `--approve-build` records it.
-
 ## update
 
 ```bash
 cargo project-tools update cargo-nextest
 cargo project-tools update cargo-nextest rustls
 cargo project-tools update cargo-nextest rustls@0.23.10 --precise 0.23.18
+cargo project-tools update cargo-nextest --latest
+cargo project-tools update cargo-nextest --version 0.9.90
 ```
 
 | Option | Meaning |
 | --- | --- |
-| `[deps…]` | Dependencies to update (`name` or `name@version`); all when omitted |
+| `[deps…]` | Dependencies to update (`name` or `name@version`); all when omitted, unless the tool moves |
 | `--precise <version>` | Update a single dependency to exactly this version |
 | `--recursive` | Also update the dependencies of the given dependencies |
+| `--latest` | Move the tool to its latest stable version; a git tool follows its tag or branch again |
+| `--version <req>` | Move a registry tool to the version matching this requirement |
 | `--approve-build` | Record new or changed build-time code in [`build-review.toml`](build-review.md) |
 
 Runs `cargo update` against the tool's lock. The lock is only saved if cargo resolves it, and if every build script, proc macro and cargo config it builds is [recorded](build-review.md).
+
+With `--latest` or `--version`, the tool moves first. It starts from the new release's lock, then reapplies every dependency you had bumped past it, as long as cargo still resolves. If the new release ships no lock, it starts from yours instead: cargo keeps every pinned version that still fits and only resolves what the new version needs. Dependencies you name are updated after that. The new version (and commit, for git) is written to `project-tools.toml`.
+
+`upgrade <crate> [--version <req>]` still works and does the same as `update <crate> --latest` or `--version`, with a note that it's deprecated. It will be removed in a future major release.
 
 ## install
 
@@ -172,7 +168,7 @@ Then it:
 
 - drops advisories listed in the tool's [`audit-ignore.toml`](configuration.md#audit-ignore),
 - warns about ignores that no longer match anything, and about expired ones,
-- prints an `update … --precise …` command for each vulnerability that has a patched version, or `upgrade <tool>` when the tool itself is affected.
+- prints an `update … --precise …` command for each vulnerability that has a patched version, or `update <tool> --latest` when the tool itself is affected.
 
 It also reports advisories against cargo-project-tools itself, and fails on them unless they're accepted in [`self-audit-ignore.toml`](configuration.md#advisories-against-cargo-project-tools-itself).
 

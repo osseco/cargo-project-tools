@@ -423,7 +423,7 @@ fn suggestion(
     index: &mut IndexCache,
 ) -> String {
     if name == tool {
-        return format!("cargo {SUBCOMMAND} upgrade {tool}");
+        return format!("cargo {SUBCOMMAND} update {tool} --latest");
     }
     let advisories: Vec<Vec<VersionReq>> = vulns.iter().map(|v| v.patched.clone()).collect();
     if advisories.iter().any(Vec::is_empty) {

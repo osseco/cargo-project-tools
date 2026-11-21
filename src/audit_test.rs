@@ -136,7 +136,7 @@ fn scan_git_tool_root_is_a_warning() {
 }
 
 #[test]
-fn root_fix_is_an_upgrade() {
+fn root_fix_moves_the_tool() {
     let (_dir, db) = fixture();
     let r = scan(&db, &lock(), "mytool", false);
     let v = &r.vulnerabilities[0];
@@ -147,7 +147,7 @@ fn root_fix_is_an_upgrade() {
         &[v],
         &mut IndexCache::default(),
     );
-    assert_eq!(fix, format!("cargo {SUBCOMMAND} upgrade mytool"));
+    assert_eq!(fix, format!("cargo {SUBCOMMAND} update mytool --latest"));
 }
 
 fn ignores(toml_text: &str) -> AuditIgnore {

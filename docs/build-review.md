@@ -66,7 +66,7 @@ A proc macro can only be approved. To avoid one, turn off the feature that pulls
 
 ## Reviewing on the terminal
 
-When something isn't recorded and both input and output are a terminal, `add`, `upgrade`, `update` and `install` open a review screen. Elsewhere, or with `--approve-build`, they behave as described under [Approving](#approving).
+When something isn't recorded and both input and output are a terminal, `add`, `update` and `install` open a review screen. Elsewhere, or with `--approve-build`, they behave as described under [Approving](#approving).
 
 | Part | What it does |
 | --- | --- |
@@ -117,7 +117,7 @@ For an override, the editor shows that tool's override file. Done copies it to t
 
 ## Approving
 
-Outside a terminal (in CI, or with input or output redirected), `add`, `upgrade`, `update` and `install` stop before writing or building, and list each piece with the file to look at:
+Outside a terminal (in CI, or with input or output redirected), `add`, `update` and `install` stop before writing or building, and list each piece with the file to look at:
 
 ```text
   build-time code to review:

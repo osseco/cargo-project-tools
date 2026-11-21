@@ -25,7 +25,7 @@ version = "0.9.80"
 panic = "unwind"             # per-tool override
 ```
 
-`add`, `upgrade` and `remove` maintain the `[tool.*]` entries. You edit `[settings]` and `[build]`.
+`add`, `update` and `remove` maintain the `[tool.*]` entries. You edit `[settings]` and `[build]`.
 
 ### targets
 
@@ -60,7 +60,7 @@ Changing any of these makes `install` rebuild the tool.
 
 ## sfw
 
-Package downloads (`add`, `upgrade`, `update`, `install`, `audit`) can run through [Socket Firewall Free](https://docs.socket.dev/docs/socket-firewall-free), which blocks known malicious packages.
+Package downloads (`add`, `update`, `install`, `audit`) can run through [Socket Firewall Free](https://docs.socket.dev/docs/socket-firewall-free), which blocks known malicious packages.
 
 | `settings.sfw` | Behavior |
 | --- | --- |

@@ -27,9 +27,10 @@ pub enum Command {
     Add(AddArgs),
     /// Remove a tool, its lock, build dir and binaries.
     Remove { name: String },
-    /// Move a tool to a new version, carrying forward newer dependency versions where possible.
+    /// Deprecated: use `update <tool> --latest` or `--version <req>`.
+    #[command(hide = true)]
     Upgrade(UpgradeArgs),
-    /// Update dependencies in a tool's Cargo.lock.
+    /// Update dependencies in a tool's Cargo.lock, or move the tool to another version.
     Update(UpdateArgs),
     /// Build and install tools into .project-tools/bin using the project's locks.
     Install(InstallArgs),
@@ -154,6 +155,14 @@ pub struct UpdateArgs {
     /// Also update the dependencies of the given dependencies.
     #[arg(long)]
     pub recursive: bool,
+    /// Move the tool to this version requirement (registry tools), keeping your dependency
+    /// bumps where they still resolve.
+    #[arg(long, conflicts_with = "latest")]
+    pub version: Option<String>,
+    /// Move the tool to its latest stable version, or for a git tool, to the head of its
+    /// branch or tag again.
+    #[arg(long)]
+    pub latest: bool,
     /// Record all new or changed build scripts, proc macros and cargo config in
     /// build-review.toml at once. Review them first. In a terminal, without this flag,
     /// a review screen lets you decide on each.
