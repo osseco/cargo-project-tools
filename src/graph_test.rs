@@ -68,7 +68,11 @@ fn cache_key_follows_what_the_result_depends_on() {
     let none: [String; 0] = [];
     let features = ["--no-default-features".to_string()];
     let mac = ["aarch64-apple-darwin".to_string()];
-    let sel = |features, targets| Selection { features, targets };
+    let sel = |features, targets| Selection {
+        features,
+        targets,
+        config: &[],
+    };
     let base = key("t", &tool_at("1.0.0", None), "lock", sel(&none, None));
     assert_eq!(
         base,

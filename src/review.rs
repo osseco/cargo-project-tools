@@ -84,6 +84,29 @@ impl fmt::Display for Kind {
     }
 }
 
+/// The crate a build script comes with: its checksum in the lock for a registry package,
+/// its commit for a git package, nothing for a package of the tool's own checkout. An entry
+/// only holds for the crate it was recorded for, since a build script can run or read any
+/// file of it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Pin {
+    #[default]
+    None,
+    Checksum(String),
+    Commit(String),
+}
+
+impl Pin {
+    /// The review-file key and value.
+    fn key(&self) -> Option<(&'static str, &str)> {
+        match self {
+            Pin::None => None,
+            Pin::Checksum(c) => Some(("checksum", c)),
+            Pin::Commit(c) => Some(("commit", c)),
+        }
+    }
+}
+
 /// A piece of build-time code found in what the tool builds.
 #[derive(Debug, Clone)]
 pub struct Item {
@@ -96,6 +119,8 @@ pub struct Item {
     pub path: String,
     /// sha256 of the content, or the crate checksum for proc macros.
     pub hash: String,
+    /// For a build script: the crate it comes with.
+    pub pin: Pin,
     /// What to review on disk.
     pub location: PathBuf,
     /// The package directory for build scripts and proc macros, the checkout root for config.
@@ -113,7 +138,7 @@ impl Item {
     }
 
     fn matches(&self, e: &Entry) -> bool {
-        self.same_place(e) && self.hash == e.hash
+        self.same_place(e) && self.hash == e.hash && self.pin == e.pin
     }
 
     fn describe(&self) -> String {
@@ -132,6 +157,7 @@ pub struct Entry {
     pub package: String,
     pub path: String,
     pub hash: String,
+    pub pin: Pin,
     pub action: Action,
     /// With `override`: the replacement, relative to the tool's crate directory.
     pub file: Option<String>,
@@ -144,6 +170,7 @@ struct RawEntry {
     path: Option<String>,
     sha256: Option<String>,
     checksum: Option<String>,
+    commit: Option<String>,
     action: Action,
     file: Option<String>,
 }
@@ -159,7 +186,6 @@ struct RawFile {
     cargo_config: Vec<RawEntry>,
 }
 
-/// Read the review file; a missing file has no entries.
 /// The kinds and packages a review file has entries for, whatever their hash.
 pub fn recorded(path: &Path) -> Result<BTreeSet<(String, String)>> {
     Ok(load(path)?
@@ -168,6 +194,7 @@ pub fn recorded(path: &Path) -> Result<BTreeSet<(String, String)>> {
         .collect())
 }
 
+/// Read the review file; a missing file has no entries.
 pub fn load(path: &Path) -> Result<Vec<Entry>> {
     let text = match fs::read_to_string(path) {
         Ok(t) => t,
@@ -197,13 +224,18 @@ fn entry(kind: Kind, r: RawEntry) -> Result<Entry> {
         v.with_context(|| format!("a [[{kind}]] entry needs `{field}`"))
     };
     let unexpected = match kind {
-        Kind::BuildScript => r.checksum.is_some(),
-        Kind::ProcMacro => r.path.is_some() || r.sha256.is_some(),
-        Kind::CargoConfig => r.package.is_some() || r.checksum.is_some(),
+        Kind::BuildScript => r.checksum.is_some() && r.commit.is_some(),
+        Kind::ProcMacro => r.path.is_some() || r.sha256.is_some() || r.commit.is_some(),
+        Kind::CargoConfig => r.package.is_some() || r.checksum.is_some() || r.commit.is_some(),
     };
     if unexpected {
         bail!("a [[{kind}]] entry has fields that belong to another kind");
     }
+    let pin = match (kind, r.checksum.clone(), r.commit) {
+        (Kind::BuildScript, Some(c), _) => Pin::Checksum(c),
+        (Kind::BuildScript, None, Some(c)) => Pin::Commit(c),
+        _ => Pin::None,
+    };
     let (package, path, hash) = match kind {
         Kind::BuildScript => (
             need(r.package, "package")?,
@@ -235,6 +267,7 @@ fn entry(kind: Kind, r: RawEntry) -> Result<Entry> {
         package,
         path,
         hash,
+        pin,
         action: r.action,
         file: r.file,
     })
@@ -262,8 +295,9 @@ fn slash(rel: &Path) -> String {
 }
 
 /// The sha256 line (`<hash>  <path>`, like `sha256sum`) for each file under `dir`, with
-/// paths relative to `root`. Links are recorded by their target; `.git` is skipped.
-fn dir_lines(root: &Path, dir: &Path, lines: &mut Vec<String>) -> Result<()> {
+/// paths relative to `root`. Links are recorded by their target. `.git` is skipped unless
+/// `vendored`: in a checkout it's our own clone, but a vendored package's is part of it.
+fn dir_lines(root: &Path, dir: &Path, vendored: bool, lines: &mut Vec<String>) -> Result<()> {
     for entry in fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
         let entry = entry?;
         let path = entry.path();
@@ -273,8 +307,8 @@ fn dir_lines(root: &Path, dir: &Path, lines: &mut Vec<String>) -> Result<()> {
             let target = fs::read_link(&path)?;
             lines.push(format!("link {} -> {}\n", rel, target.display()));
         } else if kind.is_dir() {
-            if entry.file_name() != ".git" {
-                dir_lines(root, &path, lines)?;
+            if vendored || entry.file_name() != ".git" {
+                dir_lines(root, &path, vendored, lines)?;
             }
         } else {
             lines.push(file_line(root, &path)?);
@@ -295,9 +329,9 @@ fn lines_hash(mut lines: Vec<String>) -> String {
 }
 
 /// sha256 lines for every file under `dir`, sorted, and hashed.
-fn dir_hash(dir: &Path) -> Result<String> {
+fn dir_hash(dir: &Path, vendored: bool) -> Result<String> {
     let mut lines = Vec::new();
-    dir_lines(dir, dir, &mut lines)?;
+    dir_lines(dir, dir, vendored, &mut lines)?;
     Ok(lines_hash(lines))
 }
 
@@ -305,9 +339,9 @@ fn dir_hash(dir: &Path) -> Result<String> {
 /// which is where the modules it uses usually live; plus the files it pulls in from
 /// elsewhere, or else the whole package. Without such files, the hash is what it was before
 /// they were followed.
-fn script_hash(pkg_dir: &Path, script: &Path, pulled: &Pulled) -> Result<String> {
+fn script_hash(pkg_dir: &Path, script: &Path, pulled: &Pulled, vendored: bool) -> Result<String> {
     if pulled.whole_package.is_some() {
-        return dir_hash(pkg_dir);
+        return dir_hash(pkg_dir, vendored);
     }
     let parent = script
         .parent()
@@ -316,14 +350,14 @@ fn script_hash(pkg_dir: &Path, script: &Path, pulled: &Pulled) -> Result<String>
         return if parent == pkg_dir {
             Ok(sha256_hex(&fs::read(script)?))
         } else {
-            dir_hash(parent)
+            dir_hash(parent, vendored)
         };
     }
     let mut lines = Vec::new();
     if parent == pkg_dir {
         lines.push(file_line(pkg_dir, script)?);
     } else {
-        dir_lines(pkg_dir, parent, &mut lines)?;
+        dir_lines(pkg_dir, parent, vendored, &mut lines)?;
     }
     for f in &pulled.files {
         lines.push(file_line(pkg_dir, f)?);
@@ -340,8 +374,51 @@ fn pulled_by(pkg_dir: &Path, script: &Path) -> Result<Pulled> {
     Ok(pulled)
 }
 
-/// Fail when `path` is a link. Registry archives and `cargo vendor` have none, but a git
-/// repository can point a file anywhere.
+/// A key in a shipped cargo config that makes cargo build something other than what was
+/// reviewed: other sources (`[source]`, `[patch]`, `paths`) or another target.
+fn changes_what_is_built(doc: &toml::Table) -> Option<&'static str> {
+    for key in ["source", "patch", "paths"] {
+        if doc.contains_key(key) {
+            return Some(key);
+        }
+    }
+    doc.get("build")
+        .and_then(|b| b.get("target"))
+        .map(|_| "build.target")
+}
+
+/// The crate a package comes from: its checksum for a registry package, its commit for a git
+/// one, nothing for a package of the checkout. `checksums` holds registry packages only.
+fn crate_pin(
+    source: Option<&str>,
+    name: &str,
+    version: &str,
+    checksums: &BTreeMap<(String, String), String>,
+) -> Pin {
+    let source = source.unwrap_or("");
+    if is_registry(source) {
+        checksums
+            .get(&(name.to_string(), version.to_string()))
+            .cloned()
+            .map_or(Pin::None, Pin::Checksum)
+    } else {
+        git_commit(source).map_or(Pin::None, Pin::Commit)
+    }
+}
+
+/// A registry source in cargo's notation: `registry+https://…` or `sparse+https://…`.
+fn is_registry(source: &str) -> bool {
+    source.starts_with("registry+") || source.starts_with("sparse+")
+}
+
+/// The commit of a `git+https://…#<commit>` source.
+fn git_commit(source: &str) -> Option<String> {
+    source
+        .strip_prefix("git+")
+        .and_then(|s| s.rsplit_once('#'))
+        .map(|(_, c)| c.to_string())
+}
+
 /// Fail unless `dir`, with links resolved, is inside one of `roots` (already resolved). A
 /// workspace member or path dependency that leads elsewhere, through a link or `..`, would
 /// let an override or strip write outside the tool's sources.
@@ -358,6 +435,8 @@ fn inside_sources(dir: &Path, roots: &[PathBuf]) -> Result<()> {
     Ok(())
 }
 
+/// Fail when `path` is a link. Registry archives and `cargo vendor` have none, but a git
+/// repository can point a file anywhere.
 fn refuse_link(path: &Path) -> Result<()> {
     let meta = path
         .symlink_metadata()
@@ -405,12 +484,19 @@ fn shipped_configs(checkout: &Checkout) -> Result<Vec<Item>> {
                     path.display()
                 );
             }
+            if let Some(key) = changes_what_is_built(&doc) {
+                bail!(
+                    "{} sets `{key}`, which changes what's built behind the review; refusing it",
+                    path.display()
+                );
+            }
             items.push(Item {
                 kind: Kind::CargoConfig,
                 package: String::new(),
                 version: String::new(),
                 path: slash(path.strip_prefix(&checkout.root)?),
                 hash: sha256_hex(&bytes),
+                pin: Pin::None,
                 location: path,
                 base: checkout.root.clone(),
                 vendored: false,
@@ -464,6 +550,7 @@ pub fn collect(
         "--manifest-path",
     ])
     .arg(&manifest)
+    .args(selection.config)
     .args(&vendored.config_args);
     if offline {
         cmd.arg("--offline");
@@ -477,9 +564,16 @@ pub fn collect(
         .filter_map(|d| d.canonicalize().ok())
         .collect();
     let lock = lock::load(&checkout.lock_path())?;
+    // Checksums of registry packages only: a git or path package of the same name and version
+    // must never borrow one.
     let checksums: BTreeMap<(String, String), String> = lock
         .packages
         .iter()
+        .filter(|p| {
+            p.source
+                .as_ref()
+                .is_some_and(|s| is_registry(&s.to_string()))
+        })
         .filter_map(|p| {
             let sum = p.checksum.as_ref()?.to_string();
             Some(((p.name.as_str().to_string(), p.version.to_string()), sum))
@@ -501,6 +595,7 @@ pub fn collect(
         inside_sources(&pkg_dir, &roots)
             .with_context(|| format!("package {} {}", pkg.name, pkg.version))?;
         let in_vendor = pkg_dir.starts_with(&vendored.dir);
+        let pin = crate_pin(pkg.source.as_deref(), &pkg.name, &pkg.version, &checksums);
         for t in &pkg.targets {
             if t.kind.iter().any(|k| k == "custom-build") {
                 let rel = t.src_path.strip_prefix(&pkg_dir).with_context(|| {
@@ -516,7 +611,8 @@ pub fn collect(
                     package: pkg.name.clone(),
                     version: pkg.version.clone(),
                     path: slash(rel),
-                    hash: script_hash(&pkg_dir, &t.src_path, &pulled)?,
+                    hash: script_hash(&pkg_dir, &t.src_path, &pulled, in_vendor)?,
+                    pin: pin.clone(),
                     location: t.src_path.clone(),
                     base: pkg_dir.clone(),
                     vendored: in_vendor,
@@ -529,18 +625,11 @@ pub fn collect(
             .iter()
             .any(|t| t.kind.iter().any(|k| k == "proc-macro"))
         {
-            let key = (pkg.name.clone(), pkg.version.clone());
-            let git_commit = pkg
-                .source
-                .as_deref()
-                .filter(|s| s.starts_with("git+"))
-                .and_then(|s| s.rsplit_once('#'))
-                .map(|(_, c)| c.to_string());
-            let hash = match (checksums.get(&key), git_commit) {
-                (Some(sum), _) => sum.clone(),
-                (None, Some(commit)) => commit,
+            let hash = match pin.clone() {
+                Pin::Checksum(sum) => sum,
+                Pin::Commit(commit) => commit,
                 // A package of the tool's own workspace: pinned by its files.
-                (None, None) => dir_hash(&pkg_dir)?,
+                Pin::None => dir_hash(&pkg_dir, in_vendor)?,
             };
             items.push(Item {
                 kind: Kind::ProcMacro,
@@ -548,6 +637,7 @@ pub fn collect(
                 version: pkg.version.clone(),
                 path: String::new(),
                 hash,
+                pin: Pin::None,
                 location: pkg_dir.clone(),
                 base: pkg_dir,
                 vendored: in_vendor,
@@ -604,7 +694,7 @@ pub struct Known {
 }
 
 /// Decisions in other tools' review files, by kind, package, path and hash.
-pub type KnownMap = BTreeMap<(Kind, String, String, String), Known>;
+pub type KnownMap = BTreeMap<(Kind, String, String, String, Pin), Known>;
 
 fn known_for<'a>(known: &'a KnownMap, item: &Item) -> Option<&'a Known> {
     known.get(&(
@@ -612,6 +702,7 @@ fn known_for<'a>(known: &'a KnownMap, item: &Item) -> Option<&'a Known> {
         item.package.clone(),
         item.path.clone(),
         item.hash.clone(),
+        item.pin.clone(),
     ))
 }
 
@@ -646,7 +737,7 @@ fn known_elsewhere(crates_dir: &Path, name: &str) -> KnownMap {
         };
         for e in entries {
             known
-                .entry((e.kind, e.package, e.path, e.hash))
+                .entry((e.kind, e.package, e.path, e.hash, e.pin))
                 .or_insert_with(|| Known {
                     tool: tool.clone(),
                     action: e.action,
@@ -771,9 +862,9 @@ fn settle(
 /// or commit.
 fn snapshot(item: &Item) -> Result<String> {
     match item.kind {
-        Kind::BuildScript => script_hash(&item.base, &item.location, &item.pulled),
+        Kind::BuildScript => script_hash(&item.base, &item.location, &item.pulled, item.vendored),
         Kind::CargoConfig => Ok(sha256_hex(&fs::read(&item.location)?)),
-        Kind::ProcMacro => dir_hash(&item.location),
+        Kind::ProcMacro => dir_hash(&item.location, item.vendored),
     }
 }
 
@@ -892,7 +983,13 @@ fn review_item(
         Kind::ProcMacro => (None, Some(hash.to_string())),
         _ => (Some(hash.to_string()), None),
     };
-    let (sha256, checksum) = hash(item.kind, &item.hash);
+    let (sha256, mut checksum) = hash(item.kind, &item.hash);
+    let mut commit = None;
+    match &item.pin {
+        Pin::Checksum(c) => checksum = Some(c.clone()),
+        Pin::Commit(c) => commit = Some(c.clone()),
+        Pin::None => {}
+    }
     output::ReviewItem {
         kind: item.kind.table().to_string(),
         package: item.package.clone(),
@@ -900,6 +997,7 @@ fn review_item(
         path: item.path.clone(),
         sha256,
         checksum,
+        commit,
         location,
         previous: previous.map(|p| {
             let (sha256, checksum) = hash(p.kind, &p.hash);
@@ -989,7 +1087,7 @@ fn record(path: &Path, decisions: Vec<Decision>, stale: &[&Entry]) -> Result<Vec
     {
         match previous.filter(|p| !reused.contains(p)) {
             Some(p) => {
-                update_entry(&mut doc, p, &item.hash, action, file.as_deref());
+                update_entry(&mut doc, p, &item, action, file.as_deref());
                 reused.push(p);
             }
             None => add_entry(&mut doc, &item, action, file.as_deref()),
@@ -1027,20 +1125,42 @@ fn tables_of(doc: &mut toml_edit::DocumentMut, kind: Kind) -> &mut toml_edit::Ar
 
 /// Whether table `t` is the one `e` was read from.
 fn is_entry(t: &toml_edit::Table, e: &Entry) -> bool {
-    let get = |k: &str| t.get(k).and_then(|v| v.as_str()).unwrap_or("");
-    get("package") == e.package && get("path") == e.path && get(e.kind.hash_key()) == e.hash
+    let get = |k: &str| t.get(k).and_then(|v| v.as_str());
+    let pin = match e.kind {
+        Kind::BuildScript => match &e.pin {
+            Pin::None => get("checksum").is_none() && get("commit").is_none(),
+            p => p.key().is_some_and(|(k, v)| get(k) == Some(v)),
+        },
+        _ => true,
+    };
+    get("package").unwrap_or("") == e.package
+        && get("path").unwrap_or("") == e.path
+        && get(e.kind.hash_key()) == Some(e.hash.as_str())
+        && pin
 }
 
-/// Point entry `e` at new content and decision, keeping its place and comments.
+/// Write `pin` into a build-script table, replacing any other.
+fn set_pin(t: &mut toml_edit::Table, pin: &Pin) {
+    t.remove("checksum");
+    t.remove("commit");
+    if let Some((k, v)) = pin.key() {
+        t[k] = toml_edit::value(v);
+    }
+}
+
+/// Point entry `e` at `item`'s content and the new decision, keeping its place and comments.
 fn update_entry(
     doc: &mut toml_edit::DocumentMut,
     e: &Entry,
-    hash: &str,
+    item: &Item,
     action: Action,
     file: Option<&str>,
 ) {
     if let Some(t) = tables_of(doc, e.kind).iter_mut().find(|t| is_entry(t, e)) {
-        t[e.kind.hash_key()] = toml_edit::value(hash);
+        t[e.kind.hash_key()] = toml_edit::value(item.hash.as_str());
+        if e.kind == Kind::BuildScript {
+            set_pin(t, &item.pin);
+        }
         t["action"] = toml_edit::value(action.as_str());
         match file {
             Some(f) => t["file"] = toml_edit::value(f),
@@ -1067,6 +1187,9 @@ fn add_entry(doc: &mut toml_edit::DocumentMut, item: &Item, action: Action, file
         t["path"] = toml_edit::value(item.path.as_str());
     }
     t[item.kind.hash_key()] = toml_edit::value(item.hash.as_str());
+    if item.kind == Kind::BuildScript {
+        set_pin(&mut t, &item.pin);
+    }
     t["action"] = toml_edit::value(action.as_str());
     if let Some(f) = file {
         t["file"] = toml_edit::value(f);

@@ -25,6 +25,7 @@ fn review_pending_names_its_hash_by_kind() {
             path: String::new(),
             sha256: None,
             checksum: Some("cc".into()),
+            commit: None,
             location: ".project-tools/targets/t/vendor/serde_derive-1.0.0".into(),
             previous: Some(Previous {
                 action: "approve".into(),

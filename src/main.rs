@@ -265,6 +265,7 @@ fn add(project: &Project, config: &Config, args: AddArgs) -> Result<()> {
         name,
         &install::feature_flags(&features, default_features),
         config.settings.targets.as_deref(),
+        &config.build,
         &checkout,
         args.approve_build,
     )?;
@@ -556,6 +557,7 @@ fn update_interactive(project: &Project, config: &Config, args: UpdateArgs) -> R
         name,
         &setup.feature_args(),
         config.targets_for(tool),
+        &config.build.merged(tool.build.as_ref()),
         &setup.checkout,
         args.approve_build,
     )?;
@@ -772,6 +774,7 @@ fn update(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
         name,
         &install::feature_flags(&features, default_features),
         config.targets_for(tool),
+        &config.build.merged(tool.build.as_ref()),
         &checkout,
         args.approve_build,
     )?;
@@ -818,11 +821,17 @@ fn review_build(
     name: &str,
     features: &[String],
     targets: Option<&[String]>,
+    build: &config::Build,
     checkout: &source::Checkout,
     approve: bool,
 ) -> Result<()> {
     let vendored = vendor::vendor(project, name, checkout, false, &[])?;
-    let selection = graph::Selection { features, targets };
+    let config = install::resolve_config(build, &[]);
+    let selection = graph::Selection {
+        features,
+        targets,
+        config: &config,
+    };
     review::review(
         project, name, selection, checkout, &vendored, false, approve,
     )?;
@@ -864,7 +873,9 @@ fn built_for(
     if let Some(list) = targets {
         say!("  targets: {}", list.join(", "));
     }
-    graph::built_packages(project, name, tool, targets, offline)
+    let build = config.build.merged(tool.build.as_ref());
+    let resolve = install::resolve_config(&build, &[]);
+    graph::built_packages(project, name, tool, targets, &resolve, offline)
 }
 
 fn audit_tool(
@@ -1021,6 +1032,17 @@ fn check_targets(
     build_args: &cli::BuildArgs,
     approve: bool,
 ) -> Result<bool> {
+    // Only `--target` and `[build].target` are checked against the approved targets.
+    if std::env::var_os("CARGO_BUILD_TARGET").is_some() {
+        bail!("CARGO_BUILD_TARGET is set; use --target or [build].target instead");
+    }
+    if build_args
+        .config
+        .iter()
+        .any(|c| c.trim_start().starts_with("build.target"))
+    {
+        bail!("--config build.target isn't checked against the targets; use --target instead");
+    }
     let host = targets::host()?;
     let mut missing: Vec<(&str, Option<&str>, Vec<String>)> = Vec::new();
     for (name, tool) in tools {

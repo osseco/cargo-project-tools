@@ -22,6 +22,8 @@ pub type Built = BTreeSet<(String, Version)>;
 pub struct Selection<'a> {
     pub features: &'a [String],
     pub targets: Option<&'a [String]>,
+    /// The build's `--config` values that change what cargo resolves (`install::resolve_config`).
+    pub config: &'a [String],
 }
 
 /// A remembered `built_packages` result, kept next to the install stamp.
@@ -45,6 +47,7 @@ fn key(name: &str, tool: &Tool, lock_text: &str, selection: Selection) -> String
         &sha256_hex(lock_text.as_bytes()),
         &selection.features.join(" "),
         &targets,
+        &selection.config.join("\0"),
     ];
     sha256_hex(parts.join("\0").as_bytes())
 }
@@ -86,6 +89,7 @@ pub fn built_packages(
     name: &str,
     tool: &Tool,
     targets: Option<&[String]>,
+    config: &[String],
     offline: bool,
 ) -> Result<Built> {
     let lock_path = project.lock_path(name);
@@ -100,6 +104,7 @@ pub fn built_packages(
     let selection = Selection {
         features: &features,
         targets,
+        config,
     };
     let key = key(name, tool, &lock_text, selection);
     let cache = project.built_path(name);
@@ -138,6 +143,7 @@ pub fn tree(
     .arg(manifest)
     .args(selection.features)
     .args(target_args(selection.targets))
+    .args(selection.config)
     .args(extra);
     if offline {
         cmd.arg("--offline");

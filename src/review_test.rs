@@ -7,6 +7,7 @@ fn script(dir: &Path, package: &str, hash: &str) -> Item {
         version: "1.0.0".into(),
         path: "build.rs".into(),
         hash: hash.into(),
+        pin: Pin::None,
         location: dir.join(package).join("build.rs"),
         base: dir.join(package),
         vendored: true,
@@ -21,6 +22,7 @@ fn proc_macro(package: &str, checksum: &str) -> Item {
         version: "1.0.0".into(),
         path: String::new(),
         hash: checksum.into(),
+        pin: Pin::None,
         location: PathBuf::from("/v").join(package),
         base: PathBuf::from("/v").join(package),
         vendored: true,
@@ -196,6 +198,7 @@ fn paste_ready_entry_of_changed_code_keeps_its_decision() {
         package: "ring".into(),
         path: "build.rs".into(),
         hash: "old".into(),
+        pin: Pin::None,
         action: Action::Override,
         file: Some("overrides/ring.rs".into()),
     };
@@ -223,6 +226,7 @@ fn review_records_name_the_hash_and_what_it_replaces() {
         package: "ring".into(),
         path: "build.rs".into(),
         hash: "old".into(),
+        pin: Pin::None,
         action: Action::Strip,
         file: None,
     };
@@ -406,7 +410,7 @@ fn real_script(dir: &Path, package: &str) -> Item {
     fs::write(pkg.join("build.rs"), format!("fn main() {{ {package}() }}")).unwrap();
     let mut item = script(dir, package, "");
     item.location = pkg.join("build.rs");
-    item.hash = script_hash(&pkg, &item.location, &Pulled::default()).unwrap();
+    item.hash = script_hash(&pkg, &item.location, &Pulled::default(), true).unwrap();
     item.base = pkg;
     item
 }
@@ -622,17 +626,17 @@ fn script_hash_covers_its_directory_when_not_at_the_root() {
     let pkg = tmp.path();
     fs::write(pkg.join("build.rs"), "a").unwrap();
     assert_eq!(
-        script_hash(pkg, &pkg.join("build.rs"), &Pulled::default()).unwrap(),
+        script_hash(pkg, &pkg.join("build.rs"), &Pulled::default(), true).unwrap(),
         sha256_hex(b"a")
     );
 
     fs::create_dir_all(pkg.join("build")).unwrap();
     fs::write(pkg.join("build/main.rs"), "mod util;").unwrap();
     fs::write(pkg.join("build/util.rs"), "one").unwrap();
-    let first = script_hash(pkg, &pkg.join("build/main.rs"), &Pulled::default()).unwrap();
+    let first = script_hash(pkg, &pkg.join("build/main.rs"), &Pulled::default(), true).unwrap();
     fs::write(pkg.join("build/util.rs"), "two").unwrap();
     assert_ne!(
-        script_hash(pkg, &pkg.join("build/main.rs"), &Pulled::default()).unwrap(),
+        script_hash(pkg, &pkg.join("build/main.rs"), &Pulled::default(), true).unwrap(),
         first
     );
 }
@@ -654,14 +658,14 @@ fn script_hash_covers_the_files_it_pulls_in() {
 
     let pulled = pulled_by(pkg, &script).unwrap();
     assert_eq!(pulled.files, [pkg.join("helper.rs"), pkg.join("table.txt")]);
-    let first = script_hash(pkg, &script, &pulled).unwrap();
+    let first = script_hash(pkg, &script, &pulled, true).unwrap();
     // Not the old single-file hash, so such entries come up once as changed.
     assert_ne!(first, sha256_hex(&fs::read(&script).unwrap()));
     // Each pulled-in file counts; the rest of the package doesn't.
     fs::write(pkg.join("src/lib.rs"), "changed").unwrap();
-    assert_eq!(script_hash(pkg, &script, &pulled).unwrap(), first);
+    assert_eq!(script_hash(pkg, &script, &pulled, true).unwrap(), first);
     fs::write(pkg.join("table.txt"), "two").unwrap();
-    assert_ne!(script_hash(pkg, &script, &pulled).unwrap(), first);
+    assert_ne!(script_hash(pkg, &script, &pulled, true).unwrap(), first);
 
     // In a directory: files there are covered by it and aren't listed again.
     fs::create_dir_all(pkg.join("build")).unwrap();
@@ -680,8 +684,8 @@ fn script_hash_covers_the_files_it_pulls_in() {
     let pulled = pulled_by(pkg, &script).unwrap();
     assert!(pulled.whole_package.is_some());
     assert_eq!(
-        script_hash(pkg, &script, &pulled).unwrap(),
-        dir_hash(pkg).unwrap()
+        script_hash(pkg, &script, &pulled, true).unwrap(),
+        dir_hash(pkg, true).unwrap()
     );
 }
 
@@ -751,6 +755,7 @@ impl Fixture {
         let selection = crate::graph::Selection {
             features: &[],
             targets,
+            config: &[],
         };
         collect("tool", selection, &self.checkout, &self.vendored, true).unwrap()
     }
@@ -813,6 +818,7 @@ fn check_only_records_nothing() {
     let selection = || crate::graph::Selection {
         features: &[],
         targets: None,
+        config: &[],
     };
     let check = || {
         check_only(
@@ -934,6 +940,7 @@ fn linked_build_scripts_are_refused() {
     let selection = crate::graph::Selection {
         features: &[],
         targets: None,
+        config: &[],
     };
     let err = collect("tool", selection, &f.checkout, &f.vendored, true)
         .unwrap_err()
@@ -1026,5 +1033,138 @@ fn packages_outside_the_sources_are_refused() {
             .unwrap_err()
             .to_string();
         assert!(err.contains("outside the tool's checkout"), "{err}");
+    }
+}
+
+#[test]
+fn a_vendored_packages_git_dir_is_hashed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path();
+    fs::write(pkg.join("build.rs"), "fn main() {}").unwrap();
+    fs::create_dir(pkg.join(".git")).unwrap();
+    fs::write(pkg.join(".git/config"), "a").unwrap();
+    let (vendored, ours) = (dir_hash(pkg, true).unwrap(), dir_hash(pkg, false).unwrap());
+    fs::write(pkg.join(".git/config"), "b").unwrap();
+    assert_ne!(dir_hash(pkg, true).unwrap(), vendored);
+    // In a checkout, `.git` is our own clone.
+    assert_eq!(dir_hash(pkg, false).unwrap(), ours);
+}
+
+#[test]
+fn only_registry_packages_take_a_lock_checksum() {
+    let sums = BTreeMap::from([(("foo".to_string(), "1.0.0".to_string()), "abc".to_string())]);
+    let registry = "registry+https://github.com/rust-lang/crates.io-index";
+    let git = "git+https://example.com/foo.git#0123456789abcdef0123456789abcdef01234567";
+    assert_eq!(
+        crate_pin(Some(registry), "foo", "1.0.0", &sums),
+        Pin::Checksum("abc".into())
+    );
+    // A git or path package of the same name and version as a registry one in the lock.
+    assert_eq!(
+        crate_pin(Some(git), "foo", "1.0.0", &sums),
+        Pin::Commit("0123456789abcdef0123456789abcdef01234567".into())
+    );
+    assert_eq!(crate_pin(None, "foo", "1.0.0", &sums), Pin::None);
+}
+
+#[test]
+fn build_script_entries_carry_their_crate() {
+    let parsed = parse(
+        "[[build-script]]\npackage = \"a\"\npath = \"build.rs\"\nsha256 = \"h\"\nchecksum = \"c\"\naction = \"approve\"\n\n[[build-script]]\npackage = \"b\"\npath = \"build.rs\"\nsha256 = \"h\"\ncommit = \"r\"\naction = \"approve\"\n",
+    )
+    .unwrap();
+    assert_eq!(parsed[0].pin, Pin::Checksum("c".into()));
+    assert_eq!(parsed[1].pin, Pin::Commit("r".into()));
+    for bad in [
+        "[[build-script]]\npackage = \"a\"\npath = \"build.rs\"\nsha256 = \"h\"\nchecksum = \"c\"\ncommit = \"r\"\naction = \"approve\"\n",
+        "[[proc-macro]]\npackage = \"m\"\nchecksum = \"c\"\ncommit = \"r\"\naction = \"approve\"\n",
+    ] {
+        assert!(parse(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn an_entry_for_another_crate_comes_up_as_changed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join(FILE);
+    // Recorded before entries named their crate.
+    fs::write(
+        &file,
+        "[[build-script]]\npackage = \"libc\"\npath = \"build.rs\"\nsha256 = \"aa\"\naction = \"strip\"\n",
+    )
+    .unwrap();
+    let item = || {
+        let mut i = script(tmp.path(), "libc", "aa");
+        i.pin = Pin::Checksum("c1".into());
+        i
+    };
+    let err = check(
+        &file,
+        vec![item()],
+        Mode::Report,
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("1 piece"), "{err}");
+
+    let decided = check(
+        &file,
+        vec![item()],
+        Mode::ApproveAll,
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap();
+    // It keeps its action, now for this crate.
+    assert_eq!(decided[0].action, Action::Strip);
+    let entries = load(&file).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].pin, Pin::Checksum("c1".into()));
+    check(
+        &file,
+        vec![item()],
+        Mode::Report,
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap();
+
+    // Another version of the crate, same script.
+    let mut other = item();
+    other.pin = Pin::Checksum("c2".into());
+    assert!(
+        check(
+            &file,
+            vec![other],
+            Mode::Report,
+            &KnownMap::new(),
+            tmp.path()
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn config_that_changes_what_is_built_is_refused() {
+    for (text, key) in [
+        ("[source.crates-io]\nreplace-with = \"x\"\n", "source"),
+        (
+            "[patch.crates-io]\nserde = { path = \"../serde\" }\n",
+            "patch",
+        ),
+        ("paths = [\"third_party/serde\"]\n", "paths"),
+        (
+            "[build]\ntarget = \"x86_64-pc-windows-gnu\"\n",
+            "build.target",
+        ),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let checkout = checkout_at(tmp.path());
+        fs::create_dir_all(checkout.package_dir.join(".cargo")).unwrap();
+        fs::write(checkout.package_dir.join(".cargo/config.toml"), text).unwrap();
+        let err = shipped_configs(&checkout).unwrap_err().to_string();
+        assert!(err.contains(&format!("`{key}`")), "{err}");
     }
 }

@@ -116,10 +116,113 @@ fn mod_rs_and_inline_modules() {
 }
 
 #[test]
-fn missing_files_are_left_out() {
-    // A cfg'd-out module or include doesn't exist and can't run.
-    let pkg = package(&[("build.rs", "#[cfg(windows)] mod win; fn main() {}")]);
+fn missing_files_cover_the_whole_package() {
+    // rustc might find them some other way than we look for them.
+    for text in [
+        "#[cfg(windows)] mod win; fn main() {}",
+        "#[path = \"gone.rs\"] mod gone;",
+        "fn main() { include!(\"gone.rs\"); }",
+    ] {
+        let pkg = package(&[("build.rs", text)]);
+        let (_, whole) = found(pkg.path(), "build.rs");
+        assert!(whole.is_some_and(|w| w.contains("isn't there")), "{text}");
+    }
+}
+
+#[test]
+fn includes_named_some_other_way_cover_the_whole_package() {
+    for (text, why) in [
+        ("fn main() { r#include!(\"payload.rs\"); }", ""),
+        (
+            "use std::include as inc; fn main() { inc!(\"payload.rs\"); }",
+            "renames",
+        ),
+        (
+            "macro_rules! m { () => { include!(\"payload.rs\") } } fn main() { m!(); }",
+            "inside `macro_rules!`",
+        ),
+        (
+            "macro_rules! call { ($m:ident) => { $m!(\"payload.rs\") } } fn main() { call!(include); }",
+            "passed in",
+        ),
+        (
+            "#[cfg_attr(all(), cfg_attr(all(), path = \"payload.rs\"))] mod x;",
+            "can't be read for sure",
+        ),
+        (
+            "fn main() { include!(\"inc.rs\"); }",
+            "declares a module file",
+        ),
+    ] {
+        let pkg = package(&[
+            ("build.rs", text),
+            ("payload.rs", ""),
+            ("x.rs", ""),
+            ("inc.rs", "mod x;"),
+        ]);
+        let (files, whole) = found(pkg.path(), "build.rs");
+        // `r#include!` is simply followed, as rustc does.
+        if why.is_empty() {
+            assert_eq!(files, ["payload.rs"], "{text}");
+            continue;
+        }
+        let whole = whole.unwrap_or_else(|| panic!("followed: {text}"));
+        assert!(whole.contains(why), "{text}: {whole}");
+    }
+}
+
+#[test]
+fn only_plain_out_dir_paths_count_as_generated() {
+    // Written by the script itself: not followed.
+    let pkg = package(&[(
+        "build.rs",
+        "fn main() { include!(concat!(env!(\"OUT_DIR\"), \"/gen.rs\")); }",
+    )]);
     assert_eq!(found(pkg.path(), "build.rs"), (vec![], None));
+    for text in [
+        // Climbs out of OUT_DIR into the sources.
+        "fn main() { include!(concat!(env!(\"OUT_DIR\"), \"/../../../src/payload.rs\")); }",
+        // A decoy mention.
+        "macro_rules! e { ($x:tt) => { \"\" } } fn main() { include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/payload.rs\", e!(\"OUT_DIR\"))); }",
+    ] {
+        let pkg = package(&[("build.rs", text), ("payload.rs", "")]);
+        let (_, whole) = found(pkg.path(), "build.rs");
+        assert!(whole.is_some(), "followed: {text}");
+    }
+}
+
+#[test]
+fn an_included_file_may_have_inline_modules() {
+    let pkg = package(&[
+        ("build.rs", "mod triple { include!(\"src/triple.rs\"); }"),
+        (
+            "src/triple.rs",
+            "pub fn f() {} #[cfg(test)] mod tests { fn t() {} }",
+        ),
+    ]);
+    assert_eq!(
+        found(pkg.path(), "build.rs"),
+        (vec!["src/triple.rs".into()], None)
+    );
+}
+
+#[test]
+fn other_uses_of_the_name_are_fine() {
+    let pkg = package(&[(
+        "build.rs",
+        "fn main() { cc::Build::new().include(\"src\").compile(\"x\"); let include = 1; }",
+    )]);
+    assert_eq!(found(pkg.path(), "build.rs"), (vec![], None));
+}
+
+#[test]
+fn files_in_dot_git_are_refused() {
+    let pkg = package(&[
+        ("build.rs", "#[path = \".git/x.rs\"] mod x;"),
+        (".git/x.rs", ""),
+    ]);
+    let err = find(pkg.path(), &pkg.path().join("build.rs")).unwrap_err();
+    assert!(format!("{err:#}").contains("inside .git"), "{err:#}");
 }
 
 #[test]
@@ -137,7 +240,7 @@ fn what_cannot_be_followed_covers_the_whole_package() {
         ),
         ("macro_rules! m { () => { mod x; } }", "can't be followed"),
         ("fn main() { mod inner { mod deep; } }", "can't be followed"),
-        ("#[path = concat!(\"a\", \".rs\")] mod a;", "plain string"),
+        ("#[path = concat!(\"a\", \".rs\")] mod a;", "read for sure"),
     ] {
         let pkg = package(&[("build.rs", text), ("unix.rs", ""), ("x.rs", "")]);
         let (files, whole) = found(pkg.path(), "build.rs");

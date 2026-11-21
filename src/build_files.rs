@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
+use syn::ext::IdentExt;
 use syn::punctuated::Punctuated;
 use syn::{Expr, Lit, Meta, Token};
 
@@ -36,7 +37,7 @@ pub fn find(pkg_dir: &Path, script: &Path) -> Result<Pulled> {
         .parent()
         .context("build script without a directory")?;
     let script = finder.check(script)?;
-    finder.source(&script, dir)?;
+    finder.source(&script, dir, false)?;
     finder.files.remove(&script);
     Ok(Pulled {
         files: finder.files.into_iter().collect(),
@@ -60,6 +61,8 @@ struct Ctx<'a> {
     mod_dir: PathBuf,
     /// Inside an inline `mod x { … }`, where `#[path]` is relative to `mod_dir`.
     inline: bool,
+    /// In an `include!`d file, where a `mod x;` file depends on the including module.
+    included: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -98,6 +101,12 @@ impl Finder {
                 path.display()
             );
         };
+        if rel
+            .components()
+            .any(|c| c.as_os_str().eq_ignore_ascii_case(".git"))
+        {
+            bail!("the build script reads {}, inside .git", path.display());
+        }
         Ok(self.pkg_dir.join(rel))
     }
 
@@ -107,13 +116,15 @@ impl Finder {
         self.files.insert(path.clone());
         match include {
             Some(Include::Data) => Ok(()),
-            Some(Include::Code) => self.source(&path, path.parent().unwrap_or(mod_dir)),
-            None => self.source(&path, mod_dir),
+            Some(Include::Code) => self.source(&path, path.parent().unwrap_or(mod_dir), true),
+            None => self.source(&path, mod_dir, false),
         }
     }
 
     /// Read a Rust source file whose `mod x;` declarations are looked for in `mod_dir`.
-    fn source(&mut self, path: &Path, mod_dir: &Path) -> Result<()> {
+    /// `included`: it's `include!`d. Its includes resolve from its own directory, but where
+    /// its `mod` files are depends on the module it lands in, which isn't followed.
+    fn source(&mut self, path: &Path, mod_dir: &Path, included: bool) -> Result<()> {
         if self.whole.is_some() || !self.seen.insert(path.to_path_buf()) {
             return Ok(());
         }
@@ -128,10 +139,14 @@ impl Finder {
             return Ok(());
         };
         let file_dir = path.parent().unwrap_or(mod_dir).to_path_buf();
-        let mut includes = Vec::new();
-        let mut mods = 0;
-        scan(tokens, &mut includes, &mut mods);
-        for (kind, args) in includes {
+        let mut scanned = Scan::default();
+        scan(tokens, false, &mut scanned);
+        if let Some(why) = scanned.unfollowable {
+            self.give_up(format!("{rel} {why}"));
+            return Ok(());
+        }
+        let mods = scanned.mods;
+        for (kind, args) in scanned.includes {
             self.include(kind, args, &file_dir, &rel)?;
         }
         // Items, or an expression for an `include!`d file.
@@ -141,6 +156,7 @@ impl Finder {
                     file_dir: &file_dir,
                     mod_dir: mod_dir.to_path_buf(),
                     inline: false,
+                    included,
                 };
                 self.items(&file.items, &ctx, &rel)?
             }
@@ -167,7 +183,7 @@ impl Finder {
             };
             count += 1;
             let Some((paths, always)) = path_attrs(&m.attrs) else {
-                self.give_up(format!("{rel} has a `#[path]` that isn't a plain string"));
+                self.give_up(format!("{rel} has a `#[path]` that can't be read for sure"));
                 continue;
             };
             let name = m.ident.to_string();
@@ -180,8 +196,13 @@ impl Finder {
                     file_dir: ctx.file_dir,
                     mod_dir,
                     inline: true,
+                    included: ctx.included,
                 };
                 count += self.items(inner, &inner_ctx, rel)?;
+                continue;
+            }
+            if ctx.included {
+                self.give_up(format!("{rel} is included and declares a module file"));
                 continue;
             }
             let base = if ctx.inline {
@@ -189,13 +210,16 @@ impl Finder {
             } else {
                 ctx.file_dir
             };
+            // A file that isn't there can't be checked: rustc may find it some other way.
             for p in &paths {
                 let file = base.join(p);
-                if file.exists() {
-                    // A file loaded through `#[path]` acts as a mod-rs file.
-                    let dir = file.parent().unwrap_or(base).to_path_buf();
-                    self.add(&file, None, &dir)?;
+                if !file.exists() {
+                    self.give_up(format!("{rel} names a module file {p} that isn't there"));
+                    continue;
                 }
+                // A file loaded through `#[path]` acts as a mod-rs file.
+                let dir = file.parent().unwrap_or(base).to_path_buf();
+                self.add(&file, None, &dir)?;
             }
             if !always {
                 let flat = ctx.mod_dir.join(format!("{name}.rs"));
@@ -204,6 +228,8 @@ impl Finder {
                     self.add(&flat, None, &ctx.mod_dir.join(&name))?;
                 } else if nested.exists() {
                     self.add(&nested, None, &ctx.mod_dir.join(&name))?;
+                } else if paths.is_empty() {
+                    self.give_up(format!("{rel} has a module {name} whose file isn't there"));
                 }
             }
         }
@@ -225,10 +251,14 @@ impl Finder {
                 return Ok(());
             }
         };
-        if path.exists() {
-            self.add(&path, Some(kind), file_dir)?;
+        if !path.exists() {
+            self.give_up(format!(
+                "{rel} includes {}, which isn't there",
+                path.display()
+            ));
+            return Ok(());
         }
-        Ok(())
+        self.add(&path, Some(kind), file_dir)
     }
 }
 
@@ -239,21 +269,29 @@ fn path_attrs(attrs: &[syn::Attribute]) -> Option<(Vec<String>, bool)> {
     let mut out = Vec::new();
     let mut always = false;
     for attr in attrs {
-        if attr.path().is_ident("path") {
+        if named(attr.path(), "path") {
             out.push(meta_str(&attr.meta)?);
             always = true;
-        } else if attr.path().is_ident("cfg_attr") {
+        } else if named(attr.path(), "cfg_attr") {
             let metas = attr
                 .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
                 .ok()?;
             for meta in metas.iter().skip(1) {
-                if meta.path().is_ident("path") {
+                if named(meta.path(), "path") {
                     out.push(meta_str(meta)?);
+                } else if named(meta.path(), "cfg_attr") {
+                    // A `path` nested further in isn't followed.
+                    return None;
                 }
             }
         }
     }
     Some((out, always))
+}
+
+/// Whether `path` is the single name `name`, written plainly or as `r#name`.
+fn named(path: &syn::Path, name: &str) -> bool {
+    path.get_ident().is_some_and(|i| i.unraw() == name)
 }
 
 fn meta_str(meta: &Meta) -> Option<String> {
@@ -269,30 +307,71 @@ fn meta_str(meta: &Meta) -> Option<String> {
     }
 }
 
-/// Collect `include!`-family calls and count `mod` keywords, anywhere in the tokens.
-fn scan(tokens: TokenStream, includes: &mut Vec<(Include, TokenStream)>, mods: &mut usize) {
+/// What `scan` finds in a file's tokens.
+#[derive(Default)]
+struct Scan {
+    includes: Vec<(Include, TokenStream)>,
+    /// `mod` keywords anywhere.
+    mods: usize,
+    /// Why the includes can't all be followed, when they can't.
+    unfollowable: Option<String>,
+}
+
+/// The include macro an identifier names, `r#` or not.
+fn include_kind(id: &proc_macro2::Ident) -> Option<Include> {
+    match id.unraw().to_string().as_str() {
+        "include" => Some(Include::Code),
+        "include_str" | "include_bytes" => Some(Include::Data),
+        _ => None,
+    }
+}
+
+/// Collect `include!`-family calls and count `mod` keywords, anywhere in the tokens. Some
+/// includes can't be followed: one renamed (`use std::include as inc;`), one in a
+/// `macro_rules!` body, whose path rustc resolves from wherever the macro is called, and a
+/// macro passed in to a `macro_rules!` body (`$m!(…)`), which could be `include`. Other uses
+/// of the name, like `cc::Build::include`, are fine.
+fn scan(tokens: TokenStream, in_macro: bool, out: &mut Scan) {
     let tokens: Vec<TokenTree> = tokens.into_iter().collect();
+    let punct =
+        |i: usize, c: char| matches!(tokens.get(i), Some(TokenTree::Punct(p)) if p.as_char() == c);
+    // Index of the group that is a `macro_rules!` body.
+    let mut macro_body = None;
     for (i, t) in tokens.iter().enumerate() {
         match t {
             TokenTree::Ident(id) => {
-                let name = id.to_string();
-                if name == "mod" {
-                    *mods += 1;
+                if id == "mod" {
+                    out.mods += 1;
                 }
-                let kind = match name.as_str() {
-                    "include" => Some(Include::Code),
-                    "include_str" | "include_bytes" => Some(Include::Data),
-                    _ => None,
+                let bang = punct(i + 1, '!');
+                if id.unraw() == "macro_rules" && bang {
+                    macro_body = Some(i + 3);
+                }
+                if in_macro && bang && i > 0 && punct(i - 1, '$') {
+                    out.unfollowable
+                        .get_or_insert("calls a macro passed in to `macro_rules!`".into());
+                }
+                let Some(kind) = include_kind(id) else {
+                    continue;
                 };
-                if let (Some(kind), Some(TokenTree::Punct(p)), Some(TokenTree::Group(g))) =
-                    (kind, tokens.get(i + 1), tokens.get(i + 2))
-                    && p.as_char() == '!'
-                    && g.delimiter() != Delimiter::None
-                {
-                    includes.push((kind, g.stream()));
+                if matches!(tokens.get(i + 1), Some(TokenTree::Ident(a)) if a == "as") {
+                    out.unfollowable.get_or_insert(format!("renames `{id}`"));
+                    continue;
+                }
+                let Some(TokenTree::Group(g)) = tokens.get(i + 2) else {
+                    continue;
+                };
+                if !bang || g.delimiter() == Delimiter::None {
+                    continue;
+                }
+                if in_macro {
+                    out.unfollowable
+                        .get_or_insert("includes a file inside `macro_rules!`".into());
+                } else {
+                    out.includes.push((kind, g.stream()));
                 }
             }
-            TokenTree::Group(g) => scan(g.stream(), includes, mods),
+            TokenTree::Group(g) => scan(g.stream(), in_macro || macro_body == Some(i), out),
             _ => {}
         }
     }
@@ -306,14 +385,19 @@ enum IncludePath {
 }
 
 /// The path an `include!`-family call reads: a string literal, or `concat!` of literals and
-/// `env!("CARGO_MANIFEST_DIR")`.
+/// `env!("CARGO_MANIFEST_DIR")`. Only `concat!(env!("OUT_DIR"), "…")` with no `..` counts as
+/// written by the script; any other mention of `OUT_DIR` can't be followed.
 fn include_path(args: TokenStream, pkg_dir: &Path) -> IncludePath {
-    if mentions_out_dir(args.clone()) {
-        return IncludePath::Generated;
-    }
+    let out_dir = mentions_out_dir(args.clone());
     let Ok(expr) = syn::parse2::<Expr>(args) else {
         return IncludePath::Unknown;
     };
+    if out_dir {
+        return match in_out_dir(&expr) {
+            true => IncludePath::Generated,
+            false => IncludePath::Unknown,
+        };
+    }
     let mut out = String::new();
     if !concat_into(&expr, pkg_dir, &mut out) {
         return IncludePath::Unknown;
@@ -330,6 +414,43 @@ fn mentions_out_dir(tokens: TokenStream) -> bool {
     })
 }
 
+/// `concat!(env!("OUT_DIR"), "…", …)`: string literals after it that don't climb out with
+/// `..`.
+fn in_out_dir(expr: &Expr) -> bool {
+    let Expr::Macro(m) = expr else {
+        return false;
+    };
+    if !named(&m.mac.path, "concat") {
+        return false;
+    }
+    let Ok(parts) = m
+        .mac
+        .parse_body_with(Punctuated::<Expr, Token![,]>::parse_terminated)
+    else {
+        return false;
+    };
+    let mut parts = parts.iter();
+    let first = parts.next().is_some_and(|p| match p {
+        Expr::Macro(e) if named(&e.mac.path, "env") => e
+            .mac
+            .parse_body::<syn::LitStr>()
+            .is_ok_and(|n| n.value() == "OUT_DIR"),
+        _ => false,
+    });
+    let mut rest = String::new();
+    let literals = parts.all(|p| match p {
+        Expr::Lit(lit) => match &lit.lit {
+            Lit::Str(s) => {
+                rest.push_str(&s.value());
+                true
+            }
+            _ => false,
+        },
+        _ => false,
+    });
+    first && literals && !rest.split(['/', '\\']).any(|c| c == "..")
+}
+
 fn concat_into(expr: &Expr, pkg_dir: &Path, out: &mut String) -> bool {
     match expr {
         Expr::Lit(lit) => match &lit.lit {
@@ -339,7 +460,7 @@ fn concat_into(expr: &Expr, pkg_dir: &Path, out: &mut String) -> bool {
             }
             _ => false,
         },
-        Expr::Macro(m) if m.mac.path.is_ident("concat") => {
+        Expr::Macro(m) if named(&m.mac.path, "concat") => {
             let Ok(parts) = m
                 .mac
                 .parse_body_with(Punctuated::<Expr, Token![,]>::parse_terminated)
@@ -348,7 +469,7 @@ fn concat_into(expr: &Expr, pkg_dir: &Path, out: &mut String) -> bool {
             };
             parts.iter().all(|p| concat_into(p, pkg_dir, out))
         }
-        Expr::Macro(m) if m.mac.path.is_ident("env") => match m.mac.parse_body::<syn::LitStr>() {
+        Expr::Macro(m) if named(&m.mac.path, "env") => match m.mac.parse_body::<syn::LitStr>() {
             Ok(name) if name.value() == "CARGO_MANIFEST_DIR" => {
                 out.push_str(&pkg_dir.to_string_lossy());
                 true
