@@ -11,8 +11,10 @@ publish = false
 anyhow = "1.0.104"
 cargo-lock = "11.1.0"
 clap = { version = "4.6.7", features = ["derive"] }
+edtui = { version = "0.11.8", default-features = false, features = ["mouse-support"] }
 flate2 = "1.1.11"
 hex = "0.4.3"
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 rustsec = { version = "0.34.1", default-features = false }
 semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }

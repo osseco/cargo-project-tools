@@ -122,8 +122,9 @@ pub struct AddArgs {
     /// Binaries to install (default: all).
     #[arg(long = "bin")]
     pub bins: Vec<String>,
-    /// Record new or changed build scripts, proc macros and cargo config in
-    /// build-review.toml. Review them first.
+    /// Record all new or changed build scripts, proc macros and cargo config in
+    /// build-review.toml at once. Review them first. In a terminal, without this flag,
+    /// a review screen lets you decide on each.
     #[arg(long)]
     pub approve_build: bool,
 }
@@ -134,8 +135,9 @@ pub struct UpgradeArgs {
     /// Version requirement (default: latest stable).
     #[arg(long)]
     pub version: Option<String>,
-    /// Record new or changed build scripts, proc macros and cargo config in
-    /// build-review.toml. Review them first.
+    /// Record all new or changed build scripts, proc macros and cargo config in
+    /// build-review.toml at once. Review them first. In a terminal, without this flag,
+    /// a review screen lets you decide on each.
     #[arg(long)]
     pub approve_build: bool,
 }
@@ -152,8 +154,9 @@ pub struct UpdateArgs {
     /// Also update the dependencies of the given dependencies.
     #[arg(long)]
     pub recursive: bool,
-    /// Record new or changed build scripts, proc macros and cargo config in
-    /// build-review.toml. Review them first.
+    /// Record all new or changed build scripts, proc macros and cargo config in
+    /// build-review.toml at once. Review them first. In a terminal, without this flag,
+    /// a review screen lets you decide on each.
     #[arg(long)]
     pub approve_build: bool,
 }
@@ -165,8 +168,9 @@ pub struct InstallArgs {
     /// Rebuild even if the install stamp is up to date.
     #[arg(long)]
     pub force: bool,
-    /// Record new or changed build scripts, proc macros and cargo config in
-    /// build-review.toml. Review them first.
+    /// Record all new or changed build scripts, proc macros and cargo config in
+    /// build-review.toml at once. Review them first. In a terminal, without this flag,
+    /// a review screen lets you decide on each.
     #[arg(long)]
     pub approve_build: bool,
     /// Add this machine (and --target) to the tool's targets when it isn't one of them.

@@ -4,6 +4,7 @@ mod checksum;
 mod cli;
 mod config;
 mod graph;
+mod highlight;
 mod install;
 mod lock;
 mod net;

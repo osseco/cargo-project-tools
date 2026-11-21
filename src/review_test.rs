@@ -96,13 +96,13 @@ fn new_code_halts_until_approved() {
         ]
     };
 
-    let err = check(&file, items(), false, tmp.path())
+    let err = check(&file, items(), Mode::Report, tmp.path())
         .unwrap_err()
         .to_string();
     assert!(err.contains("2 pieces of build-time code"), "{err}");
     assert!(!file.exists());
 
-    let decided = check(&file, items(), true, tmp.path()).unwrap();
+    let decided = check(&file, items(), Mode::ApproveAll, tmp.path()).unwrap();
     assert_eq!(decided.len(), 2);
     assert!(decided.iter().all(|d| d.action == Action::Approve));
     let entries = load(&file).unwrap();
@@ -115,7 +115,12 @@ fn new_code_halts_until_approved() {
 
     // Recorded: passes without the flag, and the file isn't rewritten.
     let before = fs::read_to_string(&file).unwrap();
-    assert_eq!(check(&file, items(), false, tmp.path()).unwrap().len(), 2);
+    assert_eq!(
+        check(&file, items(), Mode::Report, tmp.path())
+            .unwrap()
+            .len(),
+        2
+    );
     assert_eq!(fs::read_to_string(&file).unwrap(), before);
 }
 
@@ -130,18 +135,88 @@ fn changed_code_keeps_its_action_and_drops_the_old_entry() {
     .unwrap();
     let items = || vec![script(tmp.path(), "ring", "new")];
 
-    let err = check(&file, items(), false, tmp.path())
+    let err = check(&file, items(), Mode::Report, tmp.path())
         .unwrap_err()
         .to_string();
     assert!(err.contains("1 piece of"), "{err}");
 
-    let decided = check(&file, items(), true, tmp.path()).unwrap();
+    let decided = check(&file, items(), Mode::ApproveAll, tmp.path()).unwrap();
     assert_eq!(decided[0].action, Action::Override);
     assert_eq!(decided[0].file.as_deref(), Some("overrides/ring.rs"));
     let entries = load(&file).unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].hash, "new");
     assert_eq!(entries[0].action, Action::Override);
+    assert!(
+        fs::read_to_string(&file)
+            .unwrap()
+            .starts_with("# why we override ring")
+    );
+}
+
+#[test]
+fn paste_ready_entries_parse_back() {
+    let tmp = tempfile::tempdir().unwrap();
+    let text = paste_ready(&script(tmp.path(), "libc", "aa"), None)
+        + &paste_ready(&proc_macro("serde_derive", "cc"), None);
+    let entries = parse(&text).unwrap();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].package, "libc");
+    assert_eq!(entries[0].hash, "aa");
+    assert_eq!(entries[0].action, Action::Approve);
+    assert_eq!(entries[1].kind, Kind::ProcMacro);
+    assert_eq!(entries[1].hash, "cc");
+}
+
+#[test]
+fn paste_ready_entry_of_changed_code_keeps_its_decision() {
+    let tmp = tempfile::tempdir().unwrap();
+    let previous = Entry {
+        kind: Kind::BuildScript,
+        package: "ring".into(),
+        path: "build.rs".into(),
+        hash: "old".into(),
+        action: Action::Override,
+        file: Some("overrides/ring.rs".into()),
+    };
+    let text = paste_ready(&script(tmp.path(), "ring", "new"), Some(&previous));
+    assert!(
+        text.contains("# replaces the entry with sha256 = \"old\""),
+        "{text}"
+    );
+    let entries = parse(&text).unwrap();
+    assert_eq!(entries[0].hash, "new");
+    assert_eq!(entries[0].action, Action::Override);
+    assert_eq!(entries[0].file.as_deref(), Some("overrides/ring.rs"));
+}
+
+#[test]
+fn a_new_decision_for_changed_code_updates_the_entry_in_place() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join(FILE);
+    fs::write(
+        &file,
+        "# why we override ring\n[[build-script]]\npackage = \"ring\"\npath = \"build.rs\"\nsha256 = \"old\"\naction = \"override\"\nfile = \"overrides/ring.rs\"\n",
+    )
+    .unwrap();
+    let previous = load(&file).unwrap().remove(0);
+    let decided = record(
+        &file,
+        vec![Decision {
+            item: script(tmp.path(), "ring", "new"),
+            previous: Some(&previous),
+            action: Action::Strip,
+            file: None,
+        }],
+        &[&previous],
+    )
+    .unwrap();
+    assert_eq!(decided[0].action, Action::Strip);
+    let entries = load(&file).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].hash, "new");
+    assert_eq!(entries[0].action, Action::Strip);
+    assert_eq!(entries[0].file, None);
     assert!(
         fs::read_to_string(&file)
             .unwrap()
@@ -159,9 +234,9 @@ fn two_versions_of_a_proc_macro_are_separate_entries() {
             proc_macro("thiserror-impl", "v2"),
         ]
     };
-    check(&file, items(), true, tmp.path()).unwrap();
+    check(&file, items(), Mode::ApproveAll, tmp.path()).unwrap();
     assert_eq!(load(&file).unwrap().len(), 2);
-    assert!(check(&file, items(), false, tmp.path()).is_ok());
+    assert!(check(&file, items(), Mode::Report, tmp.path()).is_ok());
 }
 
 fn vendored_package(dir: &Path) -> PathBuf {
@@ -222,6 +297,130 @@ fn override_replaces_a_vendored_build_script() {
     let files = checksum_files(&pkg);
     assert!(files.get("build.rs").is_none());
     assert!(files.get("src/lib.rs").is_some());
+}
+
+#[test]
+fn an_unedited_commented_out_copy_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = vendored_package(tmp.path());
+    let crate_dir = tmp.path().join("crate");
+    fs::create_dir_all(crate_dir.join("overrides")).unwrap();
+    fs::write(
+        crate_dir.join("overrides/dep.rs"),
+        format!("// {}\n// fn main() {{}}\n", tui::UNREVIEWED),
+    )
+    .unwrap();
+    let mut item = script(tmp.path(), "dep", "aa");
+    item.base = pkg.clone();
+    item.location = pkg.join("build.rs");
+
+    let err = apply(
+        &[decided(item, Action::Override, Some("overrides/dep.rs"))],
+        &crate_dir,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("commented-out copy"), "{err}");
+    assert_eq!(
+        fs::read_to_string(pkg.join("build.rs")).unwrap(),
+        "fn main() { upstream() }"
+    );
+}
+
+/// A build script on disk whose hash is what `collect` would record.
+fn real_script(dir: &Path, package: &str) -> Item {
+    let pkg = dir.join("vendor").join(package);
+    fs::create_dir_all(&pkg).unwrap();
+    fs::write(pkg.join("build.rs"), format!("fn main() {{ {package}() }}")).unwrap();
+    let mut item = script(dir, package, "");
+    item.location = pkg.join("build.rs");
+    item.hash = script_hash(&pkg, &item.location).unwrap();
+    item.base = pkg;
+    item
+}
+
+#[test]
+fn screen_decisions_are_recorded_and_the_undecided_still_fail() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join(FILE);
+    fs::write(
+        &file,
+        "[[build-script]]\npackage = \"b\"\npath = \"build.rs\"\nsha256 = \"old\"\naction = \"strip\"\n\n[[build-script]]\npackage = \"gone\"\npath = \"build.rs\"\nsha256 = \"x\"\naction = \"approve\"\n",
+    )
+    .unwrap();
+    let entries = load(&file).unwrap();
+    let stale: Vec<&Entry> = entries.iter().collect();
+    let a = real_script(tmp.path(), "a");
+    let b = real_script(tmp.path(), "b");
+    let before = vec![snapshot(&a).unwrap(), snapshot(&b).unwrap()];
+    let pending = vec![(a, None), (b, Some(&entries[0]))];
+    let choices = vec![
+        Some(tui::Choice {
+            action: Action::Approve,
+            file: None,
+        }),
+        None,
+    ];
+
+    let err = settle(&file, pending, choices, &before, &stale, tmp.path())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("1 piece of"), "{err}");
+    let entries = load(&file).unwrap();
+    let packages: Vec<(&str, Action)> = entries
+        .iter()
+        .map(|e| (e.package.as_str(), e.action))
+        .collect();
+    // `a` recorded, `b`'s old entry kept until it's decided, `gone` removed.
+    assert_eq!(packages, [("b", Action::Strip), ("a", Action::Approve)]);
+    assert_eq!(entries[0].hash, "old");
+}
+
+#[test]
+fn code_changed_during_the_review_is_not_recorded() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join(FILE);
+    let approve = || {
+        vec![Some(tui::Choice {
+            action: Action::Approve,
+            file: None,
+        })]
+    };
+
+    let a = real_script(tmp.path(), "a");
+    let before = vec![snapshot(&a).unwrap()];
+    fs::write(&a.location, "fn main() { swapped() }").unwrap();
+    let err = settle(&file, vec![(a, None)], approve(), &before, &[], tmp.path())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("changed during the review"), "{err}");
+
+    // A proc macro: any file of its crate.
+    let pkg = tmp.path().join("vendor/m");
+    fs::create_dir_all(pkg.join("src")).unwrap();
+    fs::write(pkg.join("src/lib.rs"), "pub fn m() {}").unwrap();
+    let mut m = proc_macro("m", "lock-checksum");
+    m.location = pkg.clone();
+    m.base = pkg.clone();
+    let before = vec![snapshot(&m).unwrap()];
+    fs::write(pkg.join("src/extra.rs"), "pub fn sneaky() {}").unwrap();
+    let err = settle(
+        &file,
+        vec![(m.clone(), None)],
+        approve(),
+        &before,
+        &[],
+        tmp.path(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("changed during the review"), "{err}");
+    assert!(!file.exists());
+
+    // Unchanged, it's recorded with its lock checksum.
+    let before = vec![snapshot(&m).unwrap()];
+    settle(&file, vec![(m, None)], approve(), &before, &[], tmp.path()).unwrap();
+    assert_eq!(load(&file).unwrap()[0].hash, "lock-checksum");
 }
 
 #[test]
