@@ -93,6 +93,7 @@ Never stage `site/dist/` or `site/node_modules/`.
 - `src/build_files.rs`: the files a build script pulls in (`mod`, `#[path]`, `include!`), read with syn; falls back to the whole package when it can't tell.
 - `src/vendor.rs`: `cargo vendor` into `targets/<tool>/vendor`; builds use it through source replacement.
 - `src/graph.rs`: which locked packages a tool builds with its features and targets (`cargo tree` on a scratch copy).
+- `src/setup.rs`: the model behind interactive setup: a tool's features, the dependency tree they build (`cargo tree`), audit findings per package, why a package is built, version choices, and moving a dependency or the tool. Captures cargo's output.
 - `src/targets.rs`: the host triple, the check that it and `--target` are approved targets, and the target suggestions for `init` (this machine and GitHub workflow runners).
 - `src/audit.rs`: matches locks against the advisory database with rustsec (root and git packages included), our own yanked check, ignore list, fix suggestions.
 - `src/advisory_db.rs`: downloads, revalidates (ETag, `advisory-db-max-age`) and swaps in the RustSec advisory database.

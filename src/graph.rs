@@ -146,7 +146,7 @@ pub fn tree(
 }
 
 /// `--target` for each triple, or `--target all`.
-fn target_args(targets: Option<&[String]>) -> Vec<String> {
+pub fn target_args(targets: Option<&[String]>) -> Vec<String> {
     match targets {
         Some(list) => list
             .iter()

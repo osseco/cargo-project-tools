@@ -182,7 +182,7 @@ pub fn newer_than(
 }
 
 /// Cargo's notion of semver compatibility (same left-most non-zero component).
-fn compatible(a: &semver::Version, b: &semver::Version) -> bool {
+pub fn compatible(a: &semver::Version, b: &semver::Version) -> bool {
     match (a.major, b.major) {
         (0, 0) => match (a.minor, b.minor) {
             (0, 0) => a.patch == b.patch,

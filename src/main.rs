@@ -14,7 +14,10 @@ mod project;
 mod review;
 mod sanitize;
 mod screen;
+// Used by the setup screen, which comes next.
 mod selfinstall;
+#[cfg_attr(not(test), allow(dead_code))]
+mod setup;
 mod sfw;
 mod source;
 mod targets;
