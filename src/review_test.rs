@@ -10,6 +10,7 @@ fn script(dir: &Path, package: &str, hash: &str) -> Item {
         location: dir.join(package).join("build.rs"),
         base: dir.join(package),
         vendored: true,
+        pulled: Pulled::default(),
     }
 }
 
@@ -23,6 +24,7 @@ fn proc_macro(package: &str, checksum: &str) -> Item {
         location: PathBuf::from("/v").join(package),
         base: PathBuf::from("/v").join(package),
         vendored: true,
+        pulled: Pulled::default(),
     }
 }
 
@@ -334,7 +336,7 @@ fn real_script(dir: &Path, package: &str) -> Item {
     fs::write(pkg.join("build.rs"), format!("fn main() {{ {package}() }}")).unwrap();
     let mut item = script(dir, package, "");
     item.location = pkg.join("build.rs");
-    item.hash = script_hash(&pkg, &item.location).unwrap();
+    item.hash = script_hash(&pkg, &item.location, &Pulled::default()).unwrap();
     item.base = pkg;
     item
 }
@@ -524,16 +526,67 @@ fn script_hash_covers_its_directory_when_not_at_the_root() {
     let pkg = tmp.path();
     fs::write(pkg.join("build.rs"), "a").unwrap();
     assert_eq!(
-        script_hash(pkg, &pkg.join("build.rs")).unwrap(),
+        script_hash(pkg, &pkg.join("build.rs"), &Pulled::default()).unwrap(),
         sha256_hex(b"a")
     );
 
     fs::create_dir_all(pkg.join("build")).unwrap();
     fs::write(pkg.join("build/main.rs"), "mod util;").unwrap();
     fs::write(pkg.join("build/util.rs"), "one").unwrap();
-    let first = script_hash(pkg, &pkg.join("build/main.rs")).unwrap();
+    let first = script_hash(pkg, &pkg.join("build/main.rs"), &Pulled::default()).unwrap();
     fs::write(pkg.join("build/util.rs"), "two").unwrap();
-    assert_ne!(script_hash(pkg, &pkg.join("build/main.rs")).unwrap(), first);
+    assert_ne!(
+        script_hash(pkg, &pkg.join("build/main.rs"), &Pulled::default()).unwrap(),
+        first
+    );
+}
+
+#[test]
+fn script_hash_covers_the_files_it_pulls_in() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path();
+    fs::write(
+        pkg.join("build.rs"),
+        "mod helper; const T: &str = include_str!(\"table.txt\");",
+    )
+    .unwrap();
+    fs::write(pkg.join("helper.rs"), "pub fn f() {}").unwrap();
+    fs::write(pkg.join("table.txt"), "one").unwrap();
+    fs::create_dir_all(pkg.join("src")).unwrap();
+    fs::write(pkg.join("src/lib.rs"), "untouched").unwrap();
+    let script = pkg.join("build.rs");
+
+    let pulled = pulled_by(pkg, &script).unwrap();
+    assert_eq!(pulled.files, [pkg.join("helper.rs"), pkg.join("table.txt")]);
+    let first = script_hash(pkg, &script, &pulled).unwrap();
+    // Not the old single-file hash, so such entries come up once as changed.
+    assert_ne!(first, sha256_hex(&fs::read(&script).unwrap()));
+    // Each pulled-in file counts; the rest of the package doesn't.
+    fs::write(pkg.join("src/lib.rs"), "changed").unwrap();
+    assert_eq!(script_hash(pkg, &script, &pulled).unwrap(), first);
+    fs::write(pkg.join("table.txt"), "two").unwrap();
+    assert_ne!(script_hash(pkg, &script, &pulled).unwrap(), first);
+
+    // In a directory: files there are covered by it and aren't listed again.
+    fs::create_dir_all(pkg.join("build")).unwrap();
+    fs::write(
+        pkg.join("build/main.rs"),
+        "mod util; include!(\"../gen.rs\");",
+    )
+    .unwrap();
+    fs::write(pkg.join("build/util.rs"), "").unwrap();
+    fs::write(pkg.join("gen.rs"), "fn g() {}").unwrap();
+    let pulled = pulled_by(pkg, &pkg.join("build/main.rs")).unwrap();
+    assert_eq!(pulled.files, [pkg.join("gen.rs")]);
+
+    // Not followed: the whole package.
+    fs::write(pkg.join("build.rs"), "fn main() { include!(PATH); }").unwrap();
+    let pulled = pulled_by(pkg, &script).unwrap();
+    assert!(pulled.whole_package.is_some());
+    assert_eq!(
+        script_hash(pkg, &script, &pulled).unwrap(),
+        dir_hash(pkg).unwrap()
+    );
 }
 
 #[test]

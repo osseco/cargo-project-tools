@@ -1,5 +1,6 @@
 mod advisory_db;
 mod audit;
+mod build_files;
 mod checksum;
 mod cli;
 mod config;

@@ -7,6 +7,7 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
+use crate::build_files::{self, Pulled};
 use crate::graph;
 use crate::lock;
 use crate::process;
@@ -99,6 +100,9 @@ pub struct Item {
     pub base: PathBuf,
     /// In the vendor directory, where edits must be dropped from `.cargo-checksum.json`.
     pub vendored: bool,
+    /// For a build script: the files it pulls in that its hash covers besides itself (and
+    /// its directory), or why it covers the whole package.
+    pub pulled: Pulled,
 }
 
 impl Item {
@@ -247,45 +251,83 @@ fn slash(rel: &Path) -> String {
         .join("/")
 }
 
-/// sha256 lines (`<hash>  <path>`, like `sha256sum`) for every file under `dir`, sorted, and
-/// hashed. Links are recorded by their target; `.git` is skipped.
-fn dir_hash(dir: &Path) -> Result<String> {
-    fn walk(root: &Path, dir: &Path, lines: &mut Vec<String>) -> Result<()> {
-        for entry in fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
-            let entry = entry?;
-            let path = entry.path();
-            let rel = slash(path.strip_prefix(root)?);
-            let kind = entry.file_type()?;
-            if kind.is_symlink() {
-                let target = fs::read_link(&path)?;
-                lines.push(format!("link {} -> {}\n", rel, target.display()));
-            } else if kind.is_dir() {
-                if entry.file_name() != ".git" {
-                    walk(root, &path, lines)?;
-                }
-            } else {
-                lines.push(format!("{}  {}\n", sha256_hex(&fs::read(&path)?), rel));
+/// The sha256 line (`<hash>  <path>`, like `sha256sum`) for each file under `dir`, with
+/// paths relative to `root`. Links are recorded by their target; `.git` is skipped.
+fn dir_lines(root: &Path, dir: &Path, lines: &mut Vec<String>) -> Result<()> {
+    for entry in fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
+        let entry = entry?;
+        let path = entry.path();
+        let rel = slash(path.strip_prefix(root)?);
+        let kind = entry.file_type()?;
+        if kind.is_symlink() {
+            let target = fs::read_link(&path)?;
+            lines.push(format!("link {} -> {}\n", rel, target.display()));
+        } else if kind.is_dir() {
+            if entry.file_name() != ".git" {
+                dir_lines(root, &path, lines)?;
             }
+        } else {
+            lines.push(file_line(root, &path)?);
         }
-        Ok(())
     }
-    let mut lines = Vec::new();
-    walk(dir, dir, &mut lines)?;
+    Ok(())
+}
+
+fn file_line(root: &Path, path: &Path) -> Result<String> {
+    let rel = slash(path.strip_prefix(root)?);
+    Ok(format!("{}  {}\n", sha256_hex(&fs::read(path)?), rel))
+}
+
+/// The lines, sorted and hashed.
+fn lines_hash(mut lines: Vec<String>) -> String {
     lines.sort();
-    Ok(sha256_hex(lines.concat().as_bytes()))
+    sha256_hex(lines.concat().as_bytes())
+}
+
+/// sha256 lines for every file under `dir`, sorted, and hashed.
+fn dir_hash(dir: &Path) -> Result<String> {
+    let mut lines = Vec::new();
+    dir_lines(dir, dir, &mut lines)?;
+    Ok(lines_hash(lines))
 }
 
 /// The build script's own file when it sits at the crate root, else its whole directory,
-/// which is where the modules it uses usually live.
-fn script_hash(pkg_dir: &Path, script: &Path) -> Result<String> {
+/// which is where the modules it uses usually live; plus the files it pulls in from
+/// elsewhere, or else the whole package. Without such files, the hash is what it was before
+/// they were followed.
+fn script_hash(pkg_dir: &Path, script: &Path, pulled: &Pulled) -> Result<String> {
+    if pulled.whole_package.is_some() {
+        return dir_hash(pkg_dir);
+    }
     let parent = script
         .parent()
         .context("build script without a directory")?;
-    if parent == pkg_dir {
-        Ok(sha256_hex(&fs::read(script)?))
-    } else {
-        dir_hash(parent)
+    if pulled.files.is_empty() {
+        return if parent == pkg_dir {
+            Ok(sha256_hex(&fs::read(script)?))
+        } else {
+            dir_hash(parent)
+        };
     }
+    let mut lines = Vec::new();
+    if parent == pkg_dir {
+        lines.push(file_line(pkg_dir, script)?);
+    } else {
+        dir_lines(pkg_dir, parent, &mut lines)?;
+    }
+    for f in &pulled.files {
+        lines.push(file_line(pkg_dir, f)?);
+    }
+    Ok(lines_hash(lines))
+}
+
+/// What the build script `script` pulls in beyond what `script_hash` already covers.
+fn pulled_by(pkg_dir: &Path, script: &Path) -> Result<Pulled> {
+    let mut pulled = build_files::find(pkg_dir, script)?;
+    if let Some(dir) = script.parent().filter(|d| *d != pkg_dir) {
+        pulled.files.retain(|f| !f.starts_with(dir));
+    }
+    Ok(pulled)
 }
 
 /// Fail when `path` is a link. Registry archives and `cargo vendor` have none, but a git
@@ -346,6 +388,7 @@ fn shipped_configs(checkout: &Checkout) -> Result<Vec<Item>> {
                 location: path,
                 base: checkout.root.clone(),
                 vendored: false,
+                pulled: Pulled::default(),
             });
         }
     }
@@ -433,15 +476,18 @@ pub fn collect(
                 // An override or strip writes these; through a link that would be elsewhere.
                 refuse_link(&t.src_path)?;
                 refuse_link(&pkg.manifest_path)?;
+                let pulled = pulled_by(&pkg_dir, &t.src_path)
+                    .with_context(|| format!("reading the build script of {}", pkg.name))?;
                 items.push(Item {
                     kind: Kind::BuildScript,
                     package: pkg.name.clone(),
                     version: pkg.version.clone(),
                     path: slash(rel),
-                    hash: script_hash(&pkg_dir, &t.src_path)?,
+                    hash: script_hash(&pkg_dir, &t.src_path, &pulled)?,
                     location: t.src_path.clone(),
                     base: pkg_dir.clone(),
                     vendored: in_vendor,
+                    pulled,
                 });
             }
         }
@@ -472,6 +518,7 @@ pub fn collect(
                 location: pkg_dir.clone(),
                 base: pkg_dir,
                 vendored: in_vendor,
+                pulled: Pulled::default(),
             });
         }
     }
@@ -615,7 +662,7 @@ fn settle(
 /// or commit.
 fn snapshot(item: &Item) -> Result<String> {
     match item.kind {
-        Kind::BuildScript => script_hash(&item.base, &item.location),
+        Kind::BuildScript => script_hash(&item.base, &item.location, &item.pulled),
         Kind::CargoConfig => Ok(sha256_hex(&fs::read(&item.location)?)),
         Kind::ProcMacro => dir_hash(&item.location),
     }

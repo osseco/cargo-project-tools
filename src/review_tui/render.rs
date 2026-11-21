@@ -118,6 +118,15 @@ impl App {
             )),
             _ => None,
         });
+        // A build script whose files couldn't all be followed.
+        let warning = warning.or_else(|| {
+            let item = &self.items[self.selected_item()?];
+            let why = item.pulled.whole_package.as_ref()?;
+            Some(format!(
+                " Its hash covers the whole package: {}. Review the files it reads.",
+                shown(why)
+            ))
+        });
         let banner_height = if warning.is_some() { 2 } else { 0 };
         let [radios, _, banner, editor] = Layout::vertical([
             Constraint::Length(1),

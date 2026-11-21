@@ -6,13 +6,24 @@ Building a tool runs code before the tool itself ever runs: build scripts and pr
 
 | Kind | What | Pinned by |
 | --- | --- | --- |
-| `build-script` | The `build.rs` (or `package.build`) of the tool and of every dependency it builds | sha256 of the script file; when the script isn't at the package root, of every file in its directory |
+| `build-script` | The `build.rs` (or `package.build`) of the tool and of every dependency it builds | sha256 of the script file; when the script isn't at the package root, of every file in its directory; plus [the files it pulls in](#files-a-build-script-pulls-in) |
 | `proc-macro` | Every proc-macro crate it builds | The crate checksum from `Cargo.lock`; for a git package its commit |
 | `cargo-config` | `.cargo/config.toml` and `.cargo/config` in the tool's source, from the package directory up to the root of the checkout | sha256 of the file |
 
 Only what the tool builds with its [`features` and `default-features`](configuration.md#toolname) counts, for the [`targets`](configuration.md#targets) you chose, so one review holds on each of them. Without `targets` that's every target, including Windows-only crates when you only build on Linux. Installing on a machine that isn't listed needs `--approve-target`, and then usually `--approve-build` for what that target adds.
 
 Cargo never reads config from inside dependencies, and a config with `include`, or one that is a link, is refused. A shipped `rust-toolchain` file is always removed instead.
+
+### Files a build script pulls in
+
+A build script can run code from other files in its package. Those count as part of it, and are followed through each file in turn:
+
+- its modules: `mod x;` (`x.rs` or `x/mod.rs`), `#[path = "…"]`, and `#[cfg_attr(…, path = "…")]`, with every possible file taken
+- what it includes: `include!`, `include_str!` and `include_bytes!`, with a plain path or `concat!(env!("CARGO_MANIFEST_DIR"), "…")`. Files under `OUT_DIR` are written by the script itself and are skipped.
+
+When that can't be worked out for sure, its sha256 covers the whole package instead, and the review screen says why. That happens when a path is computed some other way, when a file can't be parsed, or when a module is declared inside a macro or a function. A file outside the package, or a link, is refused.
+
+A script that pulls in files has a different sha256 than its file alone, so its entry comes up once as changed.
 
 ## The file
 
@@ -121,4 +132,4 @@ To decide piece by piece, copy the printed entries into the file, set each `acti
 
 ## Limits
 
-A build script's sha256 covers its own file, or its directory when it isn't at the package root. Code it pulls in from elsewhere in the crate with `include!` or `#[path]` isn't part of it, but the crate as a whole is still checked against the lock.
+A build script's files are found by reading its source, not by compiling it. A file it reads at run time (`std::fs::read`, say) isn't part of its sha256, but the crate as a whole is still checked against the lock.

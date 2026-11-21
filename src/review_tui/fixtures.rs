@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::Path;
 
+use crate::build_files::Pulled;
 use crate::review::{Item, Kind};
 
 pub(super) fn write(path: &Path, text: &str) {
@@ -23,6 +24,7 @@ pub(super) fn root_script(dir: &Path, package: &str, text: &str) -> Item {
         location: base.join("build.rs"),
         base,
         vendored: true,
+        pulled: Pulled::default(),
     }
 }
 
@@ -40,6 +42,7 @@ pub(super) fn dir_script(dir: &Path, package: &str) -> Item {
         location: base.join("build/main.rs"),
         base,
         vendored: true,
+        pulled: Pulled::default(),
     }
 }
 
@@ -57,6 +60,7 @@ pub(super) fn proc_macro(dir: &Path, package: &str) -> Item {
         location: base.clone(),
         base,
         vendored: true,
+        pulled: Pulled::default(),
     }
 }
 
@@ -73,5 +77,6 @@ pub(super) fn cargo_config(dir: &Path, text: &str) -> Item {
         location: root.join(".cargo/config.toml"),
         base: root,
         vendored: false,
+        pulled: Pulled::default(),
     }
 }
