@@ -1,6 +1,6 @@
 # Build review
 
-Building a tool runs code before the tool itself ever runs: build scripts and proc macros of the tool and its dependencies, and any cargo config the tool's source ships, which can swap `rustc`, add a wrapper or a linker, or set environment variables. `install` builds only when each piece of it is recorded in the tool's `build-review.toml`, as approved, overridden or stripped.
+Building a tool runs code before the tool itself ever runs: build scripts and proc macros of the tool and its dependencies, the libraries those use, and any cargo config the tool's source ships, which can swap `rustc`, add a wrapper or a linker, or set environment variables. `install` builds only when each piece of it is recorded in the tool's `build-review.toml`, as approved, overridden or stripped.
 
 ## What is reviewed
 
@@ -8,6 +8,7 @@ Building a tool runs code before the tool itself ever runs: build scripts and pr
 | --- | --- | --- |
 | `build-script` | The `build.rs` (or `package.build`) of the tool and of every dependency it builds | sha256 of the script file; when the script isn't at the package root, of every file in its directory (a vendored package's `.git` included); plus [the files it pulls in](#files-a-build-script-pulls-in). And the crate it comes with: its checksum from `Cargo.lock`, or for a git package its commit |
 | `proc-macro` | Every proc-macro crate it builds | The crate checksum from `Cargo.lock`; for a git package its commit |
+| `build-dep` | Every library that build-time code runs: a build script's build-dependencies (`cc`, `autocfg`, …), a proc macro's dependencies (`syn`, `quote`, …), and what those depend on | Like a proc macro |
 | `cargo-config` | `.cargo/config.toml` and `.cargo/config` in the tool's source, from the package directory up to the root of the checkout | sha256 of the file |
 
 Only what the tool builds with its [`features` and `default-features`](configuration.md#toolname) counts, for the [`targets`](configuration.md#targets) you chose, so one review holds on each of them. Without `targets` that's every target, including Windows-only crates when you only build on Linux. Installing on a machine that isn't listed needs `--approve-target`, and then usually `--approve-build` for what that target adds. What's built is worked out with the build's own `rustflags` and `--config`, since a `--cfg` can turn on platform-specific dependencies.
@@ -61,6 +62,11 @@ package = "serde_derive"
 checksum = "…"
 action = "approve"
 
+[[build-dep]]
+package = "syn"
+checksum = "…"
+action = "approve"
+
 [[cargo-config]]
 path = ".cargo/config.toml"
 sha256 = "…"
@@ -73,7 +79,9 @@ action = "strip"
 | `override` | Replace it with `file`, relative to `.project-tools/crates/<tool>/` |
 | `strip` | Remove it: a build script is turned off with `build = false`, a config file is deleted. Cargo refuses to strip the build script of a package with `links` |
 
-A proc macro can only be approved. To avoid one, turn off the feature that pulls it in.
+A proc macro or a build-time library can only be approved. To avoid one, turn off the feature that pulls it in.
+
+Build-time libraries run on the machine that builds, so they're worked out for each of the [`targets`](configuration.md#targets), or for every platform without them, which also counts the Windows-, wasm- and UEFI-only ones. A library that is also a dependency of the tool itself is reviewed as one anyway: its code runs at build time too.
 
 `sha256` and `checksum` always describe the shipped content, also for `override` and `strip`, so a change upstream stops the build again and you can check that your override still fits.
 
@@ -86,7 +94,7 @@ When something isn't recorded and both input and output are a terminal, `add`, `
 | Part | What it does |
 | --- | --- |
 | Tree (left) | The pending pieces by kind, and their files. A build script outside its package root shows its directory, which is what its sha256 covers. A proc macro shows its whole crate. `?` undecided, `✓` approve, `⊘` strip, `✎` override. A changed piece shows its previous decision, and starts on it when that was strip or override; one that was approved starts undecided, since its new content needs a look. One [reviewed for another tool](#reviewed-for-another-tool) says so and starts with that tool's decision. |
-| Decision (top right) | Approve, Strip or Override for the selected piece. A proc macro can only be approved. |
+| Decision (top right) | Approve, Strip or Override for the selected piece. A proc macro or a build-time library can only be approved. |
 | Editor (right) | The selected file, with vim keys and Rust and TOML colours. Shipped files are view only, and long lines wrap, so nothing hides past the right edge. Choosing Override opens the piece's own file, where an existing override shows. |
 | Title bar | How many pieces are approved, overridden, stripped and undecided. |
 | Buttons (bottom) | Tree, Editor, Save override, Done, Cancel. |
@@ -160,7 +168,5 @@ To decide piece by piece, copy the printed entries into the file, set each `acti
 ## Limits
 
 A build script's files are found by reading its source, not by compiling it. A file it reads at run time (`std::fs::read`, say) isn't part of its sha256, but its entry names the crate's checksum or commit, so any change to the crate comes up again.
-
-The libraries that build-time code runs aren't reviewed yet: a build script's build-dependencies (`cc`, `autocfg`, …) and a proc macro's own dependencies (`syn`, `quote`, …). They're checked against the lock and audited like any dependency, but a new version of one doesn't come up for review.
 
 On a nightly toolchain, a manifest can use `cargo-features` to run code without a build script (a custom codegen backend, say). That isn't detected.

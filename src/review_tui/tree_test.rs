@@ -114,3 +114,14 @@ fn a_script_that_pulls_in_files_is_a_folder_of_them() {
     );
     assert_eq!(nodes[1].kind, NodeKind::ItemDir);
 }
+
+#[test]
+fn build_time_libraries_are_shown_as_whole_crates() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut lib = proc_macro(tmp.path(), "syn");
+    lib.kind = Kind::BuildDep;
+    let nodes = build(&[lib]).unwrap();
+    let labels: Vec<(usize, &str)> = nodes.iter().map(|n| (n.depth, n.label.as_str())).collect();
+    assert_eq!(labels[..2], [(0, "build-dep"), (1, "syn@1.0.0")]);
+    assert!(matches!(nodes[1].kind, NodeKind::ItemDir));
+}

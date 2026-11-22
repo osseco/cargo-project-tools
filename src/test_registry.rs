@@ -9,6 +9,9 @@ pub struct Crate {
     version: String,
     build: Option<String>,
     proc_macro: bool,
+    /// `[dependencies]` and `[build-dependencies]` lines.
+    deps: Vec<String>,
+    build_deps: Vec<String>,
 }
 
 impl Crate {
@@ -18,7 +21,21 @@ impl Crate {
             version: version.into(),
             build: None,
             proc_macro: false,
+            deps: Vec::new(),
+            build_deps: Vec::new(),
         }
+    }
+
+    /// Depend on `name` at `req` (`[dependencies]`).
+    pub fn dep(mut self, name: &str, req: &str) -> Self {
+        self.deps.push(format!("{name} = \"{req}\""));
+        self
+    }
+
+    /// Build-depend on `name` at `req` (`[build-dependencies]`).
+    pub fn build_dep(mut self, name: &str, req: &str) -> Self {
+        self.build_deps.push(format!("{name} = \"{req}\""));
+        self
     }
 
     /// Give it a build script with this source.
@@ -55,6 +72,15 @@ impl Registry {
             }
             if c.proc_macro {
                 manifest.push_str("\n[lib]\nproc-macro = true\n");
+            }
+            if !c.deps.is_empty() {
+                manifest.push_str(&format!("\n[dependencies]\n{}\n", c.deps.join("\n")));
+            }
+            if !c.build_deps.is_empty() {
+                manifest.push_str(&format!(
+                    "\n[build-dependencies]\n{}\n",
+                    c.build_deps.join("\n")
+                ));
             }
             fs::write(root.join("Cargo.toml"), manifest).unwrap();
             fs::write(root.join("src/lib.rs"), "").unwrap();

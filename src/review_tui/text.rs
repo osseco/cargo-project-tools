@@ -66,7 +66,7 @@ pub fn override_rel(item: &Item) -> Result<String> {
     let rel = match item.kind {
         Kind::BuildScript => format!("overrides/{}/{}", item.package, item.path),
         Kind::CargoConfig => format!("overrides/cargo-config/{}", item.path),
-        Kind::ProcMacro => bail!("a proc macro can't be overridden"),
+        Kind::ProcMacro | Kind::BuildDep => bail!("a whole crate can't be overridden"),
     };
     safe_relative(&rel)?;
     Ok(rel)

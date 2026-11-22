@@ -240,8 +240,8 @@ It reports:
 
 - the tool's features and what each enables;
 - the packages built with the chosen features, and their advisories (ones in the tool's `audit-ignore.toml` are marked ignored);
-- the build scripts and proc macros among them, and whether the tool's `build-review.toml` has an entry for each;
-- for each feature that isn't on, not even through the ones selected, what turning it on adds: packages, advisories, build scripts and proc macros. With the default features on, it also shows what `default-features = false` removes; with them off, what turning them on adds.
+- the build scripts, proc macros and build-time libraries among them, and whether the tool's `build-review.toml` has an entry for each (build-time libraries are worked out with every feature on here, so this can list more than a review would);
+- for each feature that isn't on, not even through the ones selected, what turning it on adds: packages, advisories, build scripts, proc macros and build-time libraries. With the default features on, it also shows what `default-features = false` removes; with them off, what turning them on adds.
 
 Each feature costs one `cargo tree` run. Like `audit`, it lets cargo download the dependencies to read their manifests, and compiles nothing.
 
@@ -269,9 +269,9 @@ Other fields:
 
 - `file` is the file to change, relative to the project root: `build-review.toml`, `project-tools.toml`, the tool's `Cargo.lock`, or the ignore file.
 - `item` describes the piece of build-time code:
-  - `type` is `build-script`, `proc-macro` or `cargo-config`;
+  - `type` is `build-script`, `proc-macro`, `build-dep` or `cargo-config`;
   - `package`, `version` and `path` are left out when they don't apply;
-  - `sha256` is given for build scripts and cargo config, `checksum` for proc macros;
+  - `sha256` is given for build scripts and cargo config, `checksum` for proc macros and build-time libraries;
   - a build script also has its crate's `checksum`, or `commit` for a git package;
   - `location` is the file or directory to read;
   - `previous` (`action`, plus `sha256` or `checksum`) is the entry it replaces;

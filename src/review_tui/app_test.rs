@@ -754,3 +754,15 @@ fn choosing_override_shows_the_override_file() {
     assert!(app.open.as_ref().unwrap().own);
     assert_eq!(editor_text(&app), "fn main() { /* ours */ }\n");
 }
+
+#[test]
+fn a_build_time_library_can_only_be_approved() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut lib = proc_macro(tmp.path(), "syn");
+    lib.kind = Kind::BuildDep;
+    let mut app = app(tmp.path(), vec![lib]);
+    app.set_radio(0, Action::Strip);
+    assert_eq!(app.radio, [None]);
+    app.set_radio(0, Action::Approve);
+    assert_eq!(app.radio, [Some(Action::Approve)]);
+}
