@@ -100,6 +100,7 @@ Never stage `site/dist/` or `site/node_modules/`.
 - `src/audit.rs`: matches locks against the advisory database with rustsec (root and git packages included), our own yanked check, ignore list, fix suggestions.
 - `src/advisory_db.rs`: downloads, revalidates (ETag, `advisory-db-max-age`) and swaps in the RustSec advisory database.
 - `src/sfw.rs`: re-executes package-downloading commands under sfw.
+- `src/sandbox.rs`: wraps the `cargo install` build in an OS sandbox (`sandbox-exec`, `bwrap`): no network, writes only to the build directory, `bin` and cargo's install records.
 - `src/net.rs`: ureq agent (honours `HTTPS_PROXY` and `SSL_CERT_FILE`).
 - `src/output.rs`: `--message-format`: the `say!` macro for human text (stderr in json mode) and the JSON records written to stdout.
 - `src/toml_line.rs`: the 1-based lines of `[[…]]` tables and keys in a TOML file, for the records' `line`.
@@ -119,6 +120,7 @@ Never stage `site/dist/` or `site/node_modules/`.
 - Reject user values that start with `-` where they're passed as git refs.
 - Never weaken TLS verification. Extra trust comes only from `SSL_CERT_FILE` (set by sfw).
 - `install` always passes `--locked`, so cargo refuses a lock that doesn't fit the manifest.
+- The build runs in the OS sandbox when `[build].sandbox` allows it. Keep what it may write to the build directory, `bin` and `.crates*`; never the project, `CARGO_HOME` or `.project-tools/crates`.
 - Build-time code (build scripts, proc macros, a tool's shipped `.cargo/config*`) is built only when recorded in the tool's `build-review.toml`. Collecting it uses `cargo tree`, `cargo metadata` and `cargo vendor`, which compile and run nothing.
 
 ## GitHub Actions

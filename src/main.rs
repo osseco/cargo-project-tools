@@ -14,6 +14,7 @@ mod output;
 mod process;
 mod project;
 mod review;
+mod sandbox;
 mod sanitize;
 mod screen;
 mod selfinstall;

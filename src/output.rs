@@ -141,6 +141,10 @@ pub enum Record {
         line: Option<usize>,
         targets: Vec<String>,
     },
+    /// `[build].sandbox = "auto"` found no sandbox, so the build runs without one.
+    SandboxMissing {
+        message: String,
+    },
     Advisory {
         tool: String,
         file: String,

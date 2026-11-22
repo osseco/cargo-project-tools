@@ -32,6 +32,8 @@ sfw = "auto"
 
 [build]
 profile = "release"
+# Build in an OS sandbox (no network, writes only to the build): "auto", "require" or "off".
+# sandbox = "auto"
 
 [build.profile-settings]
 strip = "symbols"
@@ -116,6 +118,28 @@ pub enum SfwMode {
     Off,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SandboxMode {
+    #[default]
+    Auto,
+    Require,
+    Off,
+}
+
+/// The operating systems `[build.sandbox-os]` may name, as Rust names them.
+const SANDBOX_OSES: &[&str] = &[
+    "linux",
+    "macos",
+    "windows",
+    "freebsd",
+    "netbsd",
+    "openbsd",
+    "dragonfly",
+    "illumos",
+    "solaris",
+];
+
 #[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Build {
@@ -124,6 +148,12 @@ pub struct Build {
     pub rustflags: Option<Vec<String>>,
     #[serde(default)]
     pub profile_settings: BTreeMap<String, toml::Value>,
+    /// Run the build in an OS sandbox. Not part of what's built, so not in the stamp.
+    #[serde(skip_serializing)]
+    pub sandbox: Option<SandboxMode>,
+    /// `sandbox` for one operating system.
+    #[serde(default, skip_serializing)]
+    pub sandbox_os: BTreeMap<String, SandboxMode>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -161,8 +191,23 @@ impl Build {
             for (k, v) in &over.profile_settings {
                 out.profile_settings.insert(k.clone(), v.clone());
             }
+            if over.sandbox.is_some() {
+                out.sandbox = over.sandbox;
+            }
+            for (k, v) in &over.sandbox_os {
+                out.sandbox_os.insert(k.clone(), *v);
+            }
         }
         out
+    }
+
+    /// The sandbox mode on `os`: its own entry in `sandbox-os`, else `sandbox`, else auto.
+    pub fn sandbox_for(&self, os: &str) -> SandboxMode {
+        self.sandbox_os
+            .get(os)
+            .copied()
+            .or(self.sandbox)
+            .unwrap_or_default()
     }
 
     fn validate(&self, context: &str) -> Result<()> {
@@ -171,6 +216,14 @@ impl Build {
                 bail!(
                     "{context}: unknown profile setting `{key}` (allowed: {})",
                     PROFILE_KEYS.join(", ")
+                );
+            }
+        }
+        for os in self.sandbox_os.keys() {
+            if !SANDBOX_OSES.contains(&os.as_str()) {
+                bail!(
+                    "{context}: unknown operating system `{os}` in sandbox-os (allowed: {})",
+                    SANDBOX_OSES.join(", ")
                 );
             }
         }
