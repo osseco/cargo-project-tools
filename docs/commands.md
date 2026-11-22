@@ -148,6 +148,7 @@ To check all this without building, use [`check`](#check).
 | `--profile <name>`, `--debug` | Override `[build].profile` |
 | `--target <triple>` | Override `[build].target` |
 | `--config <value>` | Extra cargo `--config` values |
+| `--no-sandbox` | Build without the [OS sandbox](configuration.md#sandbox), whatever `[build].sandbox` says |
 | `-j`, `--offline`, `--frozen`, `-q`, `-v`, `--color`, `--keep-going`, `--timings` | Passed through to cargo |
 
 ## check
@@ -291,6 +292,7 @@ With `--message-format json`, stdout holds only JSON records, one per line. All 
 | `review-pending` | Build-time code isn't recorded in [`build-review.toml`](build-review.md) | `tool`, `file`, `line`, `item`, `entry` |
 | `review-unused` | An entry in `build-review.toml` matches nothing the tool builds | `tool`, `file`, `line`, `type`, `package`, `path` |
 | `target-missing` | This machine or `--target` isn't in the tool's [`targets`](configuration.md#targets) | `tool`, `file`, `line`, `targets` |
+| `sandbox-missing` | `[build].sandbox = "auto"` found no working [sandbox](configuration.md#sandbox), so the build runs without one | `message` |
 | `advisory` | A finding of the [audit](#audit) that isn't ignored | `tool`, `file`, `line`, `id`, `type`, `package`, `package_version`, `title`, `patched`, `severity`, `fix` |
 | `ignore-unused` | An ignore that matched nothing | `tool`, `file`, `line`, `id` |
 | `ignore-expired` | An ignore past its `expires` date | `tool`, `file`, `line`, `id`, `expires` |

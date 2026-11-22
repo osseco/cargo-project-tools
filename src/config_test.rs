@@ -193,3 +193,34 @@ fn tool_names_are_crate_names() {
     let err = format!("{:#}", Config::load(&path).unwrap_err());
     assert!(err.contains("not a valid crate name"), "{err}");
 }
+
+#[test]
+fn sandbox_mode_per_operating_system() {
+    let config: Config = toml::from_str(
+        "[build]\nsandbox = \"require\"\n\n[build.sandbox-os]\nwindows = \"off\"\nlinux = \"auto\"\n",
+    )
+    .unwrap();
+    let b = &config.build;
+    assert_eq!(b.sandbox_for("macos"), SandboxMode::Require);
+    assert_eq!(b.sandbox_for("linux"), SandboxMode::Auto);
+    assert_eq!(b.sandbox_for("windows"), SandboxMode::Off);
+    assert_eq!(Build::default().sandbox_for("macos"), SandboxMode::Auto);
+
+    // A tool's own [tool.x.build] wins, per OS too.
+    let over: Build = toml::from_str("[sandbox-os]\nmacos = \"off\"\n").unwrap();
+    let merged = b.merged(Some(&over));
+    assert_eq!(merged.sandbox_for("macos"), SandboxMode::Off);
+    assert_eq!(merged.sandbox_for("windows"), SandboxMode::Off);
+    assert_eq!(merged.sandbox_for("freebsd"), SandboxMode::Require);
+
+    let typo: Build = toml::from_str("[sandbox-os]\nosx = \"off\"\n").unwrap();
+    let err = typo.validate("[build]").unwrap_err().to_string();
+    assert!(err.contains("unknown operating system `osx`"), "{err}");
+}
+
+#[test]
+fn sandbox_settings_stay_out_of_the_stamp() {
+    let b: Build = toml::from_str("sandbox = \"off\"\nprofile = \"release\"\n").unwrap();
+    let json = serde_json::to_string(&b).unwrap();
+    assert!(!json.contains("sandbox"), "{json}");
+}

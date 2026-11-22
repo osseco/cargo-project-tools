@@ -79,6 +79,18 @@ Add `--message-format json` to get each problem as a JSON record on stdout, with
 
 A failure names the files to change. Never fix it on the runner with `--auto-approve` or `--approve-target`: review where you work (`cargo project-tools review`), then commit `build-review.toml` or `project-tools.toml`.
 
+## Build sandbox in CI
+
+macOS runners have `sandbox-exec`. On Linux runners, install bubblewrap first. Ubuntu 24.04 also restricts the user namespaces it needs; allow them for the job:
+
+```yaml
+- run: |
+    sudo apt-get install -y bubblewrap
+    sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+```
+
+Then set `sandbox = "require"` in `[build]`, so a runner without a working sandbox fails instead of building without it. Windows has no sandbox, so give it `windows = "off"` (or `"auto"`) under `[build.sandbox-os]`. See [Configuration](configuration.md#sandbox).
+
 ## Socket Firewall in CI
 
 With `settings.sfw = "auto"`, downloads go through sfw only when it's on `PATH`. To filter them in CI too, install it first with [`osseco/setup-sfw-free`](https://github.com/osseco/setup-sfw-free), and set `sfw = "require"` if a missing sfw should fail the job.

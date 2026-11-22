@@ -12,6 +12,11 @@ targets = ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu"]   # optional; all
 
 [build]
 profile = "release"
+sandbox = "auto"             # "auto", "require" or "off"
+
+[build.sandbox-os]           # optional; per operating system
+macos = "require"
+windows = "off"
 
 [build.profile-settings]     # applied to every tool
 strip = "symbols"
@@ -41,6 +46,8 @@ The target triples tools are [reviewed](build-review.md), audited and installed 
 | `target` | Target triple |
 | `rustflags` | List of extra `rustflags` |
 | `profile-settings` | Profile keys applied to the build profile |
+| `sandbox` | Build in an OS sandbox: `"auto"` (default), `"require"` or `"off"`. See [sandbox](#sandbox) |
+| `sandbox-os` | `sandbox` for one operating system: `linux`, `macos`, `windows`, `freebsd`, … |
 
 Allowed `profile-settings` keys: `inherits`, `opt-level`, `debug`, `strip`, `lto`, `codegen-units`, `panic`, `incremental`, `debug-assertions`, `overflow-checks`, `split-debuginfo`, `rpath`.
 
@@ -71,6 +78,37 @@ Package downloads (`add`, `update`, `install`, `audit`) can run through [Socket 
 `--no-sfw` turns it off for one run. When you already run `sfw cargo project-tools …`, the tool detects the outer sfw and doesn't start a second one. `audit` runs under sfw because cargo downloads the tool's dependencies to work out which of them are built. `audit-db` doesn't start sfw: the advisory database isn't a package. `audit` and `install` fetch the database under sfw, and trust sfw's certificate through `SSL_CERT_FILE`.
 
 On Windows, cargo checks certificate revocation through schannel, and sfw's local certificate has no revocation endpoint, so downloads fail with `the revocation status is unknown`. Turn the check off for cargo with `CARGO_HTTP_CHECK_REVOKE=false`, or `http.check-revoke = false` in your [cargo config](https://doc.rust-lang.org/cargo/reference/config.html#httpcheck-revoke). Certificate and hostname checks stay on.
+
+## sandbox
+
+`install` (and `verify --repair`) run the build in an OS sandbox, so build scripts and proc macros, which run during the build, can't reach the network or write outside the build. That's on top of the [build review](build-review.md), not instead of it: everything stays readable, as cargo and rustc need your toolchain and `CARGO_HOME`.
+
+| OS | Sandbox |
+| --- | --- |
+| macOS | `sandbox-exec` (Seatbelt), which ships with macOS |
+| Linux | [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`), when it's on `PATH` and user namespaces are allowed |
+| Others, Windows included | None |
+
+In the sandbox, the build can write only to `.project-tools/targets/<tool>` (the build directory, with its own temp directory), `.project-tools/bin`, and cargo's install records `.project-tools/.crates.toml` and `.crates2.json`. Your project, `build-review.toml`, `CARGO_HOME` and your home directory are read-only, and there's no network. The build needs none: it runs from the vendored sources. Only the build is sandboxed. Downloading, vendoring and resolving run before it, outside, and through [sfw](#sfw).
+
+| `sandbox` | Behavior |
+| --- | --- |
+| `"auto"` (default) | Use the sandbox when this OS has one that works, otherwise build without it, with a note (and a `sandbox-missing` [JSON record](commands.md#json-output)) |
+| `"require"` | Fail when there's no working sandbox. On Windows that's always |
+| `"off"` | Never use it |
+
+`[build.sandbox-os]` sets it per operating system, by Rust's name for it (`std::env::consts::OS`), and wins over `sandbox`. For example, require it on macOS, use it when there on Linux, and don't look on Windows:
+
+```toml
+[build.sandbox-os]
+macos = "require"
+linux = "auto"
+windows = "off"
+```
+
+A tool's own `[tool.<name>.build]` can set both too. `--no-sandbox` turns it off for one run. Changing it doesn't rebuild a tool that's up to date.
+
+A build script that needs the network, for example one that downloads a library, fails in the sandbox. Look at why in its review before you turn the sandbox off for that tool.
 
 ## advisory-db-max-age
 

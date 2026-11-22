@@ -334,6 +334,9 @@ pub struct BuildArgs {
     pub keep_going: bool,
     #[arg(long)]
     pub timings: bool,
+    /// Build without the OS sandbox, whatever [build].sandbox says.
+    #[arg(long)]
+    pub no_sandbox: bool,
 }
 
 #[derive(Debug, Args)]

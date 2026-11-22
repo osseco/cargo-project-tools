@@ -7,13 +7,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::checksum;
 use crate::cli::BuildArgs;
-use crate::config::{Build, Tool};
+use crate::config::{Build, SandboxMode, Tool};
 use crate::graph;
 use crate::lock;
 use crate::output::say;
 use crate::process;
 use crate::project::Project;
 use crate::review;
+use crate::sandbox;
 use crate::source::registry::sha256_hex as registry_hash;
 use crate::source::{self, Dest, Origin};
 use crate::vendor;
@@ -382,17 +383,29 @@ pub fn install(
     // whether to build at all.
     let mut cmd = process::cargo();
     process::git_ceiling(&mut cmd, &target_dir)?;
-    process::run(
-        cmd.args(["install", "--locked", "--force"])
-            .arg("--path")
-            .arg(&checkout.package_dir)
-            .arg("--root")
-            .arg(project.install_root())
-            .arg("--target-dir")
-            .arg(&target_dir)
-            .args(&vendored.config_args)
-            .args(&cargo_args),
-    )?;
+    cmd.args(["install", "--locked", "--force"])
+        .arg("--path")
+        .arg(&checkout.package_dir)
+        .arg("--root")
+        .arg(project.install_root())
+        .arg("--target-dir")
+        .arg(&target_dir)
+        .args(&vendored.config_args)
+        .args(&cargo_args);
+    // What `cargo install` writes: the build, the binaries and its records of them.
+    let writable = sandbox::Writable {
+        dirs: vec![target_dir.clone(), project.bin_dir()],
+        files: [".crates.toml", ".crates2.json"]
+            .map(|f| project.install_root().join(f))
+            .to_vec(),
+    };
+    let mode = if args.no_sandbox {
+        SandboxMode::Off
+    } else {
+        build.sandbox_for(std::env::consts::OS)
+    };
+    let mut cmd = sandbox::wrap(cmd, mode, &writable, &target_dir.join("tmp"))?;
+    process::run(&mut cmd)?;
 
     let bins = installed_bins(project, name, &tool.version);
     match opts.checksums {
