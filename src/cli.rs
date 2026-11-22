@@ -279,6 +279,24 @@ pub struct ReviewArgs {
     /// a review screen lets you decide on each.
     #[arg(long)]
     pub auto_approve: bool,
+    /// Approve the pending build-time code of PACKAGE@VERSION, or a cargo config by its
+    /// path, after reading it. `=HASH` (the record's `sha256`, or `checksum` for a whole
+    /// crate) makes sure it's what was read. Needs one tool; repeatable.
+    #[arg(long, value_name = "SPEC", conflicts_with = "auto_approve")]
+    pub approve: Vec<String>,
+    /// Strip the pending build script of PACKAGE@VERSION (or a cargo config), as for
+    /// `--approve`.
+    #[arg(long, value_name = "SPEC", conflicts_with = "auto_approve")]
+    pub strip: Vec<String>,
+    /// Override the pending build script of PACKAGE@VERSION (or a cargo config) with the file
+    /// already written at `overrides/<package>/<path>` in the tool's crate directory, as for
+    /// `--approve`.
+    #[arg(
+        long = "override",
+        value_name = "SPEC",
+        conflicts_with = "auto_approve"
+    )]
+    pub override_: Vec<String>,
     #[arg(long)]
     pub offline: bool,
     /// Extra cargo `--config` values, as for `install`.

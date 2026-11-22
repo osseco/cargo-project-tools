@@ -55,7 +55,15 @@ For each `review-pending` record:
    - `override`: a replacement in `overrides/`;
    - or not taking this feature at all.
 
-Once the person has decided, write each record's `entry` into `file` with their action. `file` is the tool's `build-review.toml`. An `entry` that starts with `# replaces the entry with …` takes the place of that entry. Then rerun the command from step 2. A proc macro or a `build-dep` (a library build-time code runs) can only be approved; to avoid one, turn off the feature that pulls it in.
+Once the person has decided, record exactly their decisions, with the hash you read each piece with:
+
+```bash
+cargo project-tools review <tool> --message-format json \
+  --approve zstd-sys@2.1.2+zstd.1.5.7=<item.sha256> \
+  --strip ring@0.17.8=<item.sha256>
+```
+
+The spec is `item.package@item.version`, or a cargo config's `item.path`, and the hash is the record's `item.sha256`, or `item.checksum` for a proc macro or `build-dep`. If the code changed since you read it, the command fails and writes nothing: read it again. For `--override`, write the replacement at `overrides/<package>/<path>` in the tool's crate directory first. Pieces you don't name stay pending, and the command fails listing them. A proc macro or a `build-dep` (a library build-time code runs) can only be approved; to avoid one, turn off the feature that pulls it in. Then rerun the command from step 2.
 
 ## 4. Check, then install
 

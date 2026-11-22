@@ -175,13 +175,17 @@ When build-time code isn't recorded, the error names [`review`](#review).
 ```bash
 cargo project-tools review
 cargo project-tools review cargo-nextest --auto-approve
+cargo project-tools review cargo-nextest --approve zstd-sys@2.1.2+zstd.1.5.7=9e41… --strip ring@0.17.8
 ```
 
-Runs each selected tool's [build review](build-review.md) as `install` would, then stops before building. In a terminal it opens the [review screen](build-review.md#reviewing-on-the-terminal); with `--auto-approve` it records everything new or changed at once; elsewhere it fails listing what's pending, as `check` does. A tool that is up to date (its install stamp matches, binaries and all) has nothing to review. It doesn't check targets or audit; `check` and `install` do. Afterwards, commit `build-review.toml` (and `overrides/`).
+Runs each selected tool's [build review](build-review.md) as `install` would, then stops before building. In a terminal it opens the [review screen](build-review.md#reviewing-on-the-terminal); with `--auto-approve` it records everything new or changed at once; with `--approve`, `--strip` or `--override` it records just the pieces named, and fails listing the rest; elsewhere it fails listing what's pending, as `check` does. A tool that is up to date (its install stamp matches, binaries and all) has nothing to review. It doesn't check targets or audit; `check` and `install` do. Afterwards, commit `build-review.toml` (and `overrides/`).
 
 | Option | Meaning |
 | --- | --- |
 | `--auto-approve` | Record new or changed build-time code in [`build-review.toml`](build-review.md) |
+| `--approve <spec>` | Record the pending build-time code of `package@version`, or a cargo config by its path, as `approve`. Add `=<hash>` (the `sha256`, or `checksum` for a whole crate) to make sure it's the code you read: a different hash fails before anything is written. Needs one tool; repeatable |
+| `--strip <spec>` | Record the pending build script (or cargo config) as `strip`, as for `--approve` |
+| `--override <spec>` | Record the pending build script (or cargo config) as `override`, with the file already at `overrides/<package>/<path>` (`overrides/cargo-config/<path>`) in the tool's crate directory, as for `--approve` |
 | `--offline` | Vendor without the network |
 | `--config <value>` | Extra cargo `--config` values, as for `install` |
 

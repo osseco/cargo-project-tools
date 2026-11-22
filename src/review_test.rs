@@ -903,7 +903,7 @@ fn check_only_records_nothing() {
         &f.checkout,
         &f.vendored,
         true,
-        true,
+        Approval::All,
     )
     .unwrap();
     check().unwrap();
@@ -1434,4 +1434,70 @@ fn a_new_version_of_a_build_time_library_comes_up_again() {
     .unwrap_err()
     .to_string();
     assert!(err.contains("1 piece"), "{err}");
+}
+
+#[test]
+fn picks_parse_with_and_without_a_hash() {
+    assert_eq!(
+        Pick::parse(Action::Strip, "ring@0.17.8=ab").unwrap(),
+        Pick {
+            spec: "ring@0.17.8".into(),
+            hash: Some("ab".into()),
+            action: Action::Strip,
+        }
+    );
+    assert_eq!(Pick::parse(Action::Approve, "ring@1").unwrap().hash, None);
+    assert!(Pick::parse(Action::Approve, "=ab").is_err());
+    assert!(Pick::parse(Action::Approve, "ring@1=").is_err());
+}
+
+#[test]
+fn picks_record_what_they_name_and_leave_the_rest_pending() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join(FILE);
+    let libc = real_script(tmp.path(), "libc");
+    let hash = libc.hash.clone();
+    let mac = under(proc_macro("serde_derive", "cc"), tmp.path());
+    fs::create_dir_all(&mac.location).unwrap();
+    let items = || vec![libc.clone(), mac.clone()];
+    let run = |picks: &[Pick]| {
+        check(
+            &file,
+            items(),
+            Mode::Picked {
+                picks,
+                crate_dir: tmp.path(),
+            },
+            &KnownMap::new(),
+            tmp.path(),
+        )
+    };
+
+    // A wrong hash, or a strip of a whole crate, writes nothing.
+    let err = run(&[Pick::parse(Action::Approve, "libc@1.0.0=bb").unwrap()])
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("read it again"), "{err}");
+    let err = run(&[Pick::parse(Action::Strip, "serde_derive@1.0.0").unwrap()])
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("no pending build script"), "{err}");
+    let err = run(&[Pick::parse(Action::Override, "libc@1.0.0").unwrap()])
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("isn't there yet"), "{err}");
+    assert!(!file.exists());
+
+    // One decided, the other still pending.
+    let err = run(&[Pick::parse(Action::Strip, &format!("libc@1.0.0={hash}")).unwrap()])
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("1 piece of"), "{err}");
+    let entries = load(&file).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].package, "libc");
+    assert_eq!(entries[0].action, Action::Strip);
+
+    run(&[Pick::parse(Action::Approve, "serde_derive@1.0.0").unwrap()]).unwrap();
+    assert_eq!(load(&file).unwrap().len(), 2);
 }

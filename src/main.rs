@@ -841,7 +841,13 @@ fn review_build(
         config: &config,
     };
     review::review(
-        project, name, selection, checkout, &vendored, false, approve,
+        project,
+        name,
+        selection,
+        checkout,
+        &vendored,
+        false,
+        review::Approval::new(approve, &[]),
     )?;
     Ok(())
 }
@@ -968,6 +974,7 @@ fn install(project: &Project, config: &Config, args: &InstallArgs) -> Result<()>
             install::Options {
                 force: args.force,
                 auto_approve: args.auto_approve,
+                picks: &[],
                 stage: install::Stage::Install,
                 checksums: install::Checksums::Write,
                 targets: config.targets_for(tool),
@@ -1010,6 +1017,7 @@ fn check(project: &Project, config: &Config, args: &CheckArgs) -> Result<()> {
             install::Options {
                 force: false,
                 auto_approve: false,
+                picks: &[],
                 stage: install::Stage::Check,
                 checksums: install::Checksums::Write,
                 targets: config.targets_for(tool),
@@ -1035,6 +1043,19 @@ fn review(project: &Project, config: &Config, args: &ReviewArgs) -> Result<()> {
         config: args.config.clone(),
         ..Default::default()
     };
+    let mut picks = Vec::new();
+    for (action, texts) in [
+        (review::Action::Approve, &args.approve),
+        (review::Action::Strip, &args.strip),
+        (review::Action::Override, &args.override_),
+    ] {
+        for text in texts {
+            picks.push(review::Pick::parse(action, text)?);
+        }
+    }
+    if !picks.is_empty() && args.names.len() != 1 {
+        bail!("--approve, --strip and --override need exactly one tool");
+    }
     for (name, tool) in config.select(&args.names)? {
         let build = config.build.merged(tool.build.as_ref());
         install::install(
@@ -1046,6 +1067,7 @@ fn review(project: &Project, config: &Config, args: &ReviewArgs) -> Result<()> {
             install::Options {
                 force: false,
                 auto_approve: args.auto_approve,
+                picks: &picks,
                 stage: install::Stage::Review,
                 checksums: install::Checksums::Write,
                 targets: config.targets_for(tool),
@@ -1169,6 +1191,7 @@ fn verify(project: &Project, config: &Config, args: &VerifyArgs) -> Result<ExitC
                 install::Options {
                     force: true,
                     auto_approve: false,
+                    picks: &[],
                     stage: install::Stage::Install,
                     checksums: install::Checksums::Expect,
                     targets: config.targets_for(tool),

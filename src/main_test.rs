@@ -185,6 +185,29 @@ fn review_flags() {
     };
     assert!(args.auto_approve && args.offline);
     assert_eq!(args.names, vec!["x".to_string()]);
+
+    let cmd = parse(&[
+        "review",
+        "x",
+        "--approve",
+        "a@1",
+        "--approve",
+        "b@2=ff",
+        "--strip",
+        "c@3",
+        "--override",
+        "d@4",
+    ])
+    .unwrap()
+    .command;
+    let Command::Review(args) = cmd else {
+        panic!("not review");
+    };
+    assert_eq!(args.approve, ["a@1", "b@2=ff"]);
+    assert_eq!(args.strip, ["c@3"]);
+    assert_eq!(args.override_, ["d@4"]);
+    // Picking pieces and approving them all don't mix.
+    assert!(parse(&["review", "x", "--auto-approve", "--approve", "a@1"]).is_err());
 }
 
 #[test]

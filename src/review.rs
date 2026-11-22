@@ -956,6 +956,76 @@ pub enum Mode<'a> {
     ApproveAll,
     /// Decide on each on the review screen.
     Interactive { tool: &'a str, crate_dir: &'a Path },
+    /// Record the decisions in `picks` (`--approve`, `--strip`, `--override`), and fail
+    /// listing the rest.
+    Picked {
+        picks: &'a [Pick],
+        crate_dir: &'a Path,
+    },
+}
+
+/// How pending build-time code gets decided outside the review screen.
+#[derive(Debug, Clone, Copy)]
+pub enum Approval<'a> {
+    /// On the review screen in a terminal, else not at all.
+    Ask,
+    /// All of it (`--auto-approve`).
+    All,
+    /// What the command line names (`review --approve` and the like).
+    Picked(&'a [Pick]),
+}
+
+impl<'a> Approval<'a> {
+    pub fn new(all: bool, picks: &'a [Pick]) -> Approval<'a> {
+        match (all, picks) {
+            (true, _) => Approval::All,
+            (false, []) => Approval::Ask,
+            (false, picks) => Approval::Picked(picks),
+        }
+    }
+}
+
+/// A decision named on the command line for pending build-time code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pick {
+    /// `package@version`, or a cargo config's path.
+    pub spec: String,
+    /// The hash it was read with: a record's `sha256`, or `checksum` for a whole crate.
+    pub hash: Option<String>,
+    pub action: Action,
+}
+
+impl Pick {
+    /// `package@version[=hash]`, or `path[=hash]` for a cargo config.
+    pub fn parse(action: Action, text: &str) -> Result<Pick> {
+        let (spec, hash) = match text.split_once('=') {
+            Some((spec, hash)) => (spec, Some(hash.to_string())),
+            None => (text, None),
+        };
+        if spec.is_empty() || hash.as_deref() == Some("") {
+            bail!(
+                "expected package@version[=hash], got `{}`",
+                shown_line(text)
+            );
+        }
+        Ok(Pick {
+            spec: spec.to_string(),
+            hash,
+            action,
+        })
+    }
+
+    /// Strip and override only take build scripts and cargo config; approve takes anything
+    /// of the package.
+    fn selects(&self, item: &Item) -> bool {
+        if self.action != Action::Approve && item.kind.whole_crate() {
+            return false;
+        }
+        match self.spec.split_once('@') {
+            Some((name, version)) => item.package == name && item.version == version,
+            None => item.kind == Kind::CargoConfig && item.path == self.spec,
+        }
+    }
 }
 
 /// Match `items` against the review file at `path`. Items without a matching entry are
@@ -996,6 +1066,21 @@ pub fn check(
             let decisions = pending.into_iter().map(Decision::keep_or_approve).collect();
             decided.extend(record(path, decisions, &stale)?);
         }
+        Mode::Picked { picks, crate_dir } => {
+            let choices = picked(&pending, picks, crate_dir)?;
+            // Only what's decided is compared again before it's recorded.
+            let before = pending
+                .iter()
+                .zip(&choices)
+                .map(|((item, _), c)| match c {
+                    Some(_) => snapshot(item),
+                    None => Ok(String::new()),
+                })
+                .collect::<Result<Vec<_>>>()?;
+            decided.extend(settle(
+                path, pending, choices, &before, &stale, known, root,
+            )?);
+        }
         Mode::Interactive { tool, crate_dir } if !pending.is_empty() => {
             let before = pending
                 .iter()
@@ -1023,6 +1108,65 @@ pub fn check(
         )?,
     }
     Ok(decided)
+}
+
+/// The decision `picks` make for each pending item, if any. Fails, before anything is
+/// written, on a pick that matches nothing pending, an item picked twice, a hash that isn't
+/// the item's, or an override file that isn't there.
+fn picked(
+    pending: &[Pending],
+    picks: &[Pick],
+    crate_dir: &Path,
+) -> Result<Vec<Option<tui::Choice>>> {
+    let mut choices: Vec<Option<tui::Choice>> = pending.iter().map(|_| None).collect();
+    for pick in picks {
+        let mut found = false;
+        for ((item, _), choice) in pending.iter().zip(choices.iter_mut()) {
+            if !pick.selects(item) {
+                continue;
+            }
+            found = true;
+            if let Some(hash) = &pick.hash
+                && *hash != item.hash
+            {
+                bail!(
+                    "{} is now {}, not {}; read it again",
+                    shown_line(&item.describe()),
+                    item.hash,
+                    shown_line(hash)
+                );
+            }
+            if choice.is_some() {
+                bail!("{} is picked twice", shown_line(&item.describe()));
+            }
+            let file = match pick.action {
+                Action::Override => {
+                    let rel = tui::override_rel(item)?;
+                    if !crate_dir.join(&rel).is_file() {
+                        bail!(
+                            "the override for {} isn't there yet: write {}",
+                            shown_line(&item.describe()),
+                            crate_dir.join(&rel).display()
+                        );
+                    }
+                    Some(rel)
+                }
+                _ => None,
+            };
+            *choice = Some(tui::Choice {
+                action: pick.action,
+                file,
+            });
+        }
+        if !found {
+            let what = match pick.action {
+                Action::Approve => "",
+                _ => "build script or cargo config ",
+            };
+            bail!("no pending {what}matches {}", shown_line(&pick.spec));
+        }
+    }
+    Ok(choices)
 }
 
 /// Record the choices made on the review screen, then fail listing what's still undecided.
@@ -1184,7 +1328,8 @@ fn report(
         let tool = shown(&tool);
         bail!(
             "{what} recorded in {}; run `cargo project-tools review {tool}` where you have a \
-             terminal for the review screen, then commit {}",
+             terminal for the review screen, or with --approve, --strip or --override \
+             <package@version> for each decision, then commit {}",
             rel(path),
             rel(path)
         )
@@ -1197,10 +1342,10 @@ fn report(
     }
     bail!(
         "{what} recorded in {}; run this command where you have a terminal for the review \
-         screen, or put each entry listed above in {} with the action the reviewer chose, \
-         then commit {}",
+         screen, or record each decision with `cargo project-tools review {} --approve, \
+         --strip or --override <package@version>`, then commit {}",
         rel(path),
-        rel(path),
+        shown(&tool),
         rel(path)
     )
 }
@@ -1569,20 +1714,22 @@ pub fn review(
     checkout: &Checkout,
     vendored: &Vendored,
     offline: bool,
-    approve: bool,
+    approval: Approval,
 ) -> Result<String> {
     source::refuse_config_above(&project.root, checkout)?;
     let items = collect(name, selection, checkout, vendored, offline)?;
     let crate_dir = project.crate_dir(name);
-    let mode = if approve {
-        Mode::ApproveAll
-    } else if screen::interactive() {
-        Mode::Interactive {
+    let mode = match approval {
+        Approval::All => Mode::ApproveAll,
+        Approval::Picked(picks) => Mode::Picked {
+            picks,
+            crate_dir: &crate_dir,
+        },
+        Approval::Ask if screen::interactive() => Mode::Interactive {
             tool: name,
             crate_dir: &crate_dir,
-        }
-    } else {
-        Mode::Report
+        },
+        Approval::Ask => Mode::Report,
     };
     let known = known_elsewhere(
         &project.tools_dir().join("crates"),
