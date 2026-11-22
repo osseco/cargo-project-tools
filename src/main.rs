@@ -267,7 +267,7 @@ fn add(project: &Project, config: &Config, args: AddArgs) -> Result<()> {
         config.settings.targets.as_deref(),
         &config.build,
         &checkout,
-        args.approve_build,
+        args.auto_approve,
     )?;
     write_new_lock(project, name, &lock_text)?;
 
@@ -450,7 +450,7 @@ fn upgrade(project: &Project, config: &Config, args: UpgradeArgs) -> Result<()> 
             features: None,
             no_default_features: false,
             default_features: false,
-            approve_build: args.approve_build,
+            auto_approve: args.auto_approve,
         },
     )
 }
@@ -559,7 +559,7 @@ fn update_interactive(project: &Project, config: &Config, args: UpdateArgs) -> R
         config.targets_for(tool),
         &config.build.merged(tool.build.as_ref()),
         &setup.checkout,
-        args.approve_build,
+        args.auto_approve,
     )?;
     fs::copy(setup.lock_path(), &ours_path)?;
     let mut editor = ConfigEditor::open(&project.config_path())?;
@@ -780,7 +780,7 @@ fn update(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
         config.targets_for(tool),
         &config.build.merged(tool.build.as_ref()),
         &checkout,
-        args.approve_build,
+        args.auto_approve,
     )?;
     fs::copy(checkout.lock_path(), &ours_path)?;
     if moved || features_changed {
@@ -966,7 +966,7 @@ fn install(project: &Project, config: &Config, args: &InstallArgs) -> Result<()>
             &args.build,
             install::Options {
                 force: args.force,
-                approve_build: args.approve_build,
+                auto_approve: args.auto_approve,
                 check: false,
                 checksums: install::Checksums::Write,
                 targets: config.targets_for(tool),
@@ -1008,7 +1008,7 @@ fn check_install(project: &Project, config: &Config, args: &InstallArgs) -> Resu
             &args.build,
             install::Options {
                 force: false,
-                approve_build: false,
+                auto_approve: false,
                 check: true,
                 checksums: install::Checksums::Write,
                 targets: config.targets_for(tool),
@@ -1133,7 +1133,7 @@ fn verify(project: &Project, config: &Config, args: &VerifyArgs) -> Result<ExitC
                 &args.build,
                 install::Options {
                     force: true,
-                    approve_build: false,
+                    auto_approve: false,
                     check: false,
                     checksums: install::Checksums::Expect,
                     targets: config.targets_for(tool),

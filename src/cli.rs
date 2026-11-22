@@ -132,7 +132,7 @@ pub struct AddArgs {
     /// build-review.toml at once. Review them first. In a terminal, without this flag,
     /// a review screen lets you decide on each.
     #[arg(long)]
-    pub approve_build: bool,
+    pub auto_approve: bool,
 }
 
 /// A git source instead of crates.io.
@@ -173,7 +173,7 @@ pub struct UpgradeArgs {
     /// build-review.toml at once. Review them first. In a terminal, without this flag,
     /// a review screen lets you decide on each.
     #[arg(long)]
-    pub approve_build: bool,
+    pub auto_approve: bool,
 }
 
 #[derive(Debug, Args)]
@@ -221,7 +221,7 @@ pub struct UpdateArgs {
     /// build-review.toml at once. Review them first. In a terminal, without this flag,
     /// a review screen lets you decide on each.
     #[arg(long)]
-    pub approve_build: bool,
+    pub auto_approve: bool,
 }
 
 #[derive(Debug, Args)]
@@ -233,13 +233,13 @@ pub struct InstallArgs {
     pub force: bool,
     /// Check targets, the audit and the build review, then stop: build and record nothing.
     /// Fails when anything is missing or not reviewed.
-    #[arg(long, conflicts_with_all = ["force", "approve_build", "approve_target"])]
+    #[arg(long, conflicts_with_all = ["force", "auto_approve", "approve_target"])]
     pub check: bool,
     /// Record all new or changed build scripts, proc macros and cargo config in
     /// build-review.toml at once. Review them first. In a terminal, without this flag,
     /// a review screen lets you decide on each.
     #[arg(long)]
-    pub approve_build: bool,
+    pub auto_approve: bool,
     /// Add this machine (and --target) to the tool's targets when it isn't one of them.
     #[arg(long)]
     pub approve_target: bool,

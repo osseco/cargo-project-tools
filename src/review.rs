@@ -26,7 +26,7 @@ pub const FILE: &str = "build-review.toml";
 
 const TEMPLATE: &str =
     "# Code that runs while building this tool. `install` halts on anything not listed here.
-# Review it on the review screen, or record it with `--approve-build`. See docs/build-review.md.
+# Review it on the review screen, or record it with `--auto-approve`. See docs/build-review.md.
 
 ";
 
@@ -944,7 +944,7 @@ fn configured_tools(project: &Project) -> Result<Vec<String>> {
 pub enum Mode<'a> {
     /// Fail listing them.
     Report,
-    /// Record them all (`--approve-build`).
+    /// Record them all (`--auto-approve`).
     ApproveAll,
     /// Decide on each on the review screen.
     Interactive { tool: &'a str, crate_dir: &'a Path },
@@ -1101,7 +1101,7 @@ fn report(
                 path: e.path.clone(),
             });
             eprintln!(
-                "  warning: unused [[{}]] {}{} in {}; --approve-build removes it",
+                "  warning: unused [[{}]] {}{} in {}; --auto-approve removes it",
                 e.kind,
                 shown(&e.package),
                 shown(&e.path),
@@ -1158,13 +1158,13 @@ fn report(
     };
     if screen::interactive() {
         bail!(
-            "{what} recorded in {}; review it, then rerun with --approve-build",
+            "{what} recorded in {}; review it, then rerun with --auto-approve",
             rel(path)
         )
     }
     bail!(
         "{what} recorded in {}; review it where you have a terminal (run this command there \
-         for the review screen, or with --approve-build after reading the files), then \
+         for the review screen, or with --auto-approve after reading the files), then \
          commit {}",
         rel(path),
         rel(path)

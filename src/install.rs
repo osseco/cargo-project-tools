@@ -43,7 +43,7 @@ pub struct Options<'a> {
     /// Rebuild even when the stamp is up to date.
     pub force: bool,
     /// Record new or changed build-time code in the review file.
-    pub approve_build: bool,
+    pub auto_approve: bool,
     /// Stop after checking the build review: build and write nothing.
     pub check: bool,
     pub checksums: Checksums,
@@ -294,7 +294,7 @@ pub fn install(
     let stamp_path = project.stamp_path(name);
     // Approving reviews now, even when the binaries are current.
     if !opts.force
-        && !opts.approve_build
+        && !opts.auto_approve
         && let Some(stamp) = read_stamp(&stamp_path)
         && stamp.key == key
         && !stamp.bins.is_empty()
@@ -344,11 +344,11 @@ pub fn install(
         &checkout,
         &vendored,
         args.offline,
-        opts.approve_build,
+        opts.auto_approve,
     )?;
     clean_if_changed(&target_dir, &changes)?;
     vendor::settle(&vendored)?;
-    // `--approve-build` may have just written the review file.
+    // `--auto-approve` may have just written the review file.
     let key = stamp_key(
         name,
         tool,

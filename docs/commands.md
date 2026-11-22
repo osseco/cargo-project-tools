@@ -60,11 +60,11 @@ cargo project-tools add -i cargo-nextest
 | `-F`, `--features <list>` | Build with these features, replacing the tool's list; `-F ""` clears it |
 | `--no-default-features`, `--default-features` | Build without, or again with, the default features |
 | `-i`, `--interactive` | Choose the version, features and dependency versions on the [setup screen](#interactive-setup) first |
-| `--approve-build` | Record the tool's build scripts, proc macros and cargo config in [`build-review.toml`](build-review.md) |
+| `--auto-approve` | Record the tool's build scripts, proc macros and cargo config in [`build-review.toml`](build-review.md) |
 
 Copies the lock the tool ships with into `.project-tools/crates/<tool>/` and adds a `[tool.<name>]` entry. A tool that ships no lock gets one from `cargo generate-lockfile`, which only reads the index: nothing is compiled and no build script runs.
 
-Before anything is written, it [reviews the build-time code](build-review.md) the lock brings in, and stops while any of it isn't in `build-review.toml`. In a terminal it opens the [review screen](build-review.md#reviewing-on-the-terminal); otherwise look at the files it lists, then run it again with `--approve-build`.
+Before anything is written, it [reviews the build-time code](build-review.md) the lock brings in, and stops while any of it isn't in `build-review.toml`. In a terminal it opens the [review screen](build-review.md#reviewing-on-the-terminal); otherwise look at the files it lists, then run it again with `--auto-approve`.
 
 ## remove
 
@@ -90,7 +90,7 @@ cargo project-tools update -i cargo-nextest
 | `--latest` | Move the tool to its latest stable version; a git tool follows its tag or branch again |
 | `--version <req>` | Move a registry tool to the version matching this requirement |
 | `-i`, `--interactive` | Change the version, features and dependency versions on the [setup screen](#interactive-setup); not with the options above |
-| `--approve-build` | Record new or changed build-time code in [`build-review.toml`](build-review.md) |
+| `--auto-approve` | Record new or changed build-time code in [`build-review.toml`](build-review.md) |
 
 Runs `cargo update` against the tool's lock. The lock is only saved if cargo resolves it, and if every build script, proc macro and cargo config it builds is [recorded](build-review.md).
 
@@ -140,7 +140,7 @@ With `--check` it checks the same things and then stops: this machine (and `--ta
 | --- | --- |
 | `--force` | Rebuild even when nothing changed |
 | `--check` | Check targets, the audit and the build review; build and record nothing |
-| `--approve-build` | Record new or changed build-time code in [`build-review.toml`](build-review.md); reviews even when the tool is up to date |
+| `--auto-approve` | Record new or changed build-time code in [`build-review.toml`](build-review.md); reviews even when the tool is up to date |
 | `--approve-target` | Add this machine, and `--target`, to the tool's [`targets`](configuration.md#targets) when they aren't listed |
 | `--no-audit` | Skip the audit |
 | `--deny-warnings` | Also refuse to build on warnings that aren't ignored |
