@@ -71,7 +71,7 @@ Add `--deny-warnings` to also fail on unmaintained, unsound, yanked and git-sour
 
 ## Check without building
 
-`cargo project-tools install --check` runs everything `install` checks before it builds: the runner against each tool's [`targets`](configuration.md#targets), the audit, and the [build review](build-review.md) of each tool that isn't up to date. It builds nothing and records nothing, reports every problem in one run, and fails if there is any. Run it instead of `audit` to also catch a lock whose build-time code nobody reviewed, or before `install` to fail before the first build starts.
+`cargo project-tools check` runs everything `install` checks before it builds: the runner against each tool's [`targets`](configuration.md#targets), the audit, and the [build review](build-review.md) of each tool that isn't up to date. It builds nothing and records nothing, reports every problem in one run, and fails if there is any. Run it instead of `audit` to also catch a lock whose build-time code nobody reviewed, or before `install` to fail before the first build starts.
 
 Checking the build review vendors the dependencies of each tool that isn't up to date, so restore the bin cache from above first: a tool whose stamp matches is skipped, and the cached `bin/.stamps/<tool>.built.json` saves the downloads `audit` needs. The build cache isn't needed, and vendored sources are left out of it anyway.
 

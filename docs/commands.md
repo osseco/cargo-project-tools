@@ -9,6 +9,7 @@ Every command runs as `cargo project-tools <command>`. Apart from `init` and the
 | `remove <crate>` | Remove a tool, its lock, build dir and binaries |
 | `update <crate> [deps…]` | Update dependencies in the tool's lock, or move the tool to another version (`--latest`, `--version`); `-i` for the [setup screen](#interactive-setup) |
 | `install [crates…]` | Audit, then build and install; skipped when nothing changed |
+| `check [crates…]` | Check what `install` checks before it builds (targets, audit, build review); builds and records nothing |
 | `verify [crates…]` | Check installed binaries against their recorded checksums; `--repair` rebuilds |
 | `audit [crates…]` | Check every lock against the RustSec advisory database, apply `audit-ignore.toml`, suggest fixes |
 | `audit-db update` | Fetch or revalidate the advisory database |
@@ -134,12 +135,11 @@ A `rust-toolchain` or `rust-toolchain.toml` in the tool's source is removed befo
 
 After building, it writes the sha256 of each of the tool's binaries to `.project-tools/bin/<tool>.sha256`, in `sha256sum` format, for [`verify`](#verify).
 
-With `--check` it checks the same things and then stops: this machine (and `--target`) against [`targets`](configuration.md#targets), the audit, and, for each tool that isn't up to date, its build-time code against `build-review.toml`. That still vendors the dependencies, but it builds nothing, and writes nothing to `project-tools.toml` or `build-review.toml`, and no binaries or install stamps (only the audit's `bin/.stamps/<tool>.built.json`). It reports every problem rather than stopping at the first, and fails if there are any. Use it in CI to fail fast before a long build, or in a job that only audits.
+To check all this without building, use [`check`](#check).
 
 | Option | Meaning |
 | --- | --- |
 | `--force` | Rebuild even when nothing changed |
-| `--check` | Check targets, the audit and the build review; build and record nothing |
 | `--auto-approve` | Record new or changed build-time code in [`build-review.toml`](build-review.md); reviews even when the tool is up to date |
 | `--approve-target` | Add this machine, and `--target`, to the tool's [`targets`](configuration.md#targets) when they aren't listed |
 | `--no-audit` | Skip the audit |
@@ -148,6 +148,23 @@ With `--check` it checks the same things and then stops: this machine (and `--ta
 | `--target <triple>` | Override `[build].target` |
 | `--config <value>` | Extra cargo `--config` values |
 | `-j`, `--offline`, `--frozen`, `-q`, `-v`, `--color`, `--keep-going`, `--timings` | Passed through to cargo |
+
+## check
+
+```bash
+cargo project-tools check
+cargo project-tools check cargo-nextest --target x86_64-pc-windows-msvc
+```
+
+Checks what [`install`](#install) checks before it builds, then stops: this machine (and `--target`) against [`targets`](configuration.md#targets), the audit, and, for each tool that isn't up to date, its build-time code against `build-review.toml`. That still vendors the dependencies, but it builds nothing, and writes nothing to `project-tools.toml` or `build-review.toml`, and no binaries or install stamps (only the audit's `bin/.stamps/<tool>.built.json`). It reports every problem rather than stopping at the first, and fails if there are any. Use it in CI to fail fast before a long build, or in a job that only audits.
+
+It never approves anything, so it has no `--auto-approve`, `--approve-target` or `--force`.
+
+| Option | Meaning |
+| --- | --- |
+| `--no-audit` | Skip the audit |
+| `--deny-warnings` | Also fail on warnings that aren't ignored |
+| `--target <triple>`, `--config <value>`, `--profile <name>`, `--debug`, `--offline` | As for `install`: what would be built, and so what is checked |
 
 ## verify
 
@@ -249,7 +266,7 @@ In JSON, the record has `tool`, `tool_version`, `features`, `default_features`, 
 
 ## JSON output
 
-With `--message-format json`, stdout holds only JSON records, one per line. All human text, and cargo's own output, goes to stderr instead. `add`, `update`, `install`, `audit` and `inspect` write these records:
+With `--message-format json`, stdout holds only JSON records, one per line. All human text, and cargo's own output, goes to stderr instead. `add`, `update`, `install`, `check`, `audit` and `inspect` write these records:
 
 | `kind` | When | Fields |
 | --- | --- | --- |
@@ -261,7 +278,7 @@ With `--message-format json`, stdout holds only JSON records, one per line. All 
 | `ignore-expired` | An ignore past its `expires` date | `tool`, `file`, `id`, `expires` |
 | `inspect` | What [`inspect`](#inspect) found | See [inspect](#inspect) |
 | `error` | The command failed | `message` |
-| `summary` | The last record of `add`, `update`, `install` and `audit` | `ok`, `vulnerabilities`, `warnings`, `pending_reviews`, `missing_targets` |
+| `summary` | The last record of `add`, `update`, `install`, `check` and `audit` | `ok`, `vulnerabilities`, `warnings`, `pending_reviews`, `missing_targets` |
 
 Every record also has `"version": 1`. The version goes up when a record changes in a way that breaks readers.
 

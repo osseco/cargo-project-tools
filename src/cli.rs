@@ -39,6 +39,9 @@ pub enum Command {
     Update(UpdateArgs),
     /// Build and install tools into .project-tools/bin using the project's locks.
     Install(InstallArgs),
+    /// Check what `install` checks before it builds: the targets, the audit and the build
+    /// review. Builds and records nothing; fails when anything is missing or not reviewed.
+    Check(CheckArgs),
     /// Check installed binaries against the checksums `install` recorded.
     Verify(VerifyArgs),
     /// Audit every tool's Cargo.lock against the RustSec advisory database.
@@ -231,10 +234,6 @@ pub struct InstallArgs {
     /// Rebuild even if the install stamp is up to date.
     #[arg(long)]
     pub force: bool,
-    /// Check targets, the audit and the build review, then stop: build and record nothing.
-    /// Fails when anything is missing or not reviewed.
-    #[arg(long, conflicts_with_all = ["force", "auto_approve", "approve_target"])]
-    pub check: bool,
     /// Record all new or changed build scripts, proc macros and cargo config in
     /// build-review.toml at once. Review them first. In a terminal, without this flag,
     /// a review screen lets you decide on each.
@@ -248,6 +247,20 @@ pub struct InstallArgs {
     pub no_audit: bool,
     /// Also refuse to build on warnings (unmaintained, unsound, yanked, git-source) that
     /// aren't ignored.
+    #[arg(long, conflicts_with = "no_audit")]
+    pub deny_warnings: bool,
+    #[command(flatten)]
+    pub build: BuildArgs,
+}
+
+#[derive(Debug, Args)]
+pub struct CheckArgs {
+    /// Tools to check (default: all).
+    pub names: Vec<String>,
+    /// Don't audit the locks.
+    #[arg(long)]
+    pub no_audit: bool,
+    /// Also fail on warnings (unmaintained, unsound, yanked, git-source) that aren't ignored.
     #[arg(long, conflicts_with = "no_audit")]
     pub deny_warnings: bool,
     #[command(flatten)]
@@ -331,6 +344,7 @@ impl Command {
                 | Command::Upgrade(_)
                 | Command::Update(_)
                 | Command::Install(_)
+                | Command::Check(_)
                 | Command::Audit(_)
         )
     }
@@ -347,6 +361,7 @@ impl Command {
                     | Command::Upgrade(_)
                     | Command::Update(_)
                     | Command::Install(_)
+                    | Command::Check(_)
                     | Command::Audit(_)
                     | Command::Inspect(_)
             ),

@@ -37,6 +37,15 @@ pub enum Checksums {
     Expect,
 }
 
+/// How far `install` goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage {
+    /// Review, then build and install.
+    Install,
+    /// Check the build review, then stop: build and write nothing (`check`).
+    Check,
+}
+
 /// How `install` treats a tool beyond its build settings.
 #[derive(Debug, Clone, Copy)]
 pub struct Options<'a> {
@@ -44,8 +53,7 @@ pub struct Options<'a> {
     pub force: bool,
     /// Record new or changed build-time code in the review file.
     pub auto_approve: bool,
-    /// Stop after checking the build review: build and write nothing.
-    pub check: bool,
+    pub stage: Stage,
     pub checksums: Checksums,
     /// The targets build-time code is reviewed for; all when `None`.
     pub targets: Option<&'a [String]>,
@@ -308,10 +316,9 @@ pub fn install(
         return Ok(());
     }
 
-    if opts.check {
-        say!("Checking {name} {}", tool.version);
-    } else {
-        say!("Installing {name} {}", tool.version);
+    match opts.stage {
+        Stage::Install => say!("Installing {name} {}", tool.version),
+        Stage::Check => say!("Checking {name} {}", tool.version),
     }
     let checkout = source::checkout(
         project,
@@ -334,7 +341,7 @@ pub fn install(
         targets: opts.targets,
         config: &config,
     };
-    if opts.check {
+    if opts.stage == Stage::Check {
         return review::check_only(project, name, selection, &checkout, &vendored, args.offline);
     }
     let changes = review::review(

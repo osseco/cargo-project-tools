@@ -60,11 +60,11 @@ Once the person has decided, write each record's `entry` into `file` with their 
 ## 4. Check, then install
 
 ```bash
-cargo project-tools install --check --message-format json
+cargo project-tools check --message-format json
 cargo project-tools install --message-format json
 ```
 
-`install --check` builds nothing, and fails on anything still missing: a `target-missing` this machine isn't listed for, a `review-pending`, or an `advisory` with severity `error`. For an advisory, run the command in its `fix` (it's an `update`), or ask the person whether to ignore it in the tool's `audit-ignore.toml`, with a reason and an `expires` date. Then run `install`.
+`check` builds nothing, and fails on anything still missing: a `target-missing` this machine isn't listed for, a `review-pending`, or an `advisory` with severity `error`. For an advisory, run the command in its `fix` (it's an `update`), or ask the person whether to ignore it in the tool's `audit-ignore.toml`, with a reason and an `expires` date. Then run `install`.
 
 ## Updating later
 

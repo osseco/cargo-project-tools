@@ -33,8 +33,8 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 
 use cli::{
-    AddArgs, AuditArgs, AuditDbCommand, Cli, Command, InitArgs, InspectArgs, InstallArgs,
-    UpdateArgs, UpgradeArgs, VerifyArgs,
+    AddArgs, AuditArgs, AuditDbCommand, CheckArgs, Cli, Command, InitArgs, InspectArgs,
+    InstallArgs, UpdateArgs, UpgradeArgs, VerifyArgs,
 };
 use config::{AuditIgnore, Config, ConfigEditor, SfwMode};
 use output::say;
@@ -113,6 +113,7 @@ fn run() -> Result<ExitCode> {
         Command::Upgrade(args) => upgrade(&project, &config, args)?,
         Command::Update(args) => update(&project, &config, args)?,
         Command::Install(args) => install(&project, &config, &args)?,
+        Command::Check(args) => check(&project, &config, &args)?,
         Command::Verify(args) => return verify(&project, &config, &args),
         Command::Audit(args) => return audit(&project, &config, args),
         Command::AuditDb(AuditDbCommand::Update) => {
@@ -935,9 +936,6 @@ fn audit(project: &Project, config: &Config, args: AuditArgs) -> Result<ExitCode
 
 /// Audit every selected tool's lock first, so nothing is built when one of them fails.
 fn install(project: &Project, config: &Config, args: &InstallArgs) -> Result<()> {
-    if args.check {
-        return check_install(project, config, args);
-    }
     let tools = config.select(&args.names)?;
     let reloaded;
     let config = if check_targets(project, config, &tools, &args.build, args.approve_target)? {
@@ -967,7 +965,7 @@ fn install(project: &Project, config: &Config, args: &InstallArgs) -> Result<()>
             install::Options {
                 force: args.force,
                 auto_approve: args.auto_approve,
-                check: false,
+                stage: install::Stage::Install,
                 checksums: install::Checksums::Write,
                 targets: config.targets_for(tool),
             },
@@ -976,10 +974,10 @@ fn install(project: &Project, config: &Config, args: &InstallArgs) -> Result<()>
     Ok(())
 }
 
-/// `install --check`: the targets, the audit and each tool's build review, as `install`
-/// checks them, without building or recording anything. Keeps going after a failure, so
-/// one run reports everything.
-fn check_install(project: &Project, config: &Config, args: &InstallArgs) -> Result<()> {
+/// `check`: the targets, the audit and each tool's build review, as `install` checks them,
+/// without building or recording anything. Keeps going after a failure, so one run reports
+/// everything.
+fn check(project: &Project, config: &Config, args: &CheckArgs) -> Result<()> {
     let tools = config.select(&args.names)?;
     let mut failed: Vec<String> = Vec::new();
     if let Err(e) = check_targets(project, config, &tools, &args.build, false) {
@@ -1009,7 +1007,7 @@ fn check_install(project: &Project, config: &Config, args: &InstallArgs) -> Resu
             install::Options {
                 force: false,
                 auto_approve: false,
-                check: true,
+                stage: install::Stage::Check,
                 checksums: install::Checksums::Write,
                 targets: config.targets_for(tool),
             },
@@ -1134,7 +1132,7 @@ fn verify(project: &Project, config: &Config, args: &VerifyArgs) -> Result<ExitC
                 install::Options {
                     force: true,
                     auto_approve: false,
-                    check: false,
+                    stage: install::Stage::Install,
                     checksums: install::Checksums::Expect,
                     targets: config.targets_for(tool),
                 },
