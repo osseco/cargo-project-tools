@@ -166,6 +166,10 @@ impl App {
                     "A proc macro: its whole crate runs in the compiler. Expand it in the tree \
                      to read its files."
                 }
+                Some(i) if self.items[i].kind == Kind::BuildDep => {
+                    "A library that build scripts or proc macros run: its whole crate runs at \
+                     build time. Expand it in the tree to read its files."
+                }
                 Some(_) => "Select a file in the tree to read it.",
                 None => "Select a piece of build-time code in the tree.",
             };

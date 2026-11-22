@@ -55,7 +55,7 @@ For each `review-pending` record:
    - `override`: a replacement in `overrides/`;
    - or not taking this feature at all.
 
-Once the person has decided, write each record's `entry` into `file` with their action. `file` is the tool's `build-review.toml`. An `entry` that starts with `# replaces the entry with …` takes the place of that entry. Then rerun the command from step 2. A proc macro can only be approved; to avoid one, turn off the feature that pulls it in.
+Once the person has decided, write each record's `entry` into `file` with their action. `file` is the tool's `build-review.toml`. An `entry` that starts with `# replaces the entry with …` takes the place of that entry. Then rerun the command from step 2. A proc macro or a `build-dep` (a library build-time code runs) can only be approved; to avoid one, turn off the feature that pulls it in.
 
 ## 4. Check, then install
 

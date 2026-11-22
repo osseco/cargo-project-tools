@@ -352,7 +352,7 @@ impl App {
     }
 
     pub(super) fn allowed(&self, i: usize, action: Action) -> bool {
-        self.items[i].kind != Kind::ProcMacro || action == Action::Approve
+        !self.items[i].kind.whole_crate() || action == Action::Approve
     }
 
     pub(super) fn visible(&self) -> Vec<usize> {
@@ -458,7 +458,7 @@ impl App {
         let Some((item, upstream)) = self.file_of(self.selected) else {
             return;
         };
-        let own = upstream == self.items[item].location && self.items[item].kind != Kind::ProcMacro;
+        let own = upstream == self.items[item].location && !self.items[item].kind.whole_crate();
         let overriding = own && self.radio[item] == Some(Action::Override);
         let ours = self.files[item]
             .as_ref()
@@ -525,7 +525,7 @@ impl App {
 
     pub(super) fn set_radio(&mut self, item: usize, action: Action) {
         if !self.allowed(item, action) {
-            self.warn("a proc macro can only be approved");
+            self.warn("a whole crate (proc macro or build-time library) can only be approved");
             return;
         }
         if action == Action::Override {

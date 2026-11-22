@@ -46,7 +46,12 @@ impl Node {
 /// The tree for `items`: groups expanded, everything below them folded.
 pub(super) fn build(items: &[Item]) -> Result<Vec<Node>> {
     let mut nodes = Vec::new();
-    for kind in [Kind::BuildScript, Kind::ProcMacro, Kind::CargoConfig] {
+    for kind in [
+        Kind::BuildScript,
+        Kind::ProcMacro,
+        Kind::BuildDep,
+        Kind::CargoConfig,
+    ] {
         if !items.iter().any(|i| i.kind == kind) {
             continue;
         }
@@ -68,7 +73,7 @@ pub(super) fn build(items: &[Item]) -> Result<Vec<Node>> {
                 continue;
             }
             let dir = match item.kind {
-                Kind::ProcMacro => Some(item.location.as_path()),
+                Kind::ProcMacro | Kind::BuildDep => Some(item.location.as_path()),
                 Kind::BuildScript => script_dir,
                 Kind::CargoConfig => None,
             };

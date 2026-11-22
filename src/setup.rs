@@ -363,8 +363,9 @@ impl Setup {
         (built.len(), open(true), open(false))
     }
 
-    /// The packages in the lock with build-time code, by kind (`build-script` or
-    /// `proc-macro`), from `cargo metadata`. Whether one is built depends on the features.
+    /// The packages in the lock with build-time code, by kind (`build-script`, `proc-macro`,
+    /// or `build-dep` for a library build-time code runs), from `cargo metadata`. Whether
+    /// one is built depends on the features.
     pub fn build_time(&self) -> Result<BTreeSet<(String, String, Version)>> {
         #[derive(Deserialize)]
         struct Metadata {
@@ -383,8 +384,16 @@ impl Setup {
         // Every feature of the tool, so it lists whatever any choice of them could build.
         let mut cmd = self.cargo("metadata");
         cmd.args(["--format-version", "1", "--locked", "--all-features"]);
-        let meta: Metadata = serde_json::from_str(&self.run(cmd)?)?;
+        let json = self.run(cmd)?;
+        let meta: Metadata = serde_json::from_str(&json)?;
         let mut out = BTreeSet::new();
+        // With every feature on, this can name more than one choice of features runs at
+        // build time; the review itself resolves the choice made.
+        for (name, version) in crate::review::build_deps_in(&json)? {
+            if let Ok(version) = Version::parse(&version) {
+                out.insert(("build-dep".to_string(), name, version));
+            }
+        }
         for p in meta.packages {
             for kind in p.targets.iter().flat_map(|t| &t.kind) {
                 let kind = match kind.as_str() {

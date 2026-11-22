@@ -54,7 +54,7 @@ pub struct Finding {
 
 #[derive(Debug, Serialize, PartialEq, Clone)]
 pub struct BuildTime {
-    /// `build-script` or `proc-macro`.
+    /// `build-script`, `proc-macro`, or `build-dep` for a library build-time code runs.
     #[serde(rename = "type")]
     pub kind: String,
     pub package: String,
@@ -300,12 +300,13 @@ pub fn print(i: &Inspection) {
     };
     let unrecorded = i.build_time.iter().filter(|b| !b.recorded).count();
     safe!(
-        "builds {} packages: {} vulnerabilities, {} warnings, {} build scripts, {} proc macros ({unrecorded} not in build-review.toml)",
+        "builds {} packages: {} vulnerabilities, {} warnings, {} build scripts, {} proc macros, {} build-time libraries ({unrecorded} not in build-review.toml)",
         i.packages.len(),
         open(true),
         open(false),
         count(&i.build_time, "build-script"),
         count(&i.build_time, "proc-macro"),
+        count(&i.build_time, "build-dep"),
     );
     if !i.findings.is_empty() {
         safe!("advisories:");
@@ -334,11 +335,12 @@ pub fn print(i: &Inspection) {
             continue;
         }
         safe!(
-            "  {sign}{}: {verb} {} packages, {} build scripts, {} proc macros, {} advisories",
+            "  {sign}{}: {verb} {} packages, {} build scripts, {} proc macros, {} build-time libraries, {} advisories",
             c.feature,
             c.packages.len(),
             count(&c.build_time, "build-script"),
             count(&c.build_time, "proc-macro"),
+            count(&c.build_time, "build-dep"),
             c.findings.len()
         );
         let names: Vec<String> = c

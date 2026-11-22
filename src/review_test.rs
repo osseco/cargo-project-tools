@@ -1270,3 +1270,113 @@ fn build_scripts_behind_a_feature_are_collected() {
     let items = collect("tool", selection, &checkout, &vendored, true).unwrap();
     assert_eq!(packages(&items), ["tool"]);
 }
+
+#[test]
+fn libraries_build_time_code_runs_are_collected() {
+    use crate::test_registry::{Crate, Registry, tool_with};
+    let tmp = tempfile::tempdir().unwrap();
+    let registry = Registry::with(vec![
+        // `scripted`'s build script uses `helper`, which uses `deep`.
+        Crate::new("deep", "1.0.0"),
+        Crate::new("helper", "1.0.0").dep("deep", "1"),
+        Crate::new("scripted", "1.0.0")
+            .build("fn main() {}\n")
+            .build_dep("helper", "1"),
+        // The proc macro `mac` uses `quote`.
+        Crate::new("quote", "1.0.0"),
+        Crate::new("mac", "1.0.0").proc_macro().dep("quote", "1"),
+        // An ordinary dependency only runs in the tool.
+        Crate::new("plain", "1.0.0"),
+    ]);
+    let src = tmp.path().join("src");
+    let manifest = tool_with(
+        &src,
+        "1.0.0",
+        "[dependencies]\nscripted = \"1\"\nmac = \"1\"\nplain = \"1\"\n",
+    );
+    crate::lock::shipped_or_generated(&manifest, &src.join("Cargo.lock"), &registry.cargo_args())
+        .unwrap();
+    let project = Project {
+        root: tmp.path().to_path_buf(),
+    };
+    let checkout = Checkout::at(src.clone(), src.clone(), src);
+    let vendored =
+        crate::vendor::vendor(&project, "tool", &checkout, false, &registry.cargo_args()).unwrap();
+    let selection = crate::graph::Selection {
+        features: &[],
+        targets: None,
+        config: &[],
+    };
+    let items = collect("tool", selection, &checkout, &vendored, true).unwrap();
+    let found: Vec<String> = items
+        .iter()
+        .map(|i| format!("{} {}", i.kind, i.package))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            "build-script scripted",
+            "build-script tool",
+            "proc-macro mac",
+            "build-dep deep",
+            "build-dep helper",
+            "build-dep quote",
+        ]
+    );
+    // Pinned by its files here: the test registry's crates have no lock checksum.
+    let helper = items.iter().find(|i| i.package == "helper").unwrap();
+    assert_eq!(helper.location, vendored.dir.join("helper-1.0.0"));
+    assert!(!helper.hash.is_empty());
+}
+
+#[test]
+fn build_dep_entries_parse_and_can_only_be_approved() {
+    let ok = parse("[[build-dep]]\npackage = \"syn\"\nchecksum = \"c\"\naction = \"approve\"\n")
+        .unwrap();
+    assert_eq!(ok[0].kind, Kind::BuildDep);
+    assert_eq!(ok[0].hash, "c");
+    for bad in [
+        "[[build-dep]]\npackage = \"syn\"\nchecksum = \"c\"\naction = \"strip\"\n",
+        "[[build-dep]]\npackage = \"syn\"\nsha256 = \"c\"\naction = \"approve\"\n",
+        "[[build-dep]]\npackage = \"syn\"\npath = \"x\"\nchecksum = \"c\"\naction = \"approve\"\n",
+    ] {
+        assert!(parse(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn a_new_version_of_a_build_time_library_comes_up_again() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join(FILE);
+    let lib = |sum: &str| {
+        let mut i = under(proc_macro("syn", sum), tmp.path());
+        i.kind = Kind::BuildDep;
+        i
+    };
+    check(
+        &file,
+        vec![lib("c1")],
+        Mode::ApproveAll,
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap();
+    check(
+        &file,
+        vec![lib("c1")],
+        Mode::Report,
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap();
+    let err = check(
+        &file,
+        vec![lib("c2")],
+        Mode::Report,
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("1 piece"), "{err}");
+}

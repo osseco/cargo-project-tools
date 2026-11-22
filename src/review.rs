@@ -56,6 +56,9 @@ impl Action {
 pub enum Kind {
     BuildScript,
     ProcMacro,
+    /// A library that build scripts or proc macros run: a build-dependency, a proc macro's
+    /// own dependency, and what those depend on.
+    BuildDep,
     CargoConfig,
 }
 
@@ -65,16 +68,24 @@ impl Kind {
         match self {
             Kind::BuildScript => "build-script",
             Kind::ProcMacro => "proc-macro",
+            Kind::BuildDep => "build-dep",
             Kind::CargoConfig => "cargo-config",
         }
     }
 
     /// The field that pins the content.
     fn hash_key(self) -> &'static str {
-        match self {
-            Kind::ProcMacro => "checksum",
-            _ => "sha256",
+        if self.whole_crate() {
+            "checksum"
+        } else {
+            "sha256"
         }
+    }
+
+    /// A whole crate, pinned by its checksum (or commit, or files), that can only be
+    /// approved: proc macros and the libraries build-time code runs.
+    pub fn whole_crate(self) -> bool {
+        matches!(self, Kind::ProcMacro | Kind::BuildDep)
     }
 }
 
@@ -144,7 +155,7 @@ impl Item {
     fn describe(&self) -> String {
         match self.kind {
             Kind::BuildScript => format!("{}@{} {}", self.package, self.version, self.path),
-            Kind::ProcMacro => format!("{}@{}", self.package, self.version),
+            Kind::ProcMacro | Kind::BuildDep => format!("{}@{}", self.package, self.version),
             Kind::CargoConfig => self.path.clone(),
         }
     }
@@ -183,6 +194,8 @@ struct RawFile {
     #[serde(default)]
     proc_macro: Vec<RawEntry>,
     #[serde(default)]
+    build_dep: Vec<RawEntry>,
+    #[serde(default)]
     cargo_config: Vec<RawEntry>,
 }
 
@@ -210,6 +223,7 @@ fn parse(text: &str) -> Result<Vec<Entry>> {
     for (kind, list) in [
         (Kind::BuildScript, raw.build_script),
         (Kind::ProcMacro, raw.proc_macro),
+        (Kind::BuildDep, raw.build_dep),
         (Kind::CargoConfig, raw.cargo_config),
     ] {
         for r in list {
@@ -225,7 +239,9 @@ fn entry(kind: Kind, r: RawEntry) -> Result<Entry> {
     };
     let unexpected = match kind {
         Kind::BuildScript => r.checksum.is_some() && r.commit.is_some(),
-        Kind::ProcMacro => r.path.is_some() || r.sha256.is_some() || r.commit.is_some(),
+        Kind::ProcMacro | Kind::BuildDep => {
+            r.path.is_some() || r.sha256.is_some() || r.commit.is_some()
+        }
         Kind::CargoConfig => r.package.is_some() || r.checksum.is_some() || r.commit.is_some(),
     };
     if unexpected {
@@ -242,7 +258,7 @@ fn entry(kind: Kind, r: RawEntry) -> Result<Entry> {
             need(r.path, "path")?,
             need(r.sha256, "sha256")?,
         ),
-        Kind::ProcMacro => (
+        Kind::ProcMacro | Kind::BuildDep => (
             need(r.package, "package")?,
             String::new(),
             need(r.checksum, "checksum")?,
@@ -253,8 +269,8 @@ fn entry(kind: Kind, r: RawEntry) -> Result<Entry> {
             need(r.sha256, "sha256")?,
         ),
     };
-    if kind == Kind::ProcMacro && r.action != Action::Approve {
-        bail!("[[proc-macro]] `{package}` can only be approved");
+    if kind.whole_crate() && r.action != Action::Approve {
+        bail!("[[{kind}]] `{package}` can only be approved");
     }
     match (r.action, &r.file) {
         (Action::Override, None) => bail!("[[{kind}]] `{package}{path}`: override needs `file`"),
@@ -511,10 +527,36 @@ fn shipped_configs(checkout: &Checkout) -> Result<Vec<Item>> {
 #[derive(Deserialize)]
 struct Metadata {
     packages: Vec<MetaPackage>,
+    #[serde(default)]
+    resolve: Option<Resolve>,
+}
+
+#[derive(Deserialize)]
+struct Resolve {
+    nodes: Vec<Node>,
+}
+
+#[derive(Deserialize)]
+struct Node {
+    id: String,
+    deps: Vec<NodeDep>,
+}
+
+#[derive(Deserialize)]
+struct NodeDep {
+    pkg: String,
+    dep_kinds: Vec<DepKind>,
+}
+
+#[derive(Deserialize)]
+struct DepKind {
+    /// `null` for a normal dependency, else `build` or `dev`.
+    kind: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct MetaPackage {
+    id: String,
     name: String,
     version: String,
     source: Option<String>,
@@ -562,6 +604,7 @@ pub fn collect(
     }
     let json = process::output(&mut cmd).context("reading package metadata")?;
     let meta: Metadata = serde_json::from_str(&json)?;
+    let host = run_at_build_time(&manifest, selection, vendored, offline)?;
 
     // What an override or strip may write into: the checkout and the vendored copies.
     let roots: Vec<PathBuf> = [&checkout.root, &vendored.dir]
@@ -656,12 +699,129 @@ pub fn collect(
                 vendored: in_vendor,
                 pulled: Pulled::default(),
             });
+        } else if host.contains(&pkg.id) {
+            // A library build-time code runs; a proc macro is reviewed as one already.
+            let hash = match pin.clone() {
+                Pin::Checksum(sum) => sum,
+                Pin::Commit(commit) => commit,
+                Pin::None => dir_hash(&pkg_dir, in_vendor)?,
+            };
+            items.push(Item {
+                kind: Kind::BuildDep,
+                package: pkg.name.clone(),
+                version: pkg.version.clone(),
+                path: String::new(),
+                hash,
+                pin: Pin::None,
+                location: pkg_dir.clone(),
+                base: pkg_dir,
+                vendored: in_vendor,
+                pulled: Pulled::default(),
+            });
         }
     }
     items.sort_by(|a, b| {
         (a.kind, &a.package, &a.version, &a.path).cmp(&(b.kind, &b.package, &b.version, &b.path))
     });
     Ok(items)
+}
+
+/// The packages build-time code runs, by package id: what a build script of a built package
+/// depends on (its build-dependencies), what a built proc macro depends on, and everything
+/// those depend on in turn. Resolved with the tool's features and the build's config, once
+/// per target (they run on the machine that builds, which is one of them), or for every
+/// platform without targets.
+fn run_at_build_time(
+    manifest: &Path,
+    selection: graph::Selection,
+    vendored: &Vendored,
+    offline: bool,
+) -> Result<BTreeSet<String>> {
+    let platforms: Vec<Option<&String>> = match selection.targets {
+        Some(list) => list.iter().map(Some).collect(),
+        None => vec![None],
+    };
+    let mut host = BTreeSet::new();
+    for platform in platforms {
+        let mut cmd = process::cargo();
+        cmd.args(["metadata", "--locked", "--format-version", "1"])
+            .arg("--manifest-path")
+            .arg(manifest)
+            .args(selection.features)
+            .args(selection.config)
+            .args(&vendored.config_args);
+        if let Some(t) = platform {
+            cmd.arg("--filter-platform").arg(t);
+        }
+        if offline {
+            cmd.arg("--offline");
+        }
+        let json = process::output(&mut cmd).context("reading the dependency graph")?;
+        let meta: Metadata = serde_json::from_str(&json)?;
+        host.extend(host_closure(&meta)?);
+    }
+    Ok(host)
+}
+
+/// The libraries build-time code runs in a `cargo metadata` graph, as name and version,
+/// proc macros left out (they're their own kind). For `inspect`.
+pub fn build_deps_in(metadata_json: &str) -> Result<BTreeSet<(String, String)>> {
+    let meta: Metadata = serde_json::from_str(metadata_json)?;
+    let host = host_closure(&meta)?;
+    Ok(meta
+        .packages
+        .iter()
+        .filter(|p| host.contains(&p.id))
+        .filter(|p| {
+            !p.targets
+                .iter()
+                .any(|t| t.kind.iter().any(|k| k == "proc-macro"))
+        })
+        .map(|p| (p.name.clone(), p.version.clone()))
+        .collect())
+}
+
+/// `run_at_build_time` for one resolved graph.
+fn host_closure(meta: &Metadata) -> Result<BTreeSet<String>> {
+    let resolve = meta
+        .resolve
+        .as_ref()
+        .context("cargo metadata gave no dependency graph")?;
+    let nodes: BTreeMap<&str, &Node> = resolve.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+    let proc_macros: BTreeSet<&str> = meta
+        .packages
+        .iter()
+        .filter(|p| {
+            p.targets
+                .iter()
+                .any(|t| t.kind.iter().any(|k| k == "proc-macro"))
+        })
+        .map(|p| p.id.as_str())
+        .collect();
+    let is =
+        |d: &NodeDep, kind: Option<&str>| d.dep_kinds.iter().any(|k| k.kind.as_deref() == kind);
+    let mut todo: Vec<&str> = Vec::new();
+    for node in &resolve.nodes {
+        for d in &node.deps {
+            if is(d, Some("build")) || (proc_macros.contains(node.id.as_str()) && is(d, None)) {
+                todo.push(&d.pkg);
+            }
+        }
+    }
+    let mut host = BTreeSet::new();
+    while let Some(id) = todo.pop() {
+        if !host.insert(id.to_string()) {
+            continue;
+        }
+        if let Some(node) = nodes.get(id) {
+            for d in &node.deps {
+                if d.dep_kinds.iter().any(|k| k.kind.as_deref() != Some("dev")) {
+                    todo.push(&d.pkg);
+                }
+            }
+        }
+    }
+    Ok(host)
 }
 
 /// An item with the decision that applies to it.
@@ -896,7 +1056,7 @@ fn snapshot(item: &Item) -> Result<String> {
     match item.kind {
         Kind::BuildScript => script_hash(&item.base, &item.location, &item.pulled, item.vendored),
         Kind::CargoConfig => Ok(sha256_hex(&fs::read(&item.location)?)),
-        Kind::ProcMacro => dir_hash(&item.location, item.vendored),
+        Kind::ProcMacro | Kind::BuildDep => dir_hash(&item.location, item.vendored),
     }
 }
 
@@ -904,7 +1064,7 @@ fn snapshot(item: &Item) -> Result<String> {
 /// scripts and config, since it was collected.
 fn unchanged(item: &Item, before: &str) -> Result<()> {
     let now = snapshot(item)?;
-    if now != before || (item.kind != Kind::ProcMacro && now != item.hash) {
+    if now != before || (!item.kind.whole_crate() && now != item.hash) {
         bail!(
             "{} changed during the review; run the command again",
             shown(&item.describe())
@@ -1019,7 +1179,7 @@ fn review_item(
     location: String,
 ) -> output::ReviewItem {
     let hash = |kind: Kind, hash: &str| match kind {
-        Kind::ProcMacro => (None, Some(hash.to_string())),
+        Kind::ProcMacro | Kind::BuildDep => (None, Some(hash.to_string())),
         _ => (Some(hash.to_string()), None),
     };
     let (sha256, mut checksum) = hash(item.kind, &item.hash);
@@ -1285,7 +1445,7 @@ pub fn apply(decided: &[Decided], crate_dir: &Path) -> Result<String> {
                     }
                     Kind::CargoConfig => fs::remove_file(&item.location)
                         .with_context(|| format!("removing {}", item.location.display()))?,
-                    Kind::ProcMacro => bail!("a proc macro can't be stripped"),
+                    Kind::ProcMacro | Kind::BuildDep => bail!("a whole crate can't be stripped"),
                 }
                 changes.push(format!(
                     "{}\0{}\0{}\0strip",
