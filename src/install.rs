@@ -47,6 +47,9 @@ pub enum Stage {
     Check,
     /// Review, then stop before building (`review`).
     Review,
+    /// Show how changed build-time code differs from what was recorded, then stop
+    /// (`review --diff`).
+    Diff,
 }
 
 /// How `install` treats a tool beyond its build settings.
@@ -318,7 +321,7 @@ pub fn install(
             .all(|b| project.bin_dir().join(b).is_file())
         && checksum::check(project, name).is_ok_and(|m| m.is_empty())
     {
-        if opts.stage == Stage::Review {
+        if matches!(opts.stage, Stage::Review | Stage::Diff) {
             // The stamp covers the lock and the review file it was built with.
             say!("{name} {} is up to date; nothing to review", tool.version);
         } else {
@@ -331,6 +334,7 @@ pub fn install(
         Stage::Install => say!("Installing {name} {}", tool.version),
         Stage::Check => say!("Checking {name} {}", tool.version),
         Stage::Review => say!("Reviewing {name} {}", tool.version),
+        Stage::Diff => say!("Comparing {name} {}", tool.version),
     }
     let checkout = source::checkout(
         project,
@@ -353,6 +357,9 @@ pub fn install(
         targets: opts.targets,
         config: &config,
     };
+    if opts.stage == Stage::Diff {
+        return review::diff(project, name, selection, &checkout, &vendored, args.offline);
+    }
     if opts.stage == Stage::Check {
         return review::check_only(project, name, selection, &checkout, &vendored, args.offline);
     }

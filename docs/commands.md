@@ -186,6 +186,7 @@ Runs each selected tool's [build review](build-review.md) as `install` would, th
 | `--approve <spec>` | Record the pending build-time code of `package@version`, or a cargo config by its path, as `approve`. Add `=<hash>` (the `sha256`, or `checksum` for a whole crate) to make sure it's the code you read: a different hash fails before anything is written. Needs one tool; repeatable |
 | `--strip <spec>` | Record the pending build script (or cargo config) as `strip`, as for `--approve` |
 | `--override <spec>` | Record the pending build script (or cargo config) as `override`, with the file already at `overrides/<package>/<path>` (`overrides/cargo-config/<path>`) in the tool's crate directory, as for `--approve` |
+| `--diff` | Show how each changed piece differs from the version its entry was recorded for, as a unified diff of the files its hash covers, and record nothing |
 | `--offline` | Vendor without the network |
 | `--config <value>` | Extra cargo `--config` values, as for `install` |
 
@@ -316,7 +317,7 @@ Other fields:
   - `sha256` is given for build scripts and cargo config, `checksum` for proc macros and build-time libraries;
   - a build script also has its crate's `checksum`, or `commit` for a git package;
   - `location` is the file or directory to read;
-  - `previous` is the entry it replaces: `action`, `sha256` or `checksum`, the old crate's `checksum` or `commit`, and `changed`, the keys whose values changed. A build script with only `checksum` or `commit` in `changed` is the same script in a different crate;
+  - `previous` is the entry it replaces: `action`, `sha256` or `checksum`, the old crate's `checksum` or `commit`, and `changed`, the keys whose values changed. A build script with only `checksum` or `commit` in `changed` is the same script in a different crate. When the version the entry was recorded for could be fetched, `version` is that version and `location` its copy of the build script or crate, to compare with;
   - `known` (`tool`, `action`) is a decision another tool records for it.
 - `entry` is the TOML to put in `file`, with the action it would get.
 - In an `advisory`:

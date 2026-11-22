@@ -21,6 +21,9 @@ use crate::vendor::Vendored;
 #[path = "review_tui.rs"]
 mod tui;
 
+#[path = "review_previous.rs"]
+mod previous;
+
 /// Per-tool file recording the build-time code that may run, next to the tool's lock.
 pub const FILE: &str = "build-review.toml";
 
@@ -141,6 +144,10 @@ pub struct Item {
     /// For a build script: the files it pulls in that its hash covers besides itself (and
     /// its directory), or why it covers the whole package.
     pub pulled: Pulled,
+    /// The package's source in the lock; none for the tool's own packages and cargo config.
+    pub source: Option<String>,
+    /// The crate its changed entry was recorded for, when that was fetched.
+    pub old: Option<previous::OldCopy>,
 }
 
 impl Item {
@@ -524,6 +531,8 @@ fn shipped_configs(checkout: &Checkout) -> Result<Vec<Item>> {
                 base: checkout.root.clone(),
                 vendored: false,
                 pulled: Pulled::default(),
+                source: None,
+                old: None,
             });
         }
     }
@@ -679,6 +688,8 @@ pub fn collect(
                     base: pkg_dir.clone(),
                     vendored: in_vendor,
                     pulled,
+                    source: pkg.source.clone(),
+                    old: None,
                 });
             }
         }
@@ -704,6 +715,8 @@ pub fn collect(
                 base: pkg_dir,
                 vendored: in_vendor,
                 pulled: Pulled::default(),
+                source: pkg.source.clone(),
+                old: None,
             });
         } else if host.contains(&pkg.id) {
             // A library build-time code runs; a proc macro is reviewed as one already.
@@ -723,6 +736,8 @@ pub fn collect(
                 base: pkg_dir,
                 vendored: in_vendor,
                 pulled: Pulled::default(),
+                source: pkg.source.clone(),
+                old: None,
             });
         }
     }
@@ -1293,6 +1308,13 @@ fn report(
             note,
             rel(&item.location)
         );
+        if let Some(old) = &item.old {
+            eprintln!(
+                "      was {}  {}",
+                shown(&old.version),
+                rel(&old.location(item))
+            );
+        }
     }
     eprintln!(
         "  to decide piece by piece, put these in {} with the action you choose:",
@@ -1313,7 +1335,13 @@ fn report(
             tool: tool.clone(),
             file: raw(path),
             line: previous.and_then(|p| p.line),
-            item: Box::new(review_item(item, *previous, found, raw(&item.location))),
+            item: Box::new(review_item(
+                item,
+                *previous,
+                found,
+                raw(&item.location),
+                item.old.as_ref().map(|o| raw(&o.location(item))),
+            )),
             entry: text
                 .lines()
                 .map(|l| format!("{}\n", l.trim_start()))
@@ -1356,6 +1384,7 @@ fn review_item(
     previous: Option<&Entry>,
     known: Option<&Known>,
     location: String,
+    old_location: Option<String>,
 ) -> output::ReviewItem {
     let hash = |kind: Kind, hash: &str| match kind {
         Kind::ProcMacro | Kind::BuildDep => (None, Some(hash.to_string())),
@@ -1391,6 +1420,8 @@ fn review_item(
                 checksum,
                 commit,
                 changed: changed_keys(item, p),
+                version: item.old.as_ref().map(|o| o.version.clone()),
+                location: old_location.clone(),
             }
         }),
         known: known.map(|k| output::Known {
@@ -1717,7 +1748,7 @@ pub fn review(
     approval: Approval,
 ) -> Result<String> {
     source::refuse_config_above(&project.root, checkout)?;
-    let items = collect(name, selection, checkout, vendored, offline)?;
+    let mut items = collect(name, selection, checkout, vendored, offline)?;
     let crate_dir = project.crate_dir(name);
     let mode = match approval {
         Approval::All => Mode::ApproveAll,
@@ -1731,6 +1762,10 @@ pub fn review(
         },
         Approval::Ask => Mode::Report,
     };
+    // Without a terminal, the list and records point at the old version to compare with.
+    if matches!(mode, Mode::Report) {
+        previous::fetch(project, name, checkout, &mut items, offline)?;
+    }
     let known = known_elsewhere(
         &project.tools_dir().join("crates"),
         name,
@@ -1744,6 +1779,22 @@ pub fn review(
         &project.root,
     )?;
     apply(&decided, &crate_dir)
+}
+
+/// Show how each changed piece of the tool's build-time code differs from the version its
+/// entry was recorded for (`review --diff`). Records nothing.
+pub fn diff(
+    project: &Project,
+    name: &str,
+    selection: graph::Selection,
+    checkout: &Checkout,
+    vendored: &Vendored,
+    offline: bool,
+) -> Result<()> {
+    source::refuse_config_above(&project.root, checkout)?;
+    let mut items = collect(name, selection, checkout, vendored, offline)?;
+    previous::fetch(project, name, checkout, &mut items, offline)?;
+    previous::print_diffs(name, &items)
 }
 
 /// Check the build-time code of the tool in `checkout` against its `build-review.toml`,

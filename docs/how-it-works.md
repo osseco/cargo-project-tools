@@ -55,6 +55,8 @@ Commit `project-tools.toml`, `.project-tools/crates/` and `.project-tools/self-a
 
 The source of each tool is kept in `.project-tools/targets/<tool>/src`. A `.crate` is unpacked with its original file times, and a git tool already at its pinned commit is reset in place instead of cloned again (only a clone it made itself, recorded in `targets/<tool>/src.clone`). Vendored dependencies all get the same old file time, as they're copied afresh each time and build scripts watching them would otherwise run again. So with an unchanged build directory cargo finds nothing to rebuild and copies the binary it already has. [`verify --repair`](commands.md#verify) relies on that.
 
+When build-time code changed since its entry was recorded, the version the entry names is fetched into `targets/<tool>/previous` to compare with: the `.crate` with that checksum (checked like any other), or a clone at that commit. It's only read, never built. This happens outside a terminal and for `review --diff`, not on the review screen or in `check`.
+
 ## Auditing
 
 `audit` reads the [RustSec advisory database](https://github.com/rustsec/advisory-db) with the [rustsec](https://crates.io/crates/rustsec) library, which cargo-audit is built on. It downloads the database as a `git archive` tarball of the default branch over https, and keeps the ETag, the commit and the time of the last check in `.project-tools/advisory-db/.fetch.json`. A new download is unpacked next to the old copy, checked, and only then swapped in. As with cargo-audit's git fetch, the database is trusted because it comes from GitHub over https; there's no checksum to check it against.

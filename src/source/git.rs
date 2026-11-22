@@ -147,6 +147,19 @@ fn fresh_clone(url: &str, reference: &GitRef, dest: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The url `dir`, a clone of ours, was cloned from.
+pub fn origin_url(dir: &Path) -> Result<String> {
+    let url = process::output(
+        git()
+            .arg("-C")
+            .arg(dir)
+            .args(["remote", "get-url", "origin"]),
+    )?;
+    let url = url.trim().to_string();
+    ensure_https(&url)?;
+    Ok(url)
+}
+
 #[derive(Deserialize)]
 struct Metadata {
     workspace_root: PathBuf,

@@ -47,7 +47,7 @@ Without a terminal, both stop before writing anything while build-time code isn'
 
 For each `review-pending` record:
 
-1. Read what `item.location` points to: the build script (and the files it pulls in), the proc macro's crate, or the cargo config. `item.previous` means it changed since a recorded decision, so compare against the old version. `item.previous.changed` lists what changed: a build script with only `checksum` or `commit` there is unchanged, but its crate isn't, so look at what the script reads from the crate. `item.known` means another tool already records a decision for it.
+1. Read what `item.location` points to: the build script (and the files it pulls in), the proc macro's crate, or the cargo config. `item.previous` means it changed since a recorded decision, so compare against the old version: `item.previous.location` is a copy of it when it could be fetched, and `cargo project-tools review <tool> --diff` prints the difference. `item.previous.changed` lists what changed: a build script with only `checksum` or `commit` there is unchanged, but its crate isn't, so look at what the script reads from the crate. `item.known` means another tool already records a decision for it.
 2. Summarise for the person what it does: what it reads, writes, runs or downloads, and anything unusual. Look in particular for network access, processes started, files written outside `OUT_DIR`, environment variables read, and obfuscated or generated code.
 3. Propose an action. See [Build review](build-review.md#the-file) for what each one does:
    - `approve`: it does only what it says;

@@ -208,6 +208,16 @@ fn review_flags() {
     assert_eq!(args.override_, ["d@4"]);
     // Picking pieces and approving them all don't mix.
     assert!(parse(&["review", "x", "--auto-approve", "--approve", "a@1"]).is_err());
+    // `--diff` only shows.
+    assert!(parse(&["review", "x", "--diff"]).is_ok());
+    for flag in [
+        "--auto-approve",
+        "--approve=a@1",
+        "--strip=a@1",
+        "--override=a@1",
+    ] {
+        assert!(parse(&["review", "x", "--diff", flag]).is_err(), "{flag}");
+    }
 }
 
 #[test]

@@ -297,6 +297,10 @@ pub struct ReviewArgs {
         conflicts_with = "auto_approve"
     )]
     pub override_: Vec<String>,
+    /// Show how each changed piece differs from the version its entry was recorded for, and
+    /// record nothing.
+    #[arg(long, conflicts_with_all = ["auto_approve", "approve", "strip", "override_"])]
+    pub diff: bool,
     #[arg(long)]
     pub offline: bool,
     /// Extra cargo `--config` values, as for `install`.

@@ -1068,7 +1068,11 @@ fn review(project: &Project, config: &Config, args: &ReviewArgs) -> Result<()> {
                 force: false,
                 auto_approve: args.auto_approve,
                 picks: &picks,
-                stage: install::Stage::Review,
+                stage: if args.diff {
+                    install::Stage::Diff
+                } else {
+                    install::Stage::Review
+                },
                 checksums: install::Checksums::Write,
                 targets: config.targets_for(tool),
             },
