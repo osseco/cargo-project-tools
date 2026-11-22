@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
@@ -13,6 +14,34 @@ pub fn cargo() -> Command {
         .env("GIT_ALLOW_PROTOCOL", "https")
         .env("GIT_TERMINAL_PROMPT", "0");
     cmd
+}
+
+/// Keeps git, as started by a build script, from looking for a repository in `dir` or above
+/// it. A script in a source without its own `.git` would otherwise find the project's
+/// repository. A ceiling already in the environment is kept.
+pub fn git_ceiling(cmd: &mut Command, dir: &Path) -> Result<()> {
+    // git compares the ceiling with the real path of the working directory.
+    let dir = dir
+        .canonicalize()
+        .with_context(|| format!("resolving {}", dir.display()))?;
+    let mut ceilings = vec![without_verbatim(dir)];
+    if let Some(old) = std::env::var_os("GIT_CEILING_DIRECTORIES") {
+        ceilings.extend(std::env::split_paths(&old));
+    }
+    cmd.env("GIT_CEILING_DIRECTORIES", std::env::join_paths(ceilings)?);
+    Ok(())
+}
+
+/// `path` without the `\\?\` prefix `canonicalize` gives it on Windows, which git doesn't
+/// read: `\\?\C:\x` becomes `C:\x`, and `\\?\UNC\host\share` becomes `\\host\share`.
+fn without_verbatim(path: PathBuf) -> PathBuf {
+    let Some(rest) = path.to_str().and_then(|p| p.strip_prefix(r"\\?\")) else {
+        return path;
+    };
+    match rest.strip_prefix(r"UNC\") {
+        Some(unc) => PathBuf::from(format!(r"\\{unc}")),
+        None => PathBuf::from(rest),
+    }
 }
 
 fn describe(cmd: &Command) -> String {
@@ -107,3 +136,7 @@ pub fn which(name: &str) -> Option<std::path::PathBuf> {
         .map(|dir| dir.join(name))
         .find(|p| p.is_file())
 }
+
+#[cfg(test)]
+#[path = "process_test.rs"]
+mod tests;
