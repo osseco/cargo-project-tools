@@ -114,6 +114,9 @@ pub enum Record {
     ReviewPending {
         tool: String,
         file: String,
+        /// 1-based, where in `file` it is.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        line: Option<usize>,
         item: ReviewItem,
         /// The entry to put in `file`, with the action it would get.
         entry: String,
@@ -122,6 +125,9 @@ pub enum Record {
     ReviewUnused {
         tool: String,
         file: String,
+        /// 1-based, where in `file` it is.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        line: Option<usize>,
         #[serde(rename = "type")]
         kind: String,
         package: String,
@@ -130,11 +136,17 @@ pub enum Record {
     TargetMissing {
         tool: String,
         file: String,
+        /// 1-based, where in `file` it is.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        line: Option<usize>,
         targets: Vec<String>,
     },
     Advisory {
         tool: String,
         file: String,
+        /// 1-based, where in `file` it is.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        line: Option<usize>,
         id: String,
         /// `vulnerability`, or the warning: `unmaintained`, `unsound`, `notice`, `yanked`,
         /// `git-source`.
@@ -152,11 +164,17 @@ pub enum Record {
     IgnoreUnused {
         tool: String,
         file: String,
+        /// 1-based, where in `file` it is.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        line: Option<usize>,
         id: String,
     },
     IgnoreExpired {
         tool: String,
         file: String,
+        /// 1-based, where in `file` it is.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        line: Option<usize>,
         id: String,
         expires: String,
     },

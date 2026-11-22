@@ -375,6 +375,9 @@ pub struct IgnoreEntry {
     pub reason: String,
     /// `YYYY-MM-DD`; after this date the entry no longer applies.
     pub expires: Option<String>,
+    /// Where its `[[ignore]]` is, for records.
+    #[serde(skip)]
+    pub line: Option<usize>,
 }
 
 pub const AUDIT_IGNORE_TEMPLATE: &str = r#"# Advisories to ignore when running `cargo project-tools audit` for this tool.
@@ -407,7 +410,16 @@ impl AuditIgnore {
     pub fn load(path: &Path) -> Result<AuditIgnore> {
         match fs::read_to_string(path) {
             Ok(text) => {
-                toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
+                let mut file: AuditIgnore =
+                    toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+                for (entry, (line, _)) in file
+                    .ignore
+                    .iter_mut()
+                    .zip(crate::toml_line::tables(&text, "ignore"))
+                {
+                    entry.line = Some(line);
+                }
+                Ok(file)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(AuditIgnore::default()),
             Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),

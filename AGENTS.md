@@ -102,6 +102,7 @@ Never stage `site/dist/` or `site/node_modules/`.
 - `src/sfw.rs`: re-executes package-downloading commands under sfw.
 - `src/net.rs`: ureq agent (honours `HTTPS_PROXY` and `SSL_CERT_FILE`).
 - `src/output.rs`: `--message-format`: the `say!` macro for human text (stderr in json mode) and the JSON records written to stdout.
+- `src/toml_line.rs`: the 1-based lines of `[[…]]` tables and keys in a TOML file, for the records' `line`.
 - `site/`: the GitHub Pages site (Vite + React, built from the [osseco web design guide](https://github.com/osseco/web-design-guide) templates). It renders `docs/*.md` and publishes them raw with `llms.txt`. Follow the guide's `AGENTS.md` and `docs/checklist.md` when changing it.
 - `docs/`: user docs. A change to a command or setting updates them in the same commit. Adding, renaming or removing a doc also updates `llms.txt` and the list in `README.md`.
 

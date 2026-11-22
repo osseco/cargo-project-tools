@@ -424,6 +424,13 @@ fn audit_file(lock_text: &str, git_tool: bool, index: &[registry::IndexEntry]) -
     audit_built(lock_text, git_tool, index, &all_of(lock_text))
 }
 
+#[test]
+fn reports_know_where_packages_are_in_the_lock() {
+    let report = audit_file(OPTIONAL_LOCK, false, &[]);
+    assert_eq!(report.lines[&("mytool".into(), "1.0.1".into())], 3);
+    assert_eq!(report.lines[&("smallvec".into(), "1.6.0".into())], 7);
+}
+
 /// `mytool` 1.0.1 is patched; `smallvec` is vulnerable but only an optional dependency.
 const OPTIONAL_LOCK: &str = r#"version = 3
 
