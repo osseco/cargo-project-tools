@@ -257,6 +257,18 @@ fn add(project: &Project, config: &Config, args: AddArgs) -> Result<()> {
         let features: Vec<String> = setup.selected.iter().cloned().collect();
         (setup.checkout, features, setup.default_features, lock_text)
     } else {
+        let checkout = audit_before_review(
+            project,
+            config,
+            name,
+            checkout,
+            matches!(origin, Origin::Git { .. }),
+            &args.features,
+            !args.no_default_features,
+            config.settings.targets.as_deref(),
+            args.fix_advisories,
+        )?;
+        let lock_text = fs::read_to_string(checkout.lock_path())?;
         (
             checkout,
             args.features.clone(),
@@ -454,6 +466,7 @@ fn upgrade(project: &Project, config: &Config, args: UpgradeArgs) -> Result<()> 
             features: None,
             no_default_features: false,
             default_features: false,
+            fix_advisories: false,
             auto_approve: args.auto_approve,
         },
     )
@@ -777,6 +790,17 @@ fn update(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
         lock::cargo_update(&checkout.manifest_path(), &cargo_args)?;
     }
 
+    let checkout = audit_before_review(
+        project,
+        config,
+        name,
+        checkout,
+        tool.git.is_some(),
+        &features,
+        default_features,
+        config.targets_for(tool),
+        args.fix_advisories,
+    )?;
     let updated = lock::load(&checkout.lock_path())?;
     lock::check_root(&updated, name, &checkout.version)?;
     let changes = lock::diff(&ours, &updated);
@@ -866,6 +890,55 @@ fn review_build(
         review::Approval::new(approve, &[]),
     )?;
     Ok(())
+}
+
+/// Before the build review: audit what the lock in `checkout` builds and, with `fix`, move
+/// each dependency with advisories to the lowest semver-compatible version that fixes them,
+/// so the review covers the lock that's kept. Findings are reported, not refused: `check`
+/// and `install` refuse them.
+#[allow(clippy::too_many_arguments)]
+fn audit_before_review(
+    project: &Project,
+    config: &Config,
+    name: &str,
+    checkout: source::Checkout,
+    git: bool,
+    features: &[String],
+    default_features: bool,
+    targets: Option<&[String]>,
+    fix: bool,
+) -> Result<source::Checkout> {
+    let (auditor, _) = load_auditor(project, config, advisory_db::Policy::Auto)?;
+    let ignore = AuditIgnore::load(&project.audit_ignore_path(name))?;
+    say!("Auditing what {name} builds…");
+    let mut setup = setup::Setup::new(
+        name,
+        checkout,
+        git,
+        features.iter().cloned().collect(),
+        default_features,
+        targets.map(<[String]>::to_vec),
+        auditor,
+        ignore,
+        Vec::new(),
+    )?;
+    if fix {
+        let (moved, left) = setup.fix_advisories()?;
+        for (dep, from, to) in &moved {
+            say!("  {dep} {from} -> {to}, which fixes its advisories");
+        }
+        for (dep, version) in &left {
+            say!("  {dep} {version}: no semver-compatible version fixes every advisory");
+        }
+    }
+    say!("{name}:");
+    let outcome = setup.report()?;
+    if outcome.vulnerabilities == 0 && outcome.warnings == 0 {
+        say!("  ok");
+    } else if !fix && outcome.vulnerabilities > 0 {
+        say!("  --fix-advisories moves them to semver-compatible fixes before the review");
+    }
+    Ok(setup.checkout)
 }
 
 /// Load the advisory database and report advisories against this binary itself. Returns

@@ -351,6 +351,10 @@ fn update_flags() {
         assert!(parse(&args).is_err(), "{args:?}");
     }
     assert!(parse(&["add", "cargo-nextest", "-i", "--no-default-features"]).is_ok());
+    assert!(parse(&["add", "cargo-nextest", "--fix-advisories"]).is_ok());
+    assert!(parse(&["add", "cargo-nextest", "-i", "--fix-advisories"]).is_err());
+    assert!(parse(&["update", "cargo-nextest", "--fix-advisories"]).is_ok());
+    assert!(parse(&["update", "cargo-nextest", "-i", "--fix-advisories"]).is_err());
     assert!(parse(&["update", "t", "--default-features", "--no-default-features"]).is_err());
     assert!(parse(&["update", "t", "-F", "a,b", "--latest"]).is_ok());
     // `upgrade` still parses, but isn't listed.

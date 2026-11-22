@@ -62,11 +62,12 @@ cargo project-tools add -i cargo-nextest
 | `-F`, `--features <list>` | Build with these features, replacing the tool's list; `-F ""` clears it |
 | `--no-default-features`, `--default-features` | Build without, or again with, the default features |
 | `-i`, `--interactive` | Choose the version, features and dependency versions on the [setup screen](#interactive-setup) first |
+| `--fix-advisories` | Before the build review, move each dependency with advisories to the lowest semver-compatible version that fixes them all; not with `-i` |
 | `--auto-approve` | Record the tool's build scripts, proc macros and cargo config in [`build-review.toml`](build-review.md) |
 
 Copies the lock the tool ships with into `.project-tools/crates/<tool>/` and adds a `[tool.<name>]` entry. A tool that ships no lock gets one from `cargo generate-lockfile`, which only reads the index: nothing is compiled and no build script runs.
 
-Before anything is written, it [reviews the build-time code](build-review.md) the lock brings in, and stops while any of it isn't in `build-review.toml`. In a terminal it opens the [review screen](build-review.md#reviewing-on-the-terminal); otherwise look at the files it lists, then run it again with `--auto-approve`.
+Before anything is written, it [audits](#audit) what the lock builds and reports the advisories, with a `fix` for each, without failing on them (`check` and `install` do). With `--fix-advisories` it first moves every dependency it can to a semver-compatible fix, and lists what it couldn't, so the review below covers the lock that's kept. Then it [reviews the build-time code](build-review.md) the lock brings in, and stops while any of it isn't in `build-review.toml`. In a terminal it opens the [review screen](build-review.md#reviewing-on-the-terminal); otherwise look at the files it lists, then run it again with `--auto-approve`.
 
 ## remove
 
@@ -92,9 +93,10 @@ cargo project-tools update -i cargo-nextest
 | `--latest` | Move the tool to its latest stable version; a git tool follows its tag or branch again |
 | `--version <req>` | Move a registry tool to the version matching this requirement |
 | `-i`, `--interactive` | Change the version, features and dependency versions on the [setup screen](#interactive-setup); not with the options above |
+| `--fix-advisories` | After the update, before the build review, move each dependency with advisories to the lowest semver-compatible version that fixes them all; not with `-i` |
 | `--auto-approve` | Record new or changed build-time code in [`build-review.toml`](build-review.md) |
 
-Runs `cargo update` against the tool's lock. The lock is only saved if cargo resolves it, and if every build script, proc macro and cargo config it builds is [recorded](build-review.md).
+Runs `cargo update` against the tool's lock. Then it audits the result, as `add` does, and with `--fix-advisories` moves what it can to semver-compatible fixes. The lock is only saved if cargo resolves it, and if every build script, proc macro and cargo config it builds is [recorded](build-review.md).
 
 With `--latest` or `--version`, the tool moves first. It starts from the new release's lock, then reapplies every dependency you had bumped past it, as long as cargo still resolves. If the new release ships no lock, it starts from yours instead: cargo keeps every pinned version that still fits and only resolves what the new version needs. Dependencies you name are updated after that. The new version (and commit, for git) is written to `project-tools.toml`.
 

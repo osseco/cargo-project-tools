@@ -134,6 +134,10 @@ pub struct AddArgs {
     /// and its advisories, before the build review.
     #[arg(long, short = 'i')]
     pub interactive: bool,
+    /// Before the build review, move each dependency with advisories to the lowest
+    /// semver-compatible version that fixes them, so the review covers the lock that's kept.
+    #[arg(long, conflicts_with = "interactive")]
+    pub fix_advisories: bool,
     /// Record all new or changed build scripts, proc macros and cargo config in
     /// build-review.toml at once. Review them first. In a terminal, without this flag,
     /// a review screen lets you decide on each.
@@ -223,6 +227,10 @@ pub struct UpdateArgs {
         ]
     )]
     pub interactive: bool,
+    /// Before the build review, move each dependency with advisories to the lowest
+    /// semver-compatible version that fixes them, so the review covers the lock that's kept.
+    #[arg(long, conflicts_with = "interactive")]
+    pub fix_advisories: bool,
     /// Record all new or changed build scripts, proc macros and cargo config in
     /// build-review.toml at once. Review them first. In a terminal, without this flag,
     /// a review screen lets you decide on each.
