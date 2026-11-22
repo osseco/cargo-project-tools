@@ -242,6 +242,12 @@ pub struct Previous {
     pub commit: Option<String>,
     /// The keys whose values changed: `sha256`, `checksum` or `commit`.
     pub changed: Vec<&'static str>,
+    /// The version the entry was recorded for, when its copy was fetched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// That copy's build script or crate, repo-relative.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location: Option<String>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]

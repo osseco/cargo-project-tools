@@ -26,6 +26,8 @@ pub(super) fn root_script(dir: &Path, package: &str, text: &str) -> Item {
         base,
         vendored: true,
         pulled: Pulled::default(),
+        source: None,
+        old: None,
     }
 }
 
@@ -45,6 +47,8 @@ pub(super) fn dir_script(dir: &Path, package: &str) -> Item {
         base,
         vendored: true,
         pulled: Pulled::default(),
+        source: None,
+        old: None,
     }
 }
 
@@ -65,6 +69,8 @@ pub(super) fn proc_macro(dir: &Path, package: &str) -> Item {
         base,
         vendored: false,
         pulled: Pulled::default(),
+        source: None,
+        old: None,
     }
 }
 
@@ -83,5 +89,7 @@ pub(super) fn cargo_config(dir: &Path, text: &str) -> Item {
         base: root,
         vendored: false,
         pulled: Pulled::default(),
+        source: None,
+        old: None,
     }
 }

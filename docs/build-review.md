@@ -161,6 +161,8 @@ Don't approve on a CI runner: review where you work, and commit `build-review.to
 
 A build script whose crate changed while the script and the files it pulls in didn't is listed as `(crate changed, script unchanged; was approve)`, and its entry replaces the one with the old `checksum` or `commit`. It still needs a look, since a build script can read any file of its crate.
 
+A changed piece also lists the version its entry was recorded for (`was 2.1.1+zstd.1.5.6  .project-tools/targets/…/previous/…`), fetched to compare with. `cargo project-tools review <tool> --diff` prints the difference of the files each changed piece's hash covers.
+
 A piece another tool already records is listed with that tool's decision (`reviewed for <tool>: strip`), and its printed entry uses it. For an override, the entry also says which file to copy.
 
 After reviewing, run the same command with `--auto-approve`. New pieces are recorded as `approve`. A changed piece keeps its action and file, and its entry is updated in place, so comments next to it stay. Entries that no longer match anything are removed, for example after you narrow `targets`. Without the flag they're only reported. `install --auto-approve` reviews even when the tool is up to date.

@@ -12,6 +12,8 @@ fn script(dir: &Path, package: &str, hash: &str) -> Item {
         base: dir.join(package),
         vendored: true,
         pulled: Pulled::default(),
+        source: None,
+        old: None,
     }
 }
 
@@ -34,6 +36,8 @@ fn proc_macro(package: &str, checksum: &str) -> Item {
         base: PathBuf::from("/v").join(package),
         vendored: true,
         pulled: Pulled::default(),
+        source: None,
+        old: None,
     }
 }
 
@@ -268,6 +272,7 @@ fn review_records_name_the_hash_and_what_it_replaces() {
         Some(&previous),
         None,
         "v/ring/build.rs".into(),
+        None,
     );
     assert_eq!(item.kind, "build-script");
     assert_eq!(item.sha256.as_deref(), Some("new"));
@@ -287,6 +292,7 @@ fn review_records_name_the_hash_and_what_it_replaces() {
         None,
         Some(&known),
         "v".into(),
+        None,
     );
     assert_eq!(item.checksum.as_deref(), Some("cc"));
     assert_eq!(item.sha256, None);
@@ -308,7 +314,7 @@ fn a_crate_change_with_the_same_script_names_the_old_checksum() {
         file: None,
         line: None,
     };
-    let record = review_item(&item, Some(&previous), None, "v".into());
+    let record = review_item(&item, Some(&previous), None, "v".into(), None);
     let p = record.previous.unwrap();
     assert_eq!(p.sha256.as_deref(), Some("same"));
     assert_eq!(p.checksum.as_deref(), Some("old-crate"));

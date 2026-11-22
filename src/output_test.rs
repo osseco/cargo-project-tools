@@ -35,6 +35,8 @@ fn review_pending_names_its_hash_by_kind() {
                 checksum: Some("bb".into()),
                 commit: None,
                 changed: vec!["checksum"],
+                version: None,
+                location: None,
             }),
             known: None,
         }),
