@@ -3,6 +3,7 @@
 //! the screen, for scripts and agents choosing features.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use anyhow::Result;
 use semver::Version;
@@ -25,12 +26,25 @@ pub struct Inspection {
     /// The targets the tree is for; all when absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub targets: Option<Vec<String>>,
+    /// The tool's source, repo-relative: its manifest and README say what features are for.
+    pub source: String,
+    /// The tool's binaries, the features each needs, and whether these features build it.
+    pub bins: Vec<Bin>,
     /// What the tool builds with these features.
     pub packages: Vec<Package>,
     pub findings: Vec<Finding>,
     pub build_time: Vec<BuildTime>,
     /// What turning on each other feature adds, and turning off the defaults removes.
     pub feature_changes: Vec<Change>,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct Bin {
+    pub name: String,
+    /// Its `required-features`.
+    pub required_features: Vec<String>,
+    /// Built with the chosen features.
+    pub built: bool,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq, PartialOrd, Ord, Clone)]
@@ -55,6 +69,9 @@ pub struct Finding {
     /// version.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fix: Option<String>,
+    /// The platforms and functions the advisory is limited to, when the database says.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub affected: Option<crate::output::Affected>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Clone)]
@@ -77,6 +94,9 @@ pub struct Change {
     pub packages: Vec<Package>,
     pub findings: Vec<Finding>,
     pub build_time: Vec<BuildTime>,
+    /// The binaries it builds that weren't built before, or (for `enable: false`) that are
+    /// no longer built.
+    pub bins: Vec<String>,
 }
 
 /// What the current features build.
@@ -84,6 +104,7 @@ struct State {
     packages: BTreeSet<(String, Version)>,
     findings: Vec<Finding>,
     build_time: Vec<BuildTime>,
+    bins: BTreeSet<String>,
 }
 
 fn state(
@@ -117,6 +138,7 @@ fn state(
                 patched: f.patched.iter().map(ToString::to_string).collect(),
                 ignored: f.ignored,
                 fix,
+                affected: f.affected,
             });
         }
     }
@@ -134,7 +156,29 @@ fn state(
         packages,
         findings,
         build_time,
+        bins: built_bins(setup),
     }
+}
+
+/// The binaries the setup's features build: those whose `required-features` are all on. A
+/// required `dep/feature` counts by its first part.
+fn built_bins(setup: &Setup) -> BTreeSet<String> {
+    let start = setup
+        .selected
+        .iter()
+        .map(String::as_str)
+        .chain(setup.default_features.then_some("default"));
+    let on = implied(&setup.features, start);
+    setup
+        .bins
+        .iter()
+        .filter(|(_, required)| {
+            required
+                .iter()
+                .all(|r| on.contains(r.split('/').next().unwrap_or(r)))
+        })
+        .map(|(name, _)| name.clone())
+        .collect()
 }
 
 /// What `to` has that `from` doesn't.
@@ -168,6 +212,7 @@ fn change(feature: &str, enable: bool, from: &State, to: &State) -> Change {
             .filter(|b| new(&b.package, &b.version))
             .cloned()
             .collect(),
+        bins: to.bins.difference(&from.bins).cloned().collect(),
     }
 }
 
@@ -200,7 +245,11 @@ fn implied<'a>(
 /// Inspect the setup's current features, then try each other feature, and the defaults
 /// off, against them. The setup ends with the features it started with. `recorded`: the
 /// kinds and packages in the tool's `build-review.toml`.
-pub fn inspect(setup: &mut Setup, recorded: &BTreeSet<(String, String)>) -> Result<Inspection> {
+pub fn inspect(
+    setup: &mut Setup,
+    recorded: &BTreeSet<(String, String)>,
+    root: &Path,
+) -> Result<Inspection> {
     let code = setup.build_time()?;
     let selected = setup.selected.clone();
     let defaults = setup.default_features;
@@ -253,6 +302,16 @@ pub fn inspect(setup: &mut Setup, recorded: &BTreeSet<(String, String)>) -> Resu
         default_features: defaults,
         selected: selected.into_iter().collect(),
         targets: setup.targets.clone(),
+        source: crate::review::slash_rel(&setup.checkout.package_dir, root),
+        bins: setup
+            .bins
+            .iter()
+            .map(|(name, required)| Bin {
+                name: name.clone(),
+                required_features: required.clone(),
+                built: base.bins.contains(name),
+            })
+            .collect(),
         packages: base
             .packages
             .iter()
@@ -302,9 +361,20 @@ pub fn print(i: &Inspection) {
     if let Some(t) = &i.targets {
         safe!("  targets: {}", t.join(", "));
     }
+    safe!("  source: {}", i.source);
     safe!("features:");
     for (name, enables) in &i.features {
         safe!("  {name} = [{}]", enables.join(", "));
+    }
+    safe!("binaries:");
+    for b in &i.bins {
+        let needs = if b.required_features.is_empty() {
+            String::new()
+        } else {
+            format!(" (needs {})", b.required_features.join(", "))
+        };
+        let state = if b.built { "built" } else { "not built" };
+        safe!("  {}: {state}{needs}", b.name);
     }
     let open = |kind: bool| {
         i.findings
@@ -347,7 +417,7 @@ pub fn print(i: &Inspection) {
         } else {
             ("-", "removes")
         };
-        if c.packages.is_empty() {
+        if c.packages.is_empty() && c.bins.is_empty() {
             safe!("  {sign}{}: {verb} nothing", c.feature);
             continue;
         }
@@ -366,6 +436,9 @@ pub fn print(i: &Inspection) {
             .map(|p| format!("{}@{}", p.name, p.version))
             .collect();
         safe!("      {}", names.join(" "));
+        if !c.bins.is_empty() {
+            safe!("      binaries: {}", c.bins.join(" "));
+        }
         for f in &c.findings {
             safe!("      {}", finding_line(f));
         }

@@ -240,6 +240,7 @@ fn add(project: &Project, config: &Config, args: AddArgs) -> Result<()> {
         lock::Start::Generated => "a generated Cargo.lock (it ships none)",
     };
     lock::check_root(&lock::parse(&lock_text)?, name, &checkout.version)?;
+    let (published, published_version) = (lock_text.clone(), checkout.version.clone());
     let (checkout, features, default_features, lock_text) = if args.interactive {
         let mover: setup_tui::Mover = Box::new(|to| {
             let origin = moved_to(&origin, to);
@@ -282,6 +283,14 @@ fn add(project: &Project, config: &Config, args: AddArgs) -> Result<()> {
             lock_text,
         )
     };
+    // What `--fix-advisories` or the setup screen changed in the lock the tool came with.
+    let changed = if checkout.version == published_version && lock_text != published {
+        let changes = lock::diff(&lock::parse(&published)?, &lock::parse(&lock_text)?);
+        lock::print_diff(name, &changes);
+        changes.len()
+    } else {
+        0
+    };
     let pending = review_build(
         project,
         name,
@@ -318,8 +327,13 @@ fn add(project: &Project, config: &Config, args: AddArgs) -> Result<()> {
     }
     editor.set_tool(name, &entries);
     editor.save()?;
+    let changes = match changed {
+        0 => String::new(),
+        1 => " and 1 change to it".to_string(),
+        n => format!(" and {n} changes to it"),
+    };
     say!(
-        "Added {name} {} with {kind} in {}",
+        "Added {name} {} with {kind}{changes} in {}",
         checkout.version,
         project.crate_dir(name).display()
     );
@@ -363,7 +377,7 @@ fn inspect(project: &Project, config: &Config, args: InspectArgs) -> Result<()> 
             let ours = lock::load(&project.lock_path(name))?;
             lock::check_root(&ours, name, &tool.version)?;
             let origin = Origin::of(tool);
-            let checkout = source::checkout(project, name, &origin, Dest::Temp)?;
+            let checkout = source::checkout(project, name, &origin, inspect_dest(project, name))?;
             checkout.put_lock(&project.lock_path(name))?;
             let (features, default_features) =
                 if args.features.is_empty() && !args.no_default_features {
@@ -384,7 +398,7 @@ fn inspect(project: &Project, config: &Config, args: InspectArgs) -> Result<()> 
                 say!("note: {name} is configured; inspecting the given version or source instead");
             }
             let origin = origin_of(req, &args.source)?;
-            let checkout = source::checkout(project, name, &origin, Dest::Temp)?;
+            let checkout = source::checkout(project, name, &origin, inspect_dest(project, name))?;
             let (lock_text, _) =
                 lock::shipped_or_generated(&checkout.manifest_path(), &checkout.lock_path(), &[])?;
             lock::check_root(&lock::parse(&lock_text)?, name, &checkout.version)?;
@@ -412,7 +426,7 @@ fn inspect(project: &Project, config: &Config, args: InspectArgs) -> Result<()> 
         Vec::new(),
     )?;
     let recorded = review::recorded(&project.review_path(name))?;
-    let found = inspect::inspect(&mut setup, &recorded)?;
+    let found = inspect::inspect(&mut setup, &recorded, &project.root)?;
     inspect::print(&found);
     output::emit(output::Record::Inspect(found));
     Ok(())
@@ -569,8 +583,7 @@ fn update_interactive(project: &Project, config: &Config, args: UpdateArgs) -> R
         || setup.default_features != (tool.default_features != Some(false));
     let moved = setup.checkout.version != tool.version
         || setup.checkout.commit.is_some() && setup.checkout.commit != tool.rev;
-    say!("Changes to {name}'s lock:");
-    lock::print_diff(&changes);
+    lock::print_diff(name, &changes);
     if changes.is_empty() && !features_changed && !moved {
         say!("Nothing changed");
         return Ok(());
@@ -810,8 +823,7 @@ fn update(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
     let updated = lock::load(&checkout.lock_path())?;
     lock::check_root(&updated, name, &checkout.version)?;
     let changes = lock::diff(&ours, &updated);
-    say!("Changes to {name}'s lock:");
-    lock::print_diff(&changes);
+    lock::print_diff(name, &changes);
     let moved = moved.is_some()
         && (checkout.version != tool.version
             || checkout.commit.is_some() && checkout.commit != tool.rev);
@@ -861,6 +873,19 @@ fn update(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
         say!("{name} now builds with features: {list}; default features {defaults}");
     }
     pending.map_or(Ok(()), Err)
+}
+
+/// Where `inspect` checks out the tool: kept after it ends, so its manifest and README can be
+/// read, and replaced by the next `inspect` of the same tool.
+fn inspect_dest(project: &Project, name: &str) -> Dest {
+    Dest::Fixed(
+        project
+            .tools_dir()
+            .join("targets")
+            .join(".inspect")
+            .join(name)
+            .join("src"),
+    )
 }
 
 /// Where `add` and `update` check out the tool: the place `install` builds from,

@@ -49,6 +49,7 @@ pub struct Advisory {
     pub id: String,
     pub title: String,
     pub aliases: Vec<String>,
+    pub affected: Option<output::Affected>,
 }
 
 #[derive(Debug)]
@@ -63,6 +64,7 @@ impl From<&rustsec::Advisory> for Advisory {
             id: a.metadata.id.to_string(),
             title: a.metadata.title.clone(),
             aliases: a.metadata.aliases.iter().map(ToString::to_string).collect(),
+            affected: output::Affected::of(a),
         }
     }
 }
@@ -230,6 +232,7 @@ pub fn evaluate_self(found: &[(Package, Advisory)], ignore: &AuditIgnore, today:
             patched: Vec::new(),
             severity: Severity::Error,
             fix: Some(fix),
+            affected: advisory.affected.clone(),
         });
     }
     for entry in ignores.unused() {
@@ -411,7 +414,8 @@ pub fn evaluate(
                   package: &Package,
                   title: &str,
                   patched: &[VersionReq],
-                  fix: Option<String>| {
+                  fix: Option<String>,
+                  affected: Option<output::Affected>| {
         let error = kind == "vulnerability";
         output::emit(Record::Advisory {
             tool: tool.to_string(),
@@ -432,6 +436,7 @@ pub fn evaluate(
                 Severity::Warning
             },
             fix,
+            affected,
         });
     };
     // (name, version) → advisories still open for it
@@ -463,6 +468,7 @@ pub fn evaluate(
                 &v.advisory.title,
                 &v.patched,
                 Some(fix.clone()),
+                v.advisory.affected.clone(),
             );
             say!(
                 "  error    {} {name}@{version}: {}\n           patched: {}",
@@ -497,7 +503,16 @@ pub fn evaluate(
             let fix =
                 (w.kind == "yanked").then(|| yanked_fix(tool, &w.package.name, &w.package.version));
             let title = w.advisory.as_ref().map_or("", |a| a.title.as_str());
-            record(id, &w.kind, &w.package, title, &w.patched, fix.clone());
+            let affected = w.advisory.as_ref().and_then(|a| a.affected.clone());
+            record(
+                id,
+                &w.kind,
+                &w.package,
+                title,
+                &w.patched,
+                fix.clone(),
+                affected,
+            );
             say!(
                 "  warning  {id} {}@{} ({})",
                 w.package.name,

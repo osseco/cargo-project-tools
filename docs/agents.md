@@ -18,9 +18,10 @@ cargo project-tools inspect <crate> --message-format json
 
 This writes one `inspect` record. It needs no terminal, and records nothing. For a crate that isn't added yet, it starts from the lock `add` would use; `@version`, `--git` and `--tag` work as for `add`. Read:
 
-- `features`: each feature and what it enables. The person's needs decide which ones are required; ask when it isn't clear.
+- `features`: each feature and what it enables. Cargo features have no descriptions, so read the tool's `Cargo.toml` (its comments) and README under `source`. The person's needs decide which ones are required; ask when it isn't clear.
+- `bins`: the tool's binaries, the features each needs, and whether they're built. Make sure the binaries the person needs are still `built` with your choice.
 - `packages`, `findings` and `build_time`: what the chosen features build, the advisories against it, and the build scripts and proc macros among it.
-- `feature_changes`: what each other feature adds, and what `default` removes when `enable` is `false`.
+- `feature_changes`: what each other feature adds, and what `default` removes when `enable` is `false`, including the `bins` it would drop.
 
 Prefer the smallest set that does the job:
 
@@ -41,7 +42,7 @@ cargo project-tools add <crate> --no-default-features -F <a>,<b> --message-forma
 cargo project-tools update <tool> --no-default-features -F <a>,<b> --message-format json
 ```
 
-Add `--fix-advisories` when `inspect` showed vulnerabilities: it moves each dependency to the lowest semver-compatible version that fixes its advisories before the build review, so the person reviews the lock that's kept, once. Both commands audit first and write an `advisory` record (with its `fix`) for what's left.
+Add `--fix-advisories` when `inspect` showed vulnerabilities: it moves each dependency to the lowest semver-compatible version that fixes its advisories before the build review, so the person reviews the lock that's kept, once. Every change to the lock, including the dependencies that moved along, is a `lock-change` record. Both commands audit first and write an `advisory` record (with its `fix`) for what's left.
 
 Without a terminal, both write the tool to `project-tools.toml`, its lock, and `build-review.toml` with an `action = "pending"` entry for each piece of build-time code that has no decision yet. Then they write one `review-pending` record per piece, an `error` saying how many are waiting, and `summary`. That error is expected: nothing can be built until the pieces are decided, as `check` and `install` refuse pending entries.
 
@@ -83,7 +84,7 @@ cargo project-tools check --message-format json
 cargo project-tools install --message-format json
 ```
 
-`check` builds nothing, and fails on anything still missing: a `target-missing` this machine isn't listed for, a `review-pending` (including pending entries), or an `advisory` with severity `error`. Also watch for `sfw-missing` and `sandbox-missing`: downloads weren't filtered, or the build won't be sandboxed. Tell the person; `sfw = "require"` and `sandbox = "require"` make them errors. For an advisory, run the command in its `fix` (it's an `update`), or ask the person whether to ignore it in the tool's `audit-ignore.toml`, with a reason and an `expires` date. An advisory that can't affect the tool's `targets` (read its description: for example, Windows only, while no Windows target is listed) is a reason to propose an ignore, saying which targets it was checked against. Advisories aren't filtered by platform for you. Then run `install`.
+`check` builds nothing, and fails on anything still missing: a `target-missing` this machine isn't listed for, a `review-pending` (including pending entries), or an `advisory` with severity `error`. Also watch for `sfw-missing` and `sandbox-missing`: downloads weren't filtered, or the build won't be sandboxed. Tell the person; `sfw = "require"` and `sandbox = "require"` make them errors. For an advisory, run the command in its `fix` (it's an `update`), or ask the person whether to ignore it in the tool's `audit-ignore.toml`, with a reason and an `expires` date. An advisory that can't affect the tool's `targets` is a reason to propose an ignore, saying which targets it was checked against. Its `affected.os` and `affected.arch` show the platforms when the database names them (for example `os: ["windows"]` while no Windows target is listed); without them, read its description. Advisories aren't filtered by platform for you. Then run `install`.
 
 ## Updating later
 

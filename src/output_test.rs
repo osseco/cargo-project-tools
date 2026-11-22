@@ -63,6 +63,7 @@ fn advisory_leaves_out_a_missing_fix() {
         patched: Vec::new(),
         severity: Severity::Warning,
         fix: None,
+        affected: None,
     };
     assert_eq!(
         line(&record),
@@ -156,4 +157,36 @@ fn sandbox_records_name_the_tool_and_setting() {
         line(&built),
         r#"{"version":1,"kind":"built","tool":"t","tool_version":"1.0.0","sandbox":"sandbox-exec","bins":["t"]}"#
     );
+}
+
+#[test]
+fn lock_changes_leave_out_the_missing_side() {
+    let added = Record::LockChange {
+        tool: "t".into(),
+        file: ".project-tools/crates/t/Cargo.lock".into(),
+        package: "zstd-safe".into(),
+        from: Some("7.2.4".into()),
+        to: Some("7.4.1".into()),
+    };
+    assert_eq!(
+        line(&added),
+        r#"{"version":1,"kind":"lock-change","tool":"t","file":".project-tools/crates/t/Cargo.lock","package":"zstd-safe","from":"7.2.4","to":"7.4.1"}"#
+    );
+    let removed = Record::LockChange {
+        tool: "t".into(),
+        file: "f".into(),
+        package: "gone".into(),
+        from: Some("1.0.0".into()),
+        to: None,
+    };
+    assert!(!line(&removed).contains("\"to\""));
+}
+
+#[test]
+fn affected_lists_only_what_the_database_names() {
+    let a = Affected {
+        os: vec!["windows".into()],
+        ..Affected::default()
+    };
+    assert_eq!(serde_json::to_string(&a).unwrap(), r#"{"os":["windows"]}"#);
 }
