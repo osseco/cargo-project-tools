@@ -6,7 +6,7 @@ Building a tool runs code before the tool itself ever runs: build scripts and pr
 
 | Kind | What | Pinned by |
 | --- | --- | --- |
-| `build-script` | The `build.rs` (or `package.build`) of the tool and of every dependency it builds | sha256 of the script file; when the script isn't at the package root, of every file in its directory (a vendored package's `.git` included); plus [the files it pulls in](#files-a-build-script-pulls-in). And the crate it comes with: its checksum from `Cargo.lock`, or for a git package its commit |
+| `build-script` | The `build.rs` (or `package.build`) of the tool and of every dependency it builds | sha256 of the script file; when the script isn't at the package root, of every file in its directory (a vendored package's `.git` included); plus [the files it pulls in](#files-a-build-script-pulls-in). And the crate it comes with: its checksum from `Cargo.lock`, or for a git package its commit; for a package of the tool itself, the tool's commit (git) or `.crate` checksum (crates.io) |
 | `proc-macro` | Every proc-macro crate it builds | The crate checksum from `Cargo.lock`; for a git package its commit |
 | `build-dep` | Every library that build-time code runs: a build script's build-dependencies (`cc`, `autocfg`, …), a proc macro's dependencies (`syn`, `quote`, …), and what those depend on | Like a proc macro |
 | `cargo-config` | `.cargo/config.toml` and `.cargo/config` in the tool's source, from the package directory up to the root of the checkout | sha256 of the file |
@@ -85,7 +85,9 @@ Build-time libraries run on the machine that builds, so they're worked out for e
 
 `sha256` and `checksum` always describe the shipped content, also for `override` and `strip`, so a change upstream stops the build again and you can check that your override still fits.
 
-A build script's entry also names its crate: `checksum` for a registry package, `commit` for a git one, neither for a package of the tool's own checkout. A build script can run or read any file of its crate, so a new version of the crate comes up for review again even when the script itself didn't change. Entries recorded before this come up once as changed, and keep their action.
+A build script's entry also names its crate: `checksum` for a registry package, `commit` for a git one. A package of the tool's own checkout comes with the tool, so its entry names the tool's `commit` for a git tool, or its `.crate` `checksum` for one from crates.io. A build script can run or read any file of its crate, so a new version of the crate, or a new commit of a git tool, comes up for review again even when the script itself didn't change.
+
+Entries recorded without that come up once as changed: entries for the tool's own build scripts recorded before cargo-project-tools pinned them too. Run `cargo project-tools review <tool>` after upgrading, and commit `build-review.toml`; until then `check` and `install` stop on them.
 
 ## Reviewing on the terminal
 

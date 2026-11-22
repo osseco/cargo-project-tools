@@ -881,6 +881,46 @@ fn collect_finds_build_time_code_in_vendored_sources() {
 }
 
 #[test]
+fn the_tools_own_build_script_is_pinned_to_the_tool() {
+    let mut f = Fixture::new();
+    let own = |f: &Fixture| {
+        f.collect()
+            .into_iter()
+            .find(|i| i.kind == Kind::BuildScript && i.package == "tool")
+            .unwrap()
+            .pin
+    };
+    assert_eq!(own(&f), Pin::None);
+    f.checkout.checksum = Some("crate-sum".into());
+    assert_eq!(own(&f), Pin::Checksum("crate-sum".into()));
+    f.checkout.commit = Some("abc123".into());
+    assert_eq!(own(&f), Pin::Commit("abc123".into()));
+}
+
+#[test]
+fn an_unpinned_entry_of_the_tool_comes_up_again() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join(FILE);
+    fs::write(
+        &file,
+        "[[build-script]]\npackage = \"tool\"\npath = \"build.rs\"\nsha256 = \"aa\"\naction = \"approve\"\n",
+    )
+    .unwrap();
+    let mut item = script(tmp.path(), "tool", "aa");
+    item.pin = Pin::Commit("abc123".into());
+    let err = check(
+        &file,
+        vec![item],
+        Mode::Report,
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("1 piece of"), "{err}");
+}
+
+#[test]
 fn check_only_records_nothing() {
     let f = Fixture::new();
     let selection = || crate::graph::Selection {

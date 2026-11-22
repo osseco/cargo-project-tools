@@ -43,6 +43,8 @@ pub struct Checkout {
     pub version: String,
     /// Resolved git commit, for git origins.
     pub commit: Option<String>,
+    /// The `.crate` checksum from the index, for registry origins.
+    pub checksum: Option<String>,
     _tmp: Option<tempfile::TempDir>,
 }
 
@@ -56,6 +58,7 @@ impl Checkout {
             package_dir,
             version: "1.0.0".into(),
             commit: None,
+            checksum: None,
             _tmp: None,
         }
     }
@@ -129,6 +132,7 @@ pub fn checkout(project: &Project, name: &str, origin: &Origin, dest: Dest) -> R
                 package_dir: dir,
                 version: entry.vers.to_string(),
                 commit: None,
+                checksum: Some(entry.cksum.clone()),
                 _tmp: tmp,
             }
         }
@@ -140,6 +144,7 @@ pub fn checkout(project: &Project, name: &str, origin: &Origin, dest: Dest) -> R
                 package_dir: c.package_dir,
                 version: c.version,
                 commit: Some(c.commit),
+                checksum: None,
                 _tmp: tmp,
             }
         }
@@ -178,6 +183,7 @@ pub fn scratch(project: &Project, name: &str, origin: &Origin) -> Result<Checkou
         package_dir: dir,
         version: entry.vers.to_string(),
         commit: None,
+        checksum: Some(entry.cksum.clone()),
         _tmp: tmp,
     };
     isolate_workspace(&checkout)?;

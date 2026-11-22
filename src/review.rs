@@ -99,9 +99,9 @@ impl fmt::Display for Kind {
 }
 
 /// The crate a build script comes with: its checksum in the lock for a registry package,
-/// its commit for a git package, nothing for a package of the tool's own checkout. An entry
-/// only holds for the crate it was recorded for, since a build script can run or read any
-/// file of it.
+/// its commit for a git package, and for a package of the tool's own checkout the tool's
+/// commit or `.crate` checksum. An entry only holds for the crate it was recorded for, since
+/// a build script can run or read any file of it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Pin {
     #[default]
@@ -436,6 +436,15 @@ fn crate_pin(
     }
 }
 
+/// The tool's own crate: its commit for a git tool, its `.crate` checksum for a registry one.
+fn own_pin(checkout: &Checkout) -> Pin {
+    match (&checkout.commit, &checkout.checksum) {
+        (Some(c), _) => Pin::Commit(c.clone()),
+        (None, Some(c)) => Pin::Checksum(c.clone()),
+        (None, None) => Pin::None,
+    }
+}
+
 /// A registry source in cargo's notation: `registry+https://…` or `sparse+https://…`.
 fn is_registry(source: &str) -> bool {
     source.starts_with("registry+") || source.starts_with("sparse+")
@@ -659,6 +668,12 @@ pub fn collect(
             .with_context(|| format!("package {} {}", pkg.name, pkg.version))?;
         let in_vendor = pkg_dir.starts_with(&vendored.dir);
         let pin = crate_pin(pkg.source.as_deref(), &pkg.name, &pkg.version, &checksums);
+        // A package of the tool's own checkout comes with the tool. Proc macros and
+        // build-time libraries there stay pinned by their files.
+        let script_pin = match (&pin, pkg.source.is_none()) {
+            (Pin::None, true) => own_pin(checkout),
+            _ => pin.clone(),
+        };
         for t in &pkg.targets {
             if t.kind.iter().any(|k| k == "custom-build") {
                 let rel = t.src_path.strip_prefix(&pkg_dir).with_context(|| {
@@ -683,7 +698,7 @@ pub fn collect(
                     version: pkg.version.clone(),
                     path: slash(rel),
                     hash: script_hash(&pkg_dir, &t.src_path, &pulled, in_vendor)?,
-                    pin: pin.clone(),
+                    pin: script_pin.clone(),
                     location: t.src_path.clone(),
                     base: pkg_dir.clone(),
                     vendored: in_vendor,

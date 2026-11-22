@@ -26,6 +26,7 @@ fn member_checkout(root: &Path) -> Checkout {
         package_dir: root.join("ws/crates/tool"),
         version: "1.0.0".into(),
         commit: None,
+        checksum: None,
         _tmp: None,
     }
 }
