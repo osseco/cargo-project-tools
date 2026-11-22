@@ -305,9 +305,14 @@ pub struct ReviewArgs {
         conflicts_with = "auto_approve"
     )]
     pub override_: Vec<String>,
+    /// Carry over the decisions in another build-review.toml (another branch's, say) for
+    /// pieces whose kind, package, path, hash and crate match exactly. Overrides aren't
+    /// carried over. Repeatable.
+    #[arg(long, value_name = "FILE", conflicts_with = "auto_approve")]
+    pub from: Vec<std::path::PathBuf>,
     /// Show how each changed piece differs from the version its entry was recorded for, and
     /// record nothing.
-    #[arg(long, conflicts_with_all = ["auto_approve", "approve", "strip", "override_"])]
+    #[arg(long, conflicts_with_all = ["auto_approve", "approve", "strip", "override_", "from"])]
     pub diff: bool,
     #[arg(long)]
     pub offline: bool,

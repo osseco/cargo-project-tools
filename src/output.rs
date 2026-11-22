@@ -118,6 +118,9 @@ pub enum Record {
         #[serde(skip_serializing_if = "Option::is_none")]
         line: Option<usize>,
         item: Box<ReviewItem>,
+        /// What `review --approve`, `--strip` and `--override` take for it:
+        /// `package@version=hash`, or `path=hash` for cargo config.
+        spec: String,
         /// The entry to put in `file`, with the action it would get.
         entry: String,
     },

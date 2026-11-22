@@ -61,6 +61,8 @@ pub struct Options<'a> {
     pub auto_approve: bool,
     /// Decisions named on the command line (`review --approve` and the like).
     pub picks: &'a [review::Pick],
+    /// Decisions carried over from other review files (`review --from`).
+    pub from: &'a review::KnownMap,
     pub stage: Stage,
     pub checksums: Checksums,
     /// The targets build-time code is reviewed for; all when `None`.
@@ -312,6 +314,7 @@ pub fn install(
     if !opts.force
         && !opts.auto_approve
         && opts.picks.is_empty()
+        && opts.from.is_empty()
         && let Some(stamp) = read_stamp(&stamp_path)
         && stamp.key == key
         && !stamp.bins.is_empty()
@@ -370,7 +373,12 @@ pub fn install(
         &checkout,
         &vendored,
         args.offline,
-        review::Approval::new(opts.auto_approve, opts.picks),
+        review::Approval::new(
+            opts.auto_approve,
+            opts.picks,
+            opts.from,
+            opts.stage == Stage::Review,
+        ),
     )?;
     clean_if_changed(&target_dir, &changes)?;
     vendor::settle(&vendored)?;

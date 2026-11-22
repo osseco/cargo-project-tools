@@ -63,7 +63,13 @@ fn run() -> Result<ExitCode> {
     if argv.get(1).is_some_and(|a| a == cli::SUBCOMMAND) {
         argv.remove(1);
     }
-    let cli = Cli::parse_from(argv);
+    let mut cli = Cli::parse_from(argv);
+    // Named from where the command was run, before it moves to the project root.
+    if let Command::Review(args) = &mut cli.command {
+        for p in &mut args.from {
+            *p = std::path::absolute(&*p)?;
+        }
+    }
     output::init(cli.message_format, cli.command.has_summary());
 
     if let Command::Init(args) = &cli.command {
@@ -276,7 +282,7 @@ fn add(project: &Project, config: &Config, args: AddArgs) -> Result<()> {
             lock_text,
         )
     };
-    review_build(
+    let pending = review_build(
         project,
         name,
         &install::feature_flags(&features, default_features),
@@ -317,7 +323,7 @@ fn add(project: &Project, config: &Config, args: AddArgs) -> Result<()> {
         checkout.version,
         project.crate_dir(name).display()
     );
-    Ok(())
+    pending.map_or(Ok(()), Err)
 }
 
 /// Where `add` and `inspect` take a new tool from: crates.io at `req`, or git.
@@ -569,7 +575,7 @@ fn update_interactive(project: &Project, config: &Config, args: UpdateArgs) -> R
         say!("Nothing changed");
         return Ok(());
     }
-    review_build(
+    let pending = review_build(
         project,
         name,
         &setup.feature_args(),
@@ -605,7 +611,7 @@ fn update_interactive(project: &Project, config: &Config, args: UpdateArgs) -> R
             setup.checkout.version
         );
     }
-    Ok(())
+    pending.map_or(Ok(()), Err)
 }
 
 /// Write `features` and `default-features` for `name`: into `entries` when they differ
@@ -817,7 +823,7 @@ fn update(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
         }
         return Ok(());
     }
-    review_build(
+    let pending = review_build(
         project,
         name,
         &install::feature_flags(&features, default_features),
@@ -854,7 +860,7 @@ fn update(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
         let defaults = if default_features { "on" } else { "off" };
         say!("{name} now builds with features: {list}; default features {defaults}");
     }
-    Ok(())
+    pending.map_or(Ok(()), Err)
 }
 
 /// Where `add` and `update` check out the tool: the place `install` builds from,
@@ -863,7 +869,8 @@ fn review_dest(project: &Project, name: &str) -> Dest {
     Dest::Fixed(project.target_dir(name).join("src"))
 }
 
-/// Review the build-time code that the lock in `checkout` brings in, before it's recorded.
+/// Review the build-time code that the lock in `checkout` brings in. Returns the error to
+/// end with when some of it is still pending: the caller writes the tool first.
 fn review_build(
     project: &Project,
     name: &str,
@@ -872,7 +879,7 @@ fn review_build(
     build: &config::Build,
     checkout: &source::Checkout,
     approve: bool,
-) -> Result<()> {
+) -> Result<Option<anyhow::Error>> {
     let vendored = vendor::vendor(project, name, checkout, false, &[])?;
     let config = install::resolve_config(build, &[]);
     let selection = graph::Selection {
@@ -880,16 +887,22 @@ fn review_build(
         targets,
         config: &config,
     };
-    review::review(
+    let reviewed = review::review(
         project,
         name,
         selection,
         checkout,
         &vendored,
         false,
-        review::Approval::new(approve, &[]),
-    )?;
-    Ok(())
+        review::Approval::new(approve, &[], &review::KnownMap::new(), true),
+    );
+    // Code still waiting for a decision doesn't stop the tool being written: its pending
+    // entries are, and `check` and `install` refuse them.
+    match reviewed {
+        Ok(_) => Ok(None),
+        Err(e) if e.is::<review::PendingReview>() => Ok(Some(e)),
+        Err(e) => Err(e),
+    }
 }
 
 /// Before the build review: audit what the lock in `checkout` builds and, with `fix`, move
@@ -1064,6 +1077,7 @@ fn install(project: &Project, config: &Config, args: &InstallArgs) -> Result<()>
                 force: args.force,
                 auto_approve: args.auto_approve,
                 picks: &[],
+                from: &review::KnownMap::new(),
                 stage: install::Stage::Install,
                 checksums: install::Checksums::Write,
                 targets: config.targets_for(tool),
@@ -1107,6 +1121,7 @@ fn check(project: &Project, config: &Config, args: &CheckArgs) -> Result<()> {
                 force: false,
                 auto_approve: false,
                 picks: &[],
+                from: &review::KnownMap::new(),
                 stage: install::Stage::Check,
                 checksums: install::Checksums::Write,
                 targets: config.targets_for(tool),
@@ -1145,6 +1160,7 @@ fn review(project: &Project, config: &Config, args: &ReviewArgs) -> Result<()> {
     if !picks.is_empty() && args.names.len() != 1 {
         bail!("--approve, --strip and --override need exactly one tool");
     }
+    let from = review::known_from(&args.from)?;
     for (name, tool) in config.select(&args.names)? {
         let build = config.build.merged(tool.build.as_ref());
         install::install(
@@ -1157,6 +1173,7 @@ fn review(project: &Project, config: &Config, args: &ReviewArgs) -> Result<()> {
                 force: false,
                 auto_approve: args.auto_approve,
                 picks: &picks,
+                from: &from,
                 stage: if args.diff {
                     install::Stage::Diff
                 } else {
@@ -1285,6 +1302,7 @@ fn verify(project: &Project, config: &Config, args: &VerifyArgs) -> Result<ExitC
                     force: true,
                     auto_approve: false,
                     picks: &[],
+                    from: &review::KnownMap::new(),
                     stage: install::Stage::Install,
                     checksums: install::Checksums::Expect,
                     targets: config.targets_for(tool),

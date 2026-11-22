@@ -40,11 +40,12 @@ fn review_pending_names_its_hash_by_kind() {
             }),
             known: None,
         }),
+        spec: "serde_derive@1.0.0=cc".into(),
         entry: "[[proc-macro]]\n".into(),
     };
     assert_eq!(
         line(&record),
-        r#"{"version":1,"kind":"review-pending","tool":"t","file":".project-tools/crates/t/build-review.toml","line":12,"item":{"type":"proc-macro","package":"serde_derive","version":"1.0.0","checksum":"cc","location":".project-tools/targets/t/vendor/serde_derive-1.0.0","previous":{"action":"approve","checksum":"bb","changed":["checksum"]}},"entry":"[[proc-macro]]\n"}"#
+        r#"{"version":1,"kind":"review-pending","tool":"t","file":".project-tools/crates/t/build-review.toml","line":12,"item":{"type":"proc-macro","package":"serde_derive","version":"1.0.0","checksum":"cc","location":".project-tools/targets/t/vendor/serde_derive-1.0.0","previous":{"action":"approve","checksum":"bb","changed":["checksum"]}},"spec":"serde_derive@1.0.0=cc","entry":"[[proc-macro]]\n"}"#
     );
 }
 
