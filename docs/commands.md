@@ -10,6 +10,7 @@ Every command runs as `cargo project-tools <command>`. Apart from `init` and the
 | `update <crate> [deps…]` | Update dependencies in the tool's lock, or move the tool to another version (`--latest`, `--version`); `-i` for the [setup screen](#interactive-setup) |
 | `install [crates…]` | Audit, then build and install; skipped when nothing changed |
 | `check [crates…]` | Check what `install` checks before it builds (targets, audit, build review); builds and records nothing |
+| `review [crates…]` | Review the build-time code `check` reports, on the review screen or with `--auto-approve`; builds nothing |
 | `verify [crates…]` | Check installed binaries against their recorded checksums; `--repair` rebuilds |
 | `audit [crates…]` | Check every lock against the RustSec advisory database, apply `audit-ignore.toml`, suggest fixes |
 | `audit-db update` | Fetch or revalidate the advisory database |
@@ -166,6 +167,23 @@ It never approves anything, so it has no `--auto-approve`, `--approve-target` or
 | `--deny-warnings` | Also fail on warnings that aren't ignored |
 | `--target <triple>`, `--config <value>`, `--profile <name>`, `--debug`, `--offline` | As for `install`: what would be built, and so what is checked |
 
+When build-time code isn't recorded, the error names [`review`](#review).
+
+## review
+
+```bash
+cargo project-tools review
+cargo project-tools review cargo-nextest --auto-approve
+```
+
+Runs each selected tool's [build review](build-review.md) as `install` would, then stops before building. In a terminal it opens the [review screen](build-review.md#reviewing-on-the-terminal); with `--auto-approve` it records everything new or changed at once; elsewhere it fails listing what's pending, as `check` does. A tool that is up to date (its install stamp matches, binaries and all) has nothing to review. It doesn't check targets or audit; `check` and `install` do. Afterwards, commit `build-review.toml` (and `overrides/`).
+
+| Option | Meaning |
+| --- | --- |
+| `--auto-approve` | Record new or changed build-time code in [`build-review.toml`](build-review.md) |
+| `--offline` | Vendor without the network |
+| `--config <value>` | Extra cargo `--config` values, as for `install` |
+
 ## verify
 
 ```bash
@@ -266,7 +284,7 @@ In JSON, the record has `tool`, `tool_version`, `features`, `default_features`, 
 
 ## JSON output
 
-With `--message-format json`, stdout holds only JSON records, one per line. All human text, and cargo's own output, goes to stderr instead. `add`, `update`, `install`, `check`, `audit` and `inspect` write these records:
+With `--message-format json`, stdout holds only JSON records, one per line. All human text, and cargo's own output, goes to stderr instead. `add`, `update`, `install`, `check`, `review`, `audit` and `inspect` write these records:
 
 | `kind` | When | Fields |
 | --- | --- | --- |
@@ -278,7 +296,7 @@ With `--message-format json`, stdout holds only JSON records, one per line. All 
 | `ignore-expired` | An ignore past its `expires` date | `tool`, `file`, `id`, `expires` |
 | `inspect` | What [`inspect`](#inspect) found | See [inspect](#inspect) |
 | `error` | The command failed | `message` |
-| `summary` | The last record of `add`, `update`, `install`, `check` and `audit` | `ok`, `vulnerabilities`, `warnings`, `pending_reviews`, `missing_targets` |
+| `summary` | The last record of `add`, `update`, `install`, `check`, `review` and `audit` | `ok`, `vulnerabilities`, `warnings`, `pending_reviews`, `missing_targets` |
 
 Every record also has `"version": 1`. The version goes up when a record changes in a way that breaks readers.
 

@@ -89,7 +89,7 @@ A build script's entry also names its crate: `checksum` for a registry package, 
 
 ## Reviewing on the terminal
 
-When something isn't recorded and both input and output are a terminal, `add`, `update` and `install` open a review screen. Elsewhere, or with `--auto-approve`, they behave as described under [Approving](#approving).
+When something isn't recorded and both input and output are a terminal, `add`, `update`, `install` and `review` open a review screen. Elsewhere, or with `--auto-approve`, they behave as described under [Approving](#approving).
 
 | Part | What it does |
 | --- | --- |
@@ -142,7 +142,7 @@ For an override, the editor shows that tool's override file. Done copies it to t
 
 ## Approving
 
-Outside a terminal (in CI, or with input or output redirected), `add`, `update` and `install` stop before writing or building, and list each piece with the file to look at, on stderr like the error:
+Outside a terminal (in CI, or with input or output redirected), `add`, `update`, `install` and `review` stop before writing or building, and list each piece with the file to look at, on stderr like the error:
 
 ```text
   build-time code to review:
@@ -157,7 +157,7 @@ Outside a terminal (in CI, or with input or output redirected), `add`, `update` 
 error: 1 piece of build-time code isn't recorded in .project-tools/crates/cargo-nextest/build-review.toml; review it where you have a terminal (run this command there for the review screen, or with --auto-approve after reading the files), then commit .project-tools/crates/cargo-nextest/build-review.toml
 ```
 
-Don't approve on a CI runner: review where you work, and commit `build-review.toml`. After Cancel on the review screen, the error says to rerun with `--auto-approve` instead.
+Don't approve on a CI runner: review where you work, and commit `build-review.toml`. When [`check`](commands.md#check) finds something, its error names [`review`](commands.md#review), which runs just this review, without building: `cargo project-tools review <tool>`. After Cancel on the review screen, the error says to rerun with `--auto-approve` instead.
 
 A piece another tool already records is listed with that tool's decision (`reviewed for <tool>: strip`), and its printed entry uses it. For an override, the entry also says which file to copy.
 

@@ -944,6 +944,8 @@ fn configured_tools(project: &Project) -> Result<Vec<String>> {
 pub enum Mode<'a> {
     /// Fail listing them.
     Report,
+    /// Fail listing them, pointing at the `review` command (`check`).
+    Check,
     /// Record them all (`--auto-approve`).
     ApproveAll,
     /// Decide on each on the review screen.
@@ -1002,10 +1004,17 @@ pub fn check(
                     path, pending, choices, &before, &stale, known, root,
                 )?),
                 // Cancelled.
-                None => report(path, &pending, &stale, known, root)?,
+                None => report(path, &pending, &stale, known, root, false)?,
             }
         }
-        _ => report(path, &pending, &stale, known, root)?,
+        _ => report(
+            path,
+            &pending,
+            &stale,
+            known,
+            root,
+            matches!(mode, Mode::Check),
+        )?,
     }
     Ok(decided)
 }
@@ -1045,7 +1054,7 @@ fn settle(
         .filter(|e| !keep.contains(e))
         .collect();
     let decided = record(path, decisions, &unused)?;
-    report(path, &rest, &[], known, root)?;
+    report(path, &rest, &[], known, root, false)?;
     Ok(decided)
 }
 
@@ -1075,12 +1084,15 @@ fn unchanged(item: &Item, before: &str) -> Result<()> {
 
 /// Warn about unused entries, and fail listing what's pending. All of it goes to stderr, so
 /// the list comes before the error on the same stream.
+/// `review` says to settle them with the `review` command rather than by running the same
+/// command again.
 fn report(
     path: &Path,
     pending: &[Pending],
     stale: &[&Entry],
     known: &KnownMap,
     root: &Path,
+    review: bool,
 ) -> Result<()> {
     let rel = |p: &Path| shown(&p.strip_prefix(root).unwrap_or(p).display().to_string());
     // Records carry the raw text, which JSON escapes; humans get it `shown`.
@@ -1156,6 +1168,16 @@ fn report(
         1 => "1 piece of build-time code isn't".to_string(),
         n => format!("{n} pieces of build-time code aren't"),
     };
+    if review {
+        let tool = shown(&tool);
+        bail!(
+            "{what} recorded in {}; run `cargo project-tools review {tool}` where you have a \
+             terminal for the review screen (or with --auto-approve after reading the files), \
+             then commit {}",
+            rel(path),
+            rel(path)
+        )
+    }
     if screen::interactive() {
         bail!(
             "{what} recorded in {}; review it, then rerun with --auto-approve",
@@ -1548,7 +1570,7 @@ pub fn check_only(
     check(
         &project.review_path(name),
         items,
-        Mode::Report,
+        Mode::Check,
         &known,
         &project.root,
     )?;

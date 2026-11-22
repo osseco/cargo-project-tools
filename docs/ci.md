@@ -77,7 +77,7 @@ Checking the build review vendors the dependencies of each tool that isn't up to
 
 Add `--message-format json` to get each problem as a JSON record on stdout, with its `file` and what to put there, for example to turn them into annotations. Pin the records' `version`. See [JSON output](commands.md#json-output).
 
-A failure names the files to change. Never fix it on the runner with `--auto-approve` or `--approve-target`: review where you work, then commit `build-review.toml` or `project-tools.toml`.
+A failure names the files to change. Never fix it on the runner with `--auto-approve` or `--approve-target`: review where you work (`cargo project-tools review`), then commit `build-review.toml` or `project-tools.toml`.
 
 ## Socket Firewall in CI
 

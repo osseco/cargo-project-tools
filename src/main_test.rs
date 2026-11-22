@@ -162,6 +162,32 @@ fn check_flags() {
 }
 
 #[test]
+fn review_flags() {
+    let parse = |args: &[&str]| {
+        Cli::try_parse_from(
+            ["cargo-project-tools"]
+                .iter()
+                .chain(args)
+                .copied()
+                .collect::<Vec<_>>(),
+        )
+    };
+    // It reviews; it doesn't build, audit or approve targets.
+    for flag in ["--force", "--approve-target", "--no-audit", "--profile=x"] {
+        assert!(parse(&["review", flag]).is_err(), "{flag}");
+    }
+    let cmd = parse(&["review", "--auto-approve", "--offline", "x"])
+        .unwrap()
+        .command;
+    assert!(cmd.downloads_packages() && cmd.has_summary());
+    let Command::Review(args) = cmd else {
+        panic!("not review");
+    };
+    assert!(args.auto_approve && args.offline);
+    assert_eq!(args.names, vec!["x".to_string()]);
+}
+
+#[test]
 fn verify_flags() {
     let parse = |args: &[&str]| {
         Cli::try_parse_from(

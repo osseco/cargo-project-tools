@@ -42,6 +42,9 @@ pub enum Command {
     /// Check what `install` checks before it builds: the targets, the audit and the build
     /// review. Builds and records nothing; fails when anything is missing or not reviewed.
     Check(CheckArgs),
+    /// Review the build-time code `check` reports: on the review screen in a terminal, or all
+    /// at once with `--auto-approve`. Builds nothing.
+    Review(ReviewArgs),
     /// Check installed binaries against the checksums `install` recorded.
     Verify(VerifyArgs),
     /// Audit every tool's Cargo.lock against the RustSec advisory database.
@@ -268,6 +271,22 @@ pub struct CheckArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct ReviewArgs {
+    /// Tools to review (default: all).
+    pub names: Vec<String>,
+    /// Record all new or changed build scripts, proc macros and cargo config in
+    /// build-review.toml at once. Review them first. In a terminal, without this flag,
+    /// a review screen lets you decide on each.
+    #[arg(long)]
+    pub auto_approve: bool,
+    #[arg(long)]
+    pub offline: bool,
+    /// Extra cargo `--config` values, as for `install`.
+    #[arg(long)]
+    pub config: Vec<String>,
+}
+
+#[derive(Debug, Args)]
 pub struct VerifyArgs {
     /// Tools to verify (default: all).
     pub names: Vec<String>,
@@ -286,7 +305,7 @@ pub struct VerifyArgs {
 }
 
 /// Flags passed on to `cargo install`.
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Default)]
 pub struct BuildArgs {
     #[arg(long, short = 'j')]
     pub jobs: Option<String>,
@@ -345,6 +364,7 @@ impl Command {
                 | Command::Update(_)
                 | Command::Install(_)
                 | Command::Check(_)
+                | Command::Review(_)
                 | Command::Audit(_)
         )
     }
@@ -362,6 +382,7 @@ impl Command {
                     | Command::Update(_)
                     | Command::Install(_)
                     | Command::Check(_)
+                    | Command::Review(_)
                     | Command::Audit(_)
                     | Command::Inspect(_)
             ),

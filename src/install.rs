@@ -44,6 +44,8 @@ pub enum Stage {
     Install,
     /// Check the build review, then stop: build and write nothing (`check`).
     Check,
+    /// Review, then stop before building (`review`).
+    Review,
 }
 
 /// How `install` treats a tool beyond its build settings.
@@ -312,13 +314,19 @@ pub fn install(
             .all(|b| project.bin_dir().join(b).is_file())
         && checksum::check(project, name).is_ok_and(|m| m.is_empty())
     {
-        say!("{name} {} is up to date", tool.version);
+        if opts.stage == Stage::Review {
+            // The stamp covers the lock and the review file it was built with.
+            say!("{name} {} is up to date; nothing to review", tool.version);
+        } else {
+            say!("{name} {} is up to date", tool.version);
+        }
         return Ok(());
     }
 
     match opts.stage {
         Stage::Install => say!("Installing {name} {}", tool.version),
         Stage::Check => say!("Checking {name} {}", tool.version),
+        Stage::Review => say!("Reviewing {name} {}", tool.version),
     }
     let checkout = source::checkout(
         project,
@@ -355,6 +363,10 @@ pub fn install(
     )?;
     clean_if_changed(&target_dir, &changes)?;
     vendor::settle(&vendored)?;
+    if opts.stage == Stage::Review {
+        say!("{name} {}: build review done", tool.version);
+        return Ok(());
+    }
     // `--auto-approve` may have just written the review file.
     let key = stamp_key(
         name,

@@ -34,7 +34,7 @@ use clap::Parser;
 
 use cli::{
     AddArgs, AuditArgs, AuditDbCommand, CheckArgs, Cli, Command, InitArgs, InspectArgs,
-    InstallArgs, UpdateArgs, UpgradeArgs, VerifyArgs,
+    InstallArgs, ReviewArgs, UpdateArgs, UpgradeArgs, VerifyArgs,
 };
 use config::{AuditIgnore, Config, ConfigEditor, SfwMode};
 use output::say;
@@ -114,6 +114,7 @@ fn run() -> Result<ExitCode> {
         Command::Update(args) => update(&project, &config, args)?,
         Command::Install(args) => install(&project, &config, &args)?,
         Command::Check(args) => check(&project, &config, &args)?,
+        Command::Review(args) => review(&project, &config, &args)?,
         Command::Verify(args) => return verify(&project, &config, &args),
         Command::Audit(args) => return audit(&project, &config, args),
         Command::AuditDb(AuditDbCommand::Update) => {
@@ -1021,6 +1022,34 @@ fn check(project: &Project, config: &Config, args: &CheckArgs) -> Result<()> {
         bail!("check failed ({}); nothing was built", failed.join(", "));
     }
     say!("All checks passed; nothing was built");
+    Ok(())
+}
+
+/// `review`: each tool's build review, as `install` runs it, without building. Runs no
+/// targets check and no audit; `check` and `install` do.
+fn review(project: &Project, config: &Config, args: &ReviewArgs) -> Result<()> {
+    let build_args = cli::BuildArgs {
+        offline: args.offline,
+        config: args.config.clone(),
+        ..Default::default()
+    };
+    for (name, tool) in config.select(&args.names)? {
+        let build = config.build.merged(tool.build.as_ref());
+        install::install(
+            project,
+            name,
+            tool,
+            &build,
+            &build_args,
+            install::Options {
+                force: false,
+                auto_approve: args.auto_approve,
+                stage: install::Stage::Review,
+                checksums: install::Checksums::Write,
+                targets: config.targets_for(tool),
+            },
+        )?;
+    }
     Ok(())
 }
 
