@@ -37,15 +37,25 @@ pub enum Checksums {
     Expect,
 }
 
+/// How far `install` goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage {
+    /// Review, then build and install.
+    Install,
+    /// Check the build review, then stop: build and write nothing (`check`).
+    Check,
+    /// Review, then stop before building (`review`).
+    Review,
+}
+
 /// How `install` treats a tool beyond its build settings.
 #[derive(Debug, Clone, Copy)]
 pub struct Options<'a> {
     /// Rebuild even when the stamp is up to date.
     pub force: bool,
     /// Record new or changed build-time code in the review file.
-    pub approve_build: bool,
-    /// Stop after checking the build review: build and write nothing.
-    pub check: bool,
+    pub auto_approve: bool,
+    pub stage: Stage,
     pub checksums: Checksums,
     /// The targets build-time code is reviewed for; all when `None`.
     pub targets: Option<&'a [String]>,
@@ -294,7 +304,7 @@ pub fn install(
     let stamp_path = project.stamp_path(name);
     // Approving reviews now, even when the binaries are current.
     if !opts.force
-        && !opts.approve_build
+        && !opts.auto_approve
         && let Some(stamp) = read_stamp(&stamp_path)
         && stamp.key == key
         && !stamp.bins.is_empty()
@@ -304,14 +314,19 @@ pub fn install(
             .all(|b| project.bin_dir().join(b).is_file())
         && checksum::check(project, name).is_ok_and(|m| m.is_empty())
     {
-        say!("{name} {} is up to date", tool.version);
+        if opts.stage == Stage::Review {
+            // The stamp covers the lock and the review file it was built with.
+            say!("{name} {} is up to date; nothing to review", tool.version);
+        } else {
+            say!("{name} {} is up to date", tool.version);
+        }
         return Ok(());
     }
 
-    if opts.check {
-        say!("Checking {name} {}", tool.version);
-    } else {
-        say!("Installing {name} {}", tool.version);
+    match opts.stage {
+        Stage::Install => say!("Installing {name} {}", tool.version),
+        Stage::Check => say!("Checking {name} {}", tool.version),
+        Stage::Review => say!("Reviewing {name} {}", tool.version),
     }
     let checkout = source::checkout(
         project,
@@ -334,7 +349,7 @@ pub fn install(
         targets: opts.targets,
         config: &config,
     };
-    if opts.check {
+    if opts.stage == Stage::Check {
         return review::check_only(project, name, selection, &checkout, &vendored, args.offline);
     }
     let changes = review::review(
@@ -344,11 +359,15 @@ pub fn install(
         &checkout,
         &vendored,
         args.offline,
-        opts.approve_build,
+        opts.auto_approve,
     )?;
     clean_if_changed(&target_dir, &changes)?;
     vendor::settle(&vendored)?;
-    // `--approve-build` may have just written the review file.
+    if opts.stage == Stage::Review {
+        say!("{name} {}: build review done", tool.version);
+        return Ok(());
+    }
+    // `--auto-approve` may have just written the review file.
     let key = stamp_key(
         name,
         tool,

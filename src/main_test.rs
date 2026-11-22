@@ -125,6 +125,66 @@ fn install_flags() {
     };
     assert!(args.no_audit && !args.deny_warnings);
     assert_eq!(args.names, vec!["x".to_string()]);
+    // Moved to `check`; renamed to `--auto-approve`.
+    assert!(parse(&["install", "--check"]).is_err());
+    assert!(parse(&["install", "--approve-build"]).is_err());
+    assert!(parse(&["install", "--auto-approve"]).is_ok());
+}
+
+#[test]
+fn check_flags() {
+    let parse = |args: &[&str]| {
+        Cli::try_parse_from(
+            ["cargo-project-tools"]
+                .iter()
+                .chain(args)
+                .copied()
+                .collect::<Vec<_>>(),
+        )
+    };
+    assert!(parse(&["check", "--no-audit", "--deny-warnings"]).is_err());
+    // It approves and builds nothing.
+    for flag in ["--auto-approve", "--approve-target", "--force"] {
+        assert!(parse(&["check", flag]).is_err(), "{flag}");
+    }
+    let cmd = parse(&["check", "--target", "x86_64-unknown-linux-gnu", "x"])
+        .unwrap()
+        .command;
+    assert!(cmd.downloads_packages() && cmd.has_summary());
+    let Command::Check(args) = cmd else {
+        panic!("not check");
+    };
+    assert_eq!(
+        args.build.target.as_deref(),
+        Some("x86_64-unknown-linux-gnu")
+    );
+    assert_eq!(args.names, vec!["x".to_string()]);
+}
+
+#[test]
+fn review_flags() {
+    let parse = |args: &[&str]| {
+        Cli::try_parse_from(
+            ["cargo-project-tools"]
+                .iter()
+                .chain(args)
+                .copied()
+                .collect::<Vec<_>>(),
+        )
+    };
+    // It reviews; it doesn't build, audit or approve targets.
+    for flag in ["--force", "--approve-target", "--no-audit", "--profile=x"] {
+        assert!(parse(&["review", flag]).is_err(), "{flag}");
+    }
+    let cmd = parse(&["review", "--auto-approve", "--offline", "x"])
+        .unwrap()
+        .command;
+    assert!(cmd.downloads_packages() && cmd.has_summary());
+    let Command::Review(args) = cmd else {
+        panic!("not review");
+    };
+    assert!(args.auto_approve && args.offline);
+    assert_eq!(args.names, vec!["x".to_string()]);
 }
 
 #[test]

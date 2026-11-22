@@ -11,7 +11,7 @@ Building a tool runs code before the tool itself ever runs: build scripts and pr
 | `build-dep` | Every library that build-time code runs: a build script's build-dependencies (`cc`, `autocfg`, …), a proc macro's dependencies (`syn`, `quote`, …), and what those depend on | Like a proc macro |
 | `cargo-config` | `.cargo/config.toml` and `.cargo/config` in the tool's source, from the package directory up to the root of the checkout | sha256 of the file |
 
-Only what the tool builds with its [`features` and `default-features`](configuration.md#toolname) counts, for the [`targets`](configuration.md#targets) you chose, so one review holds on each of them. Without `targets` that's every target, including Windows-only crates when you only build on Linux. Installing on a machine that isn't listed needs `--approve-target`, and then usually `--approve-build` for what that target adds. What's built is worked out with the build's own `rustflags` and `--config`, since a `--cfg` can turn on platform-specific dependencies.
+Only what the tool builds with its [`features` and `default-features`](configuration.md#toolname) counts, for the [`targets`](configuration.md#targets) you chose, so one review holds on each of them. Without `targets` that's every target, including Windows-only crates when you only build on Linux. Installing on a machine that isn't listed needs `--approve-target`, and then usually `--auto-approve` for what that target adds. What's built is worked out with the build's own `rustflags` and `--config`, since a `--cfg` can turn on platform-specific dependencies.
 
 Cargo never reads config from inside dependencies, and a config with `include`, or one that is a link, is refused. So is a config that sets `[source]`, `[patch]`, `paths` or `build.target`, which would build something other than what was reviewed. A `.cargo` between the checkout and the project root (in `.project-tools/targets/<tool>`, `.project-tools/targets` or `.project-tools`) is refused too: cargo would read it, and nobody reviewed it. A shipped `rust-toolchain` file is always removed instead.
 
@@ -89,7 +89,7 @@ A build script's entry also names its crate: `checksum` for a registry package, 
 
 ## Reviewing on the terminal
 
-When something isn't recorded and both input and output are a terminal, `add`, `update` and `install` open a review screen. Elsewhere, or with `--approve-build`, they behave as described under [Approving](#approving).
+When something isn't recorded and both input and output are a terminal, `add`, `update`, `install` and `review` open a review screen. Elsewhere, or with `--auto-approve`, they behave as described under [Approving](#approving).
 
 | Part | What it does |
 | --- | --- |
@@ -142,7 +142,7 @@ For an override, the editor shows that tool's override file. Done copies it to t
 
 ## Approving
 
-Outside a terminal (in CI, or with input or output redirected), `add`, `update` and `install` stop before writing or building, and list each piece with the file to look at, on stderr like the error:
+Outside a terminal (in CI, or with input or output redirected), `add`, `update`, `install` and `review` stop before writing or building, and list each piece with the file to look at, on stderr like the error:
 
 ```text
   build-time code to review:
@@ -154,14 +154,14 @@ Outside a terminal (in CI, or with input or output redirected), `add`, `update` 
     path = "build.rs"
     sha256 = "9e41…"
     action = "approve"
-error: 1 piece of build-time code isn't recorded in .project-tools/crates/cargo-nextest/build-review.toml; review it where you have a terminal (run this command there for the review screen, or with --approve-build after reading the files), then commit .project-tools/crates/cargo-nextest/build-review.toml
+error: 1 piece of build-time code isn't recorded in .project-tools/crates/cargo-nextest/build-review.toml; review it where you have a terminal (run this command there for the review screen, or with --auto-approve after reading the files), then commit .project-tools/crates/cargo-nextest/build-review.toml
 ```
 
-Don't approve on a CI runner: review where you work, and commit `build-review.toml`. After Cancel on the review screen, the error says to rerun with `--approve-build` instead.
+Don't approve on a CI runner: review where you work, and commit `build-review.toml`. When [`check`](commands.md#check) finds something, its error names [`review`](commands.md#review), which runs just this review, without building: `cargo project-tools review <tool>`. After Cancel on the review screen, the error says to rerun with `--auto-approve` instead.
 
 A piece another tool already records is listed with that tool's decision (`reviewed for <tool>: strip`), and its printed entry uses it. For an override, the entry also says which file to copy.
 
-After reviewing, run the same command with `--approve-build`. New pieces are recorded as `approve`. A changed piece keeps its action and file, and its entry is updated in place, so comments next to it stay. Entries that no longer match anything are removed, for example after you narrow `targets`. Without the flag they're only reported. `install --approve-build` reviews even when the tool is up to date.
+After reviewing, run the same command with `--auto-approve`. New pieces are recorded as `approve`. A changed piece keeps its action and file, and its entry is updated in place, so comments next to it stay. Entries that no longer match anything are removed, for example after you narrow `targets`. Without the flag they're only reported. `install --auto-approve` reviews even when the tool is up to date.
 
 To decide piece by piece, copy the printed entries into the file, set each `action` (and `file` for `override`), and rerun. For a changed piece, replace the old entry named in the comment. To change a recorded decision, edit its `action` (and `file`) and run `install`. A changed decision makes `install` rebuild the tool from scratch, since cargo doesn't notice edits to vendored sources.
 

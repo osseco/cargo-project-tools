@@ -39,6 +39,12 @@ pub enum Command {
     Update(UpdateArgs),
     /// Build and install tools into .project-tools/bin using the project's locks.
     Install(InstallArgs),
+    /// Check what `install` checks before it builds: the targets, the audit and the build
+    /// review. Builds and records nothing; fails when anything is missing or not reviewed.
+    Check(CheckArgs),
+    /// Review the build-time code `check` reports: on the review screen in a terminal, or all
+    /// at once with `--auto-approve`. Builds nothing.
+    Review(ReviewArgs),
     /// Check installed binaries against the checksums `install` recorded.
     Verify(VerifyArgs),
     /// Audit every tool's Cargo.lock against the RustSec advisory database.
@@ -132,7 +138,7 @@ pub struct AddArgs {
     /// build-review.toml at once. Review them first. In a terminal, without this flag,
     /// a review screen lets you decide on each.
     #[arg(long)]
-    pub approve_build: bool,
+    pub auto_approve: bool,
 }
 
 /// A git source instead of crates.io.
@@ -173,7 +179,7 @@ pub struct UpgradeArgs {
     /// build-review.toml at once. Review them first. In a terminal, without this flag,
     /// a review screen lets you decide on each.
     #[arg(long)]
-    pub approve_build: bool,
+    pub auto_approve: bool,
 }
 
 #[derive(Debug, Args)]
@@ -221,7 +227,7 @@ pub struct UpdateArgs {
     /// build-review.toml at once. Review them first. In a terminal, without this flag,
     /// a review screen lets you decide on each.
     #[arg(long)]
-    pub approve_build: bool,
+    pub auto_approve: bool,
 }
 
 #[derive(Debug, Args)]
@@ -231,15 +237,11 @@ pub struct InstallArgs {
     /// Rebuild even if the install stamp is up to date.
     #[arg(long)]
     pub force: bool,
-    /// Check targets, the audit and the build review, then stop: build and record nothing.
-    /// Fails when anything is missing or not reviewed.
-    #[arg(long, conflicts_with_all = ["force", "approve_build", "approve_target"])]
-    pub check: bool,
     /// Record all new or changed build scripts, proc macros and cargo config in
     /// build-review.toml at once. Review them first. In a terminal, without this flag,
     /// a review screen lets you decide on each.
     #[arg(long)]
-    pub approve_build: bool,
+    pub auto_approve: bool,
     /// Add this machine (and --target) to the tool's targets when it isn't one of them.
     #[arg(long)]
     pub approve_target: bool,
@@ -252,6 +254,36 @@ pub struct InstallArgs {
     pub deny_warnings: bool,
     #[command(flatten)]
     pub build: BuildArgs,
+}
+
+#[derive(Debug, Args)]
+pub struct CheckArgs {
+    /// Tools to check (default: all).
+    pub names: Vec<String>,
+    /// Don't audit the locks.
+    #[arg(long)]
+    pub no_audit: bool,
+    /// Also fail on warnings (unmaintained, unsound, yanked, git-source) that aren't ignored.
+    #[arg(long, conflicts_with = "no_audit")]
+    pub deny_warnings: bool,
+    #[command(flatten)]
+    pub build: BuildArgs,
+}
+
+#[derive(Debug, Args)]
+pub struct ReviewArgs {
+    /// Tools to review (default: all).
+    pub names: Vec<String>,
+    /// Record all new or changed build scripts, proc macros and cargo config in
+    /// build-review.toml at once. Review them first. In a terminal, without this flag,
+    /// a review screen lets you decide on each.
+    #[arg(long)]
+    pub auto_approve: bool,
+    #[arg(long)]
+    pub offline: bool,
+    /// Extra cargo `--config` values, as for `install`.
+    #[arg(long)]
+    pub config: Vec<String>,
 }
 
 #[derive(Debug, Args)]
@@ -273,7 +305,7 @@ pub struct VerifyArgs {
 }
 
 /// Flags passed on to `cargo install`.
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Default)]
 pub struct BuildArgs {
     #[arg(long, short = 'j')]
     pub jobs: Option<String>,
@@ -331,6 +363,8 @@ impl Command {
                 | Command::Upgrade(_)
                 | Command::Update(_)
                 | Command::Install(_)
+                | Command::Check(_)
+                | Command::Review(_)
                 | Command::Audit(_)
         )
     }
@@ -347,6 +381,8 @@ impl Command {
                     | Command::Upgrade(_)
                     | Command::Update(_)
                     | Command::Install(_)
+                    | Command::Check(_)
+                    | Command::Review(_)
                     | Command::Audit(_)
                     | Command::Inspect(_)
             ),

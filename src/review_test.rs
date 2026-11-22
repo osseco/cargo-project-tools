@@ -116,6 +116,22 @@ fn new_code_halts_until_approved() {
         assert!(err.contains("where you have a terminal"), "{err}");
     }
     assert!(!file.exists());
+    // `check` can't review; it names the command that does, terminal or not.
+    let tool_file = tmp.path().join("crates/mytool").join(FILE);
+    let err = check(
+        &tool_file,
+        items(),
+        Mode::Check,
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("run `cargo project-tools review mytool` where you have a terminal"),
+        "{err}"
+    );
+    assert!(!tool_file.exists());
 
     let decided = check(
         &file,

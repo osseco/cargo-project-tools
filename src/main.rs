@@ -33,8 +33,8 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 
 use cli::{
-    AddArgs, AuditArgs, AuditDbCommand, Cli, Command, InitArgs, InspectArgs, InstallArgs,
-    UpdateArgs, UpgradeArgs, VerifyArgs,
+    AddArgs, AuditArgs, AuditDbCommand, CheckArgs, Cli, Command, InitArgs, InspectArgs,
+    InstallArgs, ReviewArgs, UpdateArgs, UpgradeArgs, VerifyArgs,
 };
 use config::{AuditIgnore, Config, ConfigEditor, SfwMode};
 use output::say;
@@ -113,6 +113,8 @@ fn run() -> Result<ExitCode> {
         Command::Upgrade(args) => upgrade(&project, &config, args)?,
         Command::Update(args) => update(&project, &config, args)?,
         Command::Install(args) => install(&project, &config, &args)?,
+        Command::Check(args) => check(&project, &config, &args)?,
+        Command::Review(args) => review(&project, &config, &args)?,
         Command::Verify(args) => return verify(&project, &config, &args),
         Command::Audit(args) => return audit(&project, &config, args),
         Command::AuditDb(AuditDbCommand::Update) => {
@@ -267,7 +269,7 @@ fn add(project: &Project, config: &Config, args: AddArgs) -> Result<()> {
         config.settings.targets.as_deref(),
         &config.build,
         &checkout,
-        args.approve_build,
+        args.auto_approve,
     )?;
     write_new_lock(project, name, &lock_text)?;
 
@@ -450,7 +452,7 @@ fn upgrade(project: &Project, config: &Config, args: UpgradeArgs) -> Result<()> 
             features: None,
             no_default_features: false,
             default_features: false,
-            approve_build: args.approve_build,
+            auto_approve: args.auto_approve,
         },
     )
 }
@@ -559,7 +561,7 @@ fn update_interactive(project: &Project, config: &Config, args: UpdateArgs) -> R
         config.targets_for(tool),
         &config.build.merged(tool.build.as_ref()),
         &setup.checkout,
-        args.approve_build,
+        args.auto_approve,
     )?;
     fs::copy(setup.lock_path(), &ours_path)?;
     let mut editor = ConfigEditor::open(&project.config_path())?;
@@ -780,7 +782,7 @@ fn update(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
         config.targets_for(tool),
         &config.build.merged(tool.build.as_ref()),
         &checkout,
-        args.approve_build,
+        args.auto_approve,
     )?;
     fs::copy(checkout.lock_path(), &ours_path)?;
     if moved || features_changed {
@@ -935,9 +937,6 @@ fn audit(project: &Project, config: &Config, args: AuditArgs) -> Result<ExitCode
 
 /// Audit every selected tool's lock first, so nothing is built when one of them fails.
 fn install(project: &Project, config: &Config, args: &InstallArgs) -> Result<()> {
-    if args.check {
-        return check_install(project, config, args);
-    }
     let tools = config.select(&args.names)?;
     let reloaded;
     let config = if check_targets(project, config, &tools, &args.build, args.approve_target)? {
@@ -966,8 +965,8 @@ fn install(project: &Project, config: &Config, args: &InstallArgs) -> Result<()>
             &args.build,
             install::Options {
                 force: args.force,
-                approve_build: args.approve_build,
-                check: false,
+                auto_approve: args.auto_approve,
+                stage: install::Stage::Install,
                 checksums: install::Checksums::Write,
                 targets: config.targets_for(tool),
             },
@@ -976,10 +975,10 @@ fn install(project: &Project, config: &Config, args: &InstallArgs) -> Result<()>
     Ok(())
 }
 
-/// `install --check`: the targets, the audit and each tool's build review, as `install`
-/// checks them, without building or recording anything. Keeps going after a failure, so
-/// one run reports everything.
-fn check_install(project: &Project, config: &Config, args: &InstallArgs) -> Result<()> {
+/// `check`: the targets, the audit and each tool's build review, as `install` checks them,
+/// without building or recording anything. Keeps going after a failure, so one run reports
+/// everything.
+fn check(project: &Project, config: &Config, args: &CheckArgs) -> Result<()> {
     let tools = config.select(&args.names)?;
     let mut failed: Vec<String> = Vec::new();
     if let Err(e) = check_targets(project, config, &tools, &args.build, false) {
@@ -1008,8 +1007,8 @@ fn check_install(project: &Project, config: &Config, args: &InstallArgs) -> Resu
             &args.build,
             install::Options {
                 force: false,
-                approve_build: false,
-                check: true,
+                auto_approve: false,
+                stage: install::Stage::Check,
                 checksums: install::Checksums::Write,
                 targets: config.targets_for(tool),
             },
@@ -1023,6 +1022,34 @@ fn check_install(project: &Project, config: &Config, args: &InstallArgs) -> Resu
         bail!("check failed ({}); nothing was built", failed.join(", "));
     }
     say!("All checks passed; nothing was built");
+    Ok(())
+}
+
+/// `review`: each tool's build review, as `install` runs it, without building. Runs no
+/// targets check and no audit; `check` and `install` do.
+fn review(project: &Project, config: &Config, args: &ReviewArgs) -> Result<()> {
+    let build_args = cli::BuildArgs {
+        offline: args.offline,
+        config: args.config.clone(),
+        ..Default::default()
+    };
+    for (name, tool) in config.select(&args.names)? {
+        let build = config.build.merged(tool.build.as_ref());
+        install::install(
+            project,
+            name,
+            tool,
+            &build,
+            &build_args,
+            install::Options {
+                force: false,
+                auto_approve: args.auto_approve,
+                stage: install::Stage::Review,
+                checksums: install::Checksums::Write,
+                targets: config.targets_for(tool),
+            },
+        )?;
+    }
     Ok(())
 }
 
@@ -1133,8 +1160,8 @@ fn verify(project: &Project, config: &Config, args: &VerifyArgs) -> Result<ExitC
                 &args.build,
                 install::Options {
                     force: true,
-                    approve_build: false,
-                    check: false,
+                    auto_approve: false,
+                    stage: install::Stage::Install,
                     checksums: install::Checksums::Expect,
                     targets: config.targets_for(tool),
                 },

@@ -9,6 +9,8 @@ Every command runs as `cargo project-tools <command>`. Apart from `init` and the
 | `remove <crate>` | Remove a tool, its lock, build dir and binaries |
 | `update <crate> [deps…]` | Update dependencies in the tool's lock, or move the tool to another version (`--latest`, `--version`); `-i` for the [setup screen](#interactive-setup) |
 | `install [crates…]` | Audit, then build and install; skipped when nothing changed |
+| `check [crates…]` | Check what `install` checks before it builds (targets, audit, build review); builds and records nothing |
+| `review [crates…]` | Review the build-time code `check` reports, on the review screen or with `--auto-approve`; builds nothing |
 | `verify [crates…]` | Check installed binaries against their recorded checksums; `--repair` rebuilds |
 | `audit [crates…]` | Check every lock against the RustSec advisory database, apply `audit-ignore.toml`, suggest fixes |
 | `audit-db update` | Fetch or revalidate the advisory database |
@@ -60,11 +62,11 @@ cargo project-tools add -i cargo-nextest
 | `-F`, `--features <list>` | Build with these features, replacing the tool's list; `-F ""` clears it |
 | `--no-default-features`, `--default-features` | Build without, or again with, the default features |
 | `-i`, `--interactive` | Choose the version, features and dependency versions on the [setup screen](#interactive-setup) first |
-| `--approve-build` | Record the tool's build scripts, proc macros and cargo config in [`build-review.toml`](build-review.md) |
+| `--auto-approve` | Record the tool's build scripts, proc macros and cargo config in [`build-review.toml`](build-review.md) |
 
 Copies the lock the tool ships with into `.project-tools/crates/<tool>/` and adds a `[tool.<name>]` entry. A tool that ships no lock gets one from `cargo generate-lockfile`, which only reads the index: nothing is compiled and no build script runs.
 
-Before anything is written, it [reviews the build-time code](build-review.md) the lock brings in, and stops while any of it isn't in `build-review.toml`. In a terminal it opens the [review screen](build-review.md#reviewing-on-the-terminal); otherwise look at the files it lists, then run it again with `--approve-build`.
+Before anything is written, it [reviews the build-time code](build-review.md) the lock brings in, and stops while any of it isn't in `build-review.toml`. In a terminal it opens the [review screen](build-review.md#reviewing-on-the-terminal); otherwise look at the files it lists, then run it again with `--auto-approve`.
 
 ## remove
 
@@ -90,7 +92,7 @@ cargo project-tools update -i cargo-nextest
 | `--latest` | Move the tool to its latest stable version; a git tool follows its tag or branch again |
 | `--version <req>` | Move a registry tool to the version matching this requirement |
 | `-i`, `--interactive` | Change the version, features and dependency versions on the [setup screen](#interactive-setup); not with the options above |
-| `--approve-build` | Record new or changed build-time code in [`build-review.toml`](build-review.md) |
+| `--auto-approve` | Record new or changed build-time code in [`build-review.toml`](build-review.md) |
 
 Runs `cargo update` against the tool's lock. The lock is only saved if cargo resolves it, and if every build script, proc macro and cargo config it builds is [recorded](build-review.md).
 
@@ -134,13 +136,12 @@ A `rust-toolchain` or `rust-toolchain.toml` in the tool's source is removed befo
 
 After building, it writes the sha256 of each of the tool's binaries to `.project-tools/bin/<tool>.sha256`, in `sha256sum` format, for [`verify`](#verify).
 
-With `--check` it checks the same things and then stops: this machine (and `--target`) against [`targets`](configuration.md#targets), the audit, and, for each tool that isn't up to date, its build-time code against `build-review.toml`. That still vendors the dependencies, but it builds nothing, and writes nothing to `project-tools.toml` or `build-review.toml`, and no binaries or install stamps (only the audit's `bin/.stamps/<tool>.built.json`). It reports every problem rather than stopping at the first, and fails if there are any. Use it in CI to fail fast before a long build, or in a job that only audits.
+To check all this without building, use [`check`](#check).
 
 | Option | Meaning |
 | --- | --- |
 | `--force` | Rebuild even when nothing changed |
-| `--check` | Check targets, the audit and the build review; build and record nothing |
-| `--approve-build` | Record new or changed build-time code in [`build-review.toml`](build-review.md); reviews even when the tool is up to date |
+| `--auto-approve` | Record new or changed build-time code in [`build-review.toml`](build-review.md); reviews even when the tool is up to date |
 | `--approve-target` | Add this machine, and `--target`, to the tool's [`targets`](configuration.md#targets) when they aren't listed |
 | `--no-audit` | Skip the audit |
 | `--deny-warnings` | Also refuse to build on warnings that aren't ignored |
@@ -148,6 +149,40 @@ With `--check` it checks the same things and then stops: this machine (and `--ta
 | `--target <triple>` | Override `[build].target` |
 | `--config <value>` | Extra cargo `--config` values |
 | `-j`, `--offline`, `--frozen`, `-q`, `-v`, `--color`, `--keep-going`, `--timings` | Passed through to cargo |
+
+## check
+
+```bash
+cargo project-tools check
+cargo project-tools check cargo-nextest --target x86_64-pc-windows-msvc
+```
+
+Checks what [`install`](#install) checks before it builds, then stops: this machine (and `--target`) against [`targets`](configuration.md#targets), the audit, and, for each tool that isn't up to date, its build-time code against `build-review.toml`. That still vendors the dependencies, but it builds nothing, and writes nothing to `project-tools.toml` or `build-review.toml`, and no binaries or install stamps (only the audit's `bin/.stamps/<tool>.built.json`). It reports every problem rather than stopping at the first, and fails if there are any. Use it in CI to fail fast before a long build, or in a job that only audits.
+
+It never approves anything, so it has no `--auto-approve`, `--approve-target` or `--force`.
+
+| Option | Meaning |
+| --- | --- |
+| `--no-audit` | Skip the audit |
+| `--deny-warnings` | Also fail on warnings that aren't ignored |
+| `--target <triple>`, `--config <value>`, `--profile <name>`, `--debug`, `--offline` | As for `install`: what would be built, and so what is checked |
+
+When build-time code isn't recorded, the error names [`review`](#review).
+
+## review
+
+```bash
+cargo project-tools review
+cargo project-tools review cargo-nextest --auto-approve
+```
+
+Runs each selected tool's [build review](build-review.md) as `install` would, then stops before building. In a terminal it opens the [review screen](build-review.md#reviewing-on-the-terminal); with `--auto-approve` it records everything new or changed at once; elsewhere it fails listing what's pending, as `check` does. A tool that is up to date (its install stamp matches, binaries and all) has nothing to review. It doesn't check targets or audit; `check` and `install` do. Afterwards, commit `build-review.toml` (and `overrides/`).
+
+| Option | Meaning |
+| --- | --- |
+| `--auto-approve` | Record new or changed build-time code in [`build-review.toml`](build-review.md) |
+| `--offline` | Vendor without the network |
+| `--config <value>` | Extra cargo `--config` values, as for `install` |
 
 ## verify
 
@@ -249,7 +284,7 @@ In JSON, the record has `tool`, `tool_version`, `features`, `default_features`, 
 
 ## JSON output
 
-With `--message-format json`, stdout holds only JSON records, one per line. All human text, and cargo's own output, goes to stderr instead. `add`, `update`, `install`, `audit` and `inspect` write these records:
+With `--message-format json`, stdout holds only JSON records, one per line. All human text, and cargo's own output, goes to stderr instead. `add`, `update`, `install`, `check`, `review`, `audit` and `inspect` write these records:
 
 | `kind` | When | Fields |
 | --- | --- | --- |
@@ -261,7 +296,7 @@ With `--message-format json`, stdout holds only JSON records, one per line. All 
 | `ignore-expired` | An ignore past its `expires` date | `tool`, `file`, `id`, `expires` |
 | `inspect` | What [`inspect`](#inspect) found | See [inspect](#inspect) |
 | `error` | The command failed | `message` |
-| `summary` | The last record of `add`, `update`, `install` and `audit` | `ok`, `vulnerabilities`, `warnings`, `pending_reviews`, `missing_targets` |
+| `summary` | The last record of `add`, `update`, `install`, `check`, `review` and `audit` | `ok`, `vulnerabilities`, `warnings`, `pending_reviews`, `missing_targets` |
 
 Every record also has `"version": 1`. The version goes up when a record changes in a way that breaks readers.
 

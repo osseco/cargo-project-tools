@@ -26,7 +26,7 @@ pub const FILE: &str = "build-review.toml";
 
 const TEMPLATE: &str =
     "# Code that runs while building this tool. `install` halts on anything not listed here.
-# Review it on the review screen, or record it with `--approve-build`. See docs/build-review.md.
+# Review it on the review screen, or record it with `--auto-approve`. See docs/build-review.md.
 
 ";
 
@@ -944,7 +944,9 @@ fn configured_tools(project: &Project) -> Result<Vec<String>> {
 pub enum Mode<'a> {
     /// Fail listing them.
     Report,
-    /// Record them all (`--approve-build`).
+    /// Fail listing them, pointing at the `review` command (`check`).
+    Check,
+    /// Record them all (`--auto-approve`).
     ApproveAll,
     /// Decide on each on the review screen.
     Interactive { tool: &'a str, crate_dir: &'a Path },
@@ -1002,10 +1004,17 @@ pub fn check(
                     path, pending, choices, &before, &stale, known, root,
                 )?),
                 // Cancelled.
-                None => report(path, &pending, &stale, known, root)?,
+                None => report(path, &pending, &stale, known, root, false)?,
             }
         }
-        _ => report(path, &pending, &stale, known, root)?,
+        _ => report(
+            path,
+            &pending,
+            &stale,
+            known,
+            root,
+            matches!(mode, Mode::Check),
+        )?,
     }
     Ok(decided)
 }
@@ -1045,7 +1054,7 @@ fn settle(
         .filter(|e| !keep.contains(e))
         .collect();
     let decided = record(path, decisions, &unused)?;
-    report(path, &rest, &[], known, root)?;
+    report(path, &rest, &[], known, root, false)?;
     Ok(decided)
 }
 
@@ -1075,12 +1084,15 @@ fn unchanged(item: &Item, before: &str) -> Result<()> {
 
 /// Warn about unused entries, and fail listing what's pending. All of it goes to stderr, so
 /// the list comes before the error on the same stream.
+/// `review` says to settle them with the `review` command rather than by running the same
+/// command again.
 fn report(
     path: &Path,
     pending: &[Pending],
     stale: &[&Entry],
     known: &KnownMap,
     root: &Path,
+    review: bool,
 ) -> Result<()> {
     let rel = |p: &Path| shown(&p.strip_prefix(root).unwrap_or(p).display().to_string());
     // Records carry the raw text, which JSON escapes; humans get it `shown`.
@@ -1101,7 +1113,7 @@ fn report(
                 path: e.path.clone(),
             });
             eprintln!(
-                "  warning: unused [[{}]] {}{} in {}; --approve-build removes it",
+                "  warning: unused [[{}]] {}{} in {}; --auto-approve removes it",
                 e.kind,
                 shown(&e.package),
                 shown(&e.path),
@@ -1156,15 +1168,25 @@ fn report(
         1 => "1 piece of build-time code isn't".to_string(),
         n => format!("{n} pieces of build-time code aren't"),
     };
+    if review {
+        let tool = shown(&tool);
+        bail!(
+            "{what} recorded in {}; run `cargo project-tools review {tool}` where you have a \
+             terminal for the review screen (or with --auto-approve after reading the files), \
+             then commit {}",
+            rel(path),
+            rel(path)
+        )
+    }
     if screen::interactive() {
         bail!(
-            "{what} recorded in {}; review it, then rerun with --approve-build",
+            "{what} recorded in {}; review it, then rerun with --auto-approve",
             rel(path)
         )
     }
     bail!(
         "{what} recorded in {}; review it where you have a terminal (run this command there \
-         for the review screen, or with --approve-build after reading the files), then \
+         for the review screen, or with --auto-approve after reading the files), then \
          commit {}",
         rel(path),
         rel(path)
@@ -1548,7 +1570,7 @@ pub fn check_only(
     check(
         &project.review_path(name),
         items,
-        Mode::Report,
+        Mode::Check,
         &known,
         &project.root,
     )?;
