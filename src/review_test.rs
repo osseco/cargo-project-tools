@@ -113,9 +113,15 @@ fn new_code_halts_until_approved() {
         ]
     };
 
-    let err = check(&file, items(), Mode::Report, &KnownMap::new(), tmp.path())
-        .unwrap_err()
-        .to_string();
+    let err = check(
+        &file,
+        items(),
+        Mode::Report { record: false },
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("2 pieces of build-time code"), "{err}");
     // Tests run with or without a terminal, and the hint follows it.
     if !crate::screen::interactive() {
@@ -160,9 +166,15 @@ fn new_code_halts_until_approved() {
     // Recorded: passes without the flag, and the file isn't rewritten.
     let before = fs::read_to_string(&file).unwrap();
     assert_eq!(
-        check(&file, items(), Mode::Report, &KnownMap::new(), tmp.path())
-            .unwrap()
-            .len(),
+        check(
+            &file,
+            items(),
+            Mode::Report { record: false },
+            &KnownMap::new(),
+            tmp.path()
+        )
+        .unwrap()
+        .len(),
         2
     );
     assert_eq!(fs::read_to_string(&file).unwrap(), before);
@@ -179,9 +191,15 @@ fn changed_code_keeps_its_action_and_drops_the_old_entry() {
     .unwrap();
     let items = || vec![script(tmp.path(), "ring", "new")];
 
-    let err = check(&file, items(), Mode::Report, &KnownMap::new(), tmp.path())
-        .unwrap_err()
-        .to_string();
+    let err = check(
+        &file,
+        items(),
+        Mode::Report { record: false },
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("1 piece of"), "{err}");
     assert!(!err.contains("--auto-approve"), "{err}");
     let err = check(&file, items(), Mode::Check, &KnownMap::new(), tmp.path())
@@ -380,7 +398,16 @@ fn two_versions_of_a_proc_macro_are_separate_entries() {
     )
     .unwrap();
     assert_eq!(load(&file).unwrap().len(), 2);
-    assert!(check(&file, items(), Mode::Report, &KnownMap::new(), tmp.path()).is_ok());
+    assert!(
+        check(
+            &file,
+            items(),
+            Mode::Report { record: false },
+            &KnownMap::new(),
+            tmp.path()
+        )
+        .is_ok()
+    );
 }
 
 fn vendored_package(dir: &Path) -> PathBuf {
@@ -911,7 +938,7 @@ fn an_unpinned_entry_of_the_tool_comes_up_again() {
     let err = check(
         &file,
         vec![item],
-        Mode::Report,
+        Mode::Report { record: false },
         &KnownMap::new(),
         tmp.path(),
     )
@@ -1216,7 +1243,7 @@ fn an_entry_for_another_crate_comes_up_as_changed() {
     let err = check(
         &file,
         vec![item()],
-        Mode::Report,
+        Mode::Report { record: false },
         &KnownMap::new(),
         tmp.path(),
     )
@@ -1240,7 +1267,7 @@ fn an_entry_for_another_crate_comes_up_as_changed() {
     check(
         &file,
         vec![item()],
-        Mode::Report,
+        Mode::Report { record: false },
         &KnownMap::new(),
         tmp.path(),
     )
@@ -1253,7 +1280,7 @@ fn an_entry_for_another_crate_comes_up_as_changed() {
         check(
             &file,
             vec![other],
-            Mode::Report,
+            Mode::Report { record: false },
             &KnownMap::new(),
             tmp.path()
         )
@@ -1316,7 +1343,7 @@ fn pieces_outside_the_project_are_refused() {
     let err = check(
         &file,
         vec![elsewhere],
-        Mode::Report,
+        Mode::Report { record: false },
         &KnownMap::new(),
         &tmp.path().join("project"),
     )
@@ -1465,7 +1492,7 @@ fn a_new_version_of_a_build_time_library_comes_up_again() {
     check(
         &file,
         vec![lib("c1")],
-        Mode::Report,
+        Mode::Report { record: false },
         &KnownMap::new(),
         tmp.path(),
     )
@@ -1473,7 +1500,7 @@ fn a_new_version_of_a_build_time_library_comes_up_again() {
     let err = check(
         &file,
         vec![lib("c2")],
-        Mode::Report,
+        Mode::Report { record: false },
         &KnownMap::new(),
         tmp.path(),
     )
@@ -1512,6 +1539,7 @@ fn picks_record_what_they_name_and_leave_the_rest_pending() {
             items(),
             Mode::Picked {
                 picks,
+                from: &KnownMap::new(),
                 crate_dir: tmp.path(),
             },
             &KnownMap::new(),
@@ -1534,16 +1562,153 @@ fn picks_record_what_they_name_and_leave_the_rest_pending() {
     assert!(err.contains("isn't there yet"), "{err}");
     assert!(!file.exists());
 
-    // One decided, the other still pending.
+    // One decided, the other written as pending.
     let err = run(&[Pick::parse(Action::Strip, &format!("libc@1.0.0={hash}")).unwrap()])
         .unwrap_err()
         .to_string();
     assert!(err.contains("1 piece of"), "{err}");
-    let entries = load(&file).unwrap();
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].package, "libc");
-    assert_eq!(entries[0].action, Action::Strip);
+    let actions = || -> Vec<(String, Action)> {
+        load(&file)
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.package, e.action))
+            .collect()
+    };
+    assert_eq!(
+        actions(),
+        [
+            ("libc".to_string(), Action::Strip),
+            ("serde_derive".to_string(), Action::Pending)
+        ]
+    );
 
+    // Deciding it replaces the pending entry.
     run(&[Pick::parse(Action::Approve, "serde_derive@1.0.0").unwrap()]).unwrap();
-    assert_eq!(load(&file).unwrap().len(), 2);
+    assert_eq!(
+        actions(),
+        [
+            ("libc".to_string(), Action::Strip),
+            ("serde_derive".to_string(), Action::Approve)
+        ]
+    );
+}
+
+#[test]
+fn reporting_writes_pending_entries_that_never_count_as_decisions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join(FILE);
+    let items = || {
+        vec![
+            under(script(tmp.path(), "libc", "aa"), tmp.path()),
+            under(proc_macro("serde_derive", "cc"), tmp.path()),
+        ]
+    };
+    let report = |record: bool| {
+        check(
+            &file,
+            items(),
+            Mode::Report { record },
+            &KnownMap::new(),
+            tmp.path(),
+        )
+        .unwrap_err()
+    };
+
+    // Without `record` (install), nothing is written.
+    let err = report(false);
+    assert!(err.is::<PendingReview>());
+    assert!(!file.exists());
+
+    let err = report(true).to_string();
+    assert!(
+        err.contains("2 pieces of build-time code are waiting"),
+        "{err}"
+    );
+    assert!(err.contains("review"), "{err}");
+    let entries = load(&file).unwrap();
+    assert!(entries.iter().all(|e| e.action == Action::Pending));
+    assert_eq!(entries.len(), 2);
+
+    // Still pending for `check`, and reporting again writes nothing new.
+    let before = fs::read_to_string(&file).unwrap();
+    assert!(check(&file, items(), Mode::Check, &KnownMap::new(), tmp.path()).is_err());
+    report(true);
+    assert_eq!(fs::read_to_string(&file).unwrap(), before);
+
+    // `--auto-approve` turns them into approvals in place.
+    check(
+        &file,
+        items(),
+        Mode::ApproveAll,
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap();
+    let entries = load(&file).unwrap();
+    assert_eq!(entries.len(), 2);
+    assert!(entries.iter().all(|e| e.action == Action::Approve));
+}
+
+#[test]
+fn the_spec_names_the_package_version_and_hash() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert_eq!(spec(&script(tmp.path(), "libc", "aa")), "libc@1.0.0=aa");
+    assert_eq!(
+        spec(&proc_macro("serde_derive", "cc")),
+        "serde_derive@1.0.0=cc"
+    );
+    let mut config = script(tmp.path(), "", "dd");
+    config.kind = Kind::CargoConfig;
+    config.path = ".cargo/config.toml".into();
+    assert_eq!(spec(&config), ".cargo/config.toml=dd");
+    // What `review --approve` takes back.
+    let pick = Pick::parse(Action::Approve, &spec(&script(tmp.path(), "libc", "aa"))).unwrap();
+    assert_eq!(pick.hash.as_deref(), Some("aa"));
+}
+
+#[test]
+fn decisions_from_another_file_carry_over_only_on_an_exact_match() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join(FILE);
+    let other = tmp.path().join("other.toml");
+    let libc = real_script(tmp.path(), "libc");
+    fs::write(
+        &other,
+        format!("[[build-script]]\npackage = \"libc\"\npath = \"build.rs\"\nsha256 = \"{}\"\naction = \"strip\"\n\n", libc.hash) + "\
+         [[build-script]]\npackage = \"ring\"\npath = \"build.rs\"\nsha256 = \"old\"\naction = \"approve\"\n\n\
+         [[build-script]]\npackage = \"zstd\"\npath = \"build.rs\"\nsha256 = \"zz\"\naction = \"override\"\nfile = \"overrides/zstd/build.rs\"\n\n\
+         [[proc-macro]]\npackage = \"serde_derive\"\nchecksum = \"cc\"\naction = \"pending\"\n",
+    )
+    .unwrap();
+    let from = known_from(std::slice::from_ref(&other)).unwrap();
+    let items = || {
+        vec![
+            libc.clone(),
+            under(script(tmp.path(), "ring", "new"), tmp.path()),
+            under(script(tmp.path(), "zstd", "zz"), tmp.path()),
+            under(proc_macro("serde_derive", "cc"), tmp.path()),
+        ]
+    };
+    let err = check(
+        &file,
+        items(),
+        Mode::Picked {
+            picks: &[],
+            from: &from,
+            crate_dir: tmp.path(),
+        },
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap_err()
+    .to_string();
+    // ring changed, zstd is an override, serde_derive is only pending there.
+    assert!(err.contains("3 pieces"), "{err}");
+    let decided: Vec<(String, Action)> = load(&file)
+        .unwrap()
+        .into_iter()
+        .map(|e| (e.package, e.action))
+        .filter(|(_, a)| *a != Action::Pending)
+        .collect();
+    assert_eq!(decided, [("libc".to_string(), Action::Strip)]);
 }

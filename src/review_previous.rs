@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-use super::{Entry, Item, Kind, Pin, git_commit, is_registry, load, pulled_by, slash};
+use super::{Action, Entry, Item, Kind, Pin, git_commit, is_registry, load, pulled_by, slash};
 use crate::build_files;
 use crate::output::{self, say};
 use crate::project::Project;
@@ -50,7 +50,7 @@ pub fn fetch(
     for item in items.iter_mut() {
         let Some(e) = entries
             .iter()
-            .find(|e| item.same_place(e) && !item.matches(e))
+            .find(|e| item.same_place(e) && !item.matches(e) && e.action != Action::Pending)
         else {
             continue;
         };

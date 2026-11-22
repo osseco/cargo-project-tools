@@ -78,6 +78,7 @@ action = "strip"
 | `approve` | Build it as shipped |
 | `override` | Replace it with `file`, relative to `.project-tools/crates/<tool>/` |
 | `strip` | Remove it: a build script is turned off with `build = false`, a config file is deleted. Cargo refuses to strip the build script of a package with `links` |
+| `pending` | Not decided yet. `add`, `update` and `review` write it for new code they couldn't get a decision for; it never counts as one, so `check` and `install` stop on it |
 
 A proc macro or a build-time library can only be approved. To avoid one, turn off the feature that pulls it in.
 
@@ -144,22 +145,17 @@ For an override, the editor shows that tool's override file. Done copies it to t
 
 ## Approving
 
-Outside a terminal (in CI, or with input or output redirected), `add`, `update`, `install` and `review` stop before writing or building, and list each piece with the file to look at, on stderr like the error:
+Outside a terminal (in CI, or with input or output redirected), nothing is built while build-time code is waiting for a decision. `add`, `update` and `review` still write the tool, its lock and `build-review.toml`, with an `action = "pending"` entry for each new piece; `install` writes nothing. Each piece is listed with the file to look at and its spec, on stderr like the error:
 
 ```text
   build-time code to review:
     build-script zstd-sys@2.1.2+zstd.1.5.7 build.rs (changed; was approve)  .project-tools/targets/cargo-nextest/vendor/zstd-sys-2.1.2+zstd.1.5.7/build.rs
-  to decide piece by piece, put these in .project-tools/crates/cargo-nextest/build-review.toml with the action you choose:
-    # replaces the entry with sha256 = "5b0c…"
-    [[build-script]]
-    package = "zstd-sys"
-    path = "build.rs"
-    sha256 = "9e41…"
-    action = "approve"
-error: 1 piece of build-time code isn't recorded in .project-tools/crates/cargo-nextest/build-review.toml; run this command where you have a terminal for the review screen, or record each decision with `cargo project-tools review cargo-nextest --approve, --strip or --override <package@version>`, then commit .project-tools/crates/cargo-nextest/build-review.toml
+  to record a decision: cargo project-tools review cargo-nextest --approve, --strip or --override <spec>, with these specs:
+    zstd-sys@2.1.2+zstd.1.5.7=9e41…
+error: 1 piece of build-time code is waiting for a decision in .project-tools/crates/cargo-nextest/build-review.toml; record each decision with `cargo project-tools review cargo-nextest --approve, --strip or --override <spec>`, or run `cargo project-tools review cargo-nextest` where you have a terminal for the review screen, then commit .project-tools/crates/cargo-nextest/build-review.toml
 ```
 
-Don't approve on a CI runner: review where you work, and commit `build-review.toml`. When [`check`](commands.md#check) finds something, its error names [`review`](commands.md#review), which runs just this review, without building: `cargo project-tools review <tool>`. After Cancel on the review screen, the error says to rerun with `--auto-approve` instead.
+Don't approve on a CI runner: review where you work, and commit `build-review.toml`. [`check`](commands.md#check) and `install` point to [`review`](commands.md#review) too, which runs just this review, without building.
 
 A build script whose crate changed while the script and the files it pulls in didn't is listed as `(crate changed, script unchanged; was approve)`, and its entry replaces the one with the old `checksum` or `commit`. It still needs a look, since a build script can read any file of its crate.
 
@@ -167,11 +163,13 @@ A changed piece also lists the version its entry was recorded for (`was 2.1.1+zs
 
 A piece another tool already records is listed with that tool's decision (`reviewed for <tool>: strip`), and its printed entry uses it. For an override, the entry also says which file to copy.
 
-After reviewing, run the same command with `--auto-approve`. New pieces are recorded as `approve`. A changed piece keeps its action and file, and its entry is updated in place, so comments next to it stay. Entries that no longer match anything are removed, for example after you narrow `targets`. Without the flag they're only reported. `install --auto-approve` reviews even when the tool is up to date.
+After reviewing, run `review` with `--auto-approve`. New and pending pieces are recorded as `approve`. A changed piece keeps its action and file, and its entry is updated in place, so comments next to it stay. Entries that no longer match anything are removed, for example after you narrow `targets`. Without the flag they're only reported. `install --auto-approve` reviews even when the tool is up to date.
 
-To decide piece by piece without the screen, name each decision: `cargo project-tools review <tool> --approve <package@version> --strip <package@version> --override <package@version>`. Add `=<sha256>` (`=<checksum>` for a whole crate) to tie it to the code you read; when that code changed since, nothing is written. Entries are updated in place as with `--auto-approve`, and what you don't name stays pending. See [`review`](commands.md#review).
+To decide piece by piece without the screen, name each decision with its spec: `cargo project-tools review <tool> --approve <spec> --strip <spec> --override <spec>`. The spec is `package@version=hash` (`path=hash` for cargo config); the hash ties the decision to the code you read, and when that code changed since, nothing is written. Entries are updated in place, pending ones included, and what you don't name stays pending. See [`review`](commands.md#review).
 
-To decide piece by piece, copy the printed entries into the file, set each `action` (and `file` for `override`), and rerun. For a changed piece, replace the old entry named in the comment. To change a recorded decision, edit its `action` (and `file`) and run `install`. A changed decision makes `install` rebuild the tool from scratch, since cargo doesn't notice edits to vendored sources.
+Decisions already recorded for the same code elsewhere, on another branch or in another repository, carry over with `review <tool> --from <their build-review.toml>`: only for exactly the same kind, package, path, hash and crate. Overrides don't carry over, since their file is code to read too, and neither does a piece two files decide differently.
+
+By hand, set `action` (and `file` for `override`) in a pending entry, or replace a changed piece's old entry with the one in its `review-pending` record. To change a recorded decision, edit its `action` (and `file`) and run `install`. A changed decision makes `install` rebuild the tool from scratch, since cargo doesn't notice edits to vendored sources.
 
 ## Who approved it
 

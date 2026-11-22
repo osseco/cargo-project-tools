@@ -208,6 +208,14 @@ fn review_flags() {
     assert_eq!(args.override_, ["d@4"]);
     // Picking pieces and approving them all don't mix.
     assert!(parse(&["review", "x", "--auto-approve", "--approve", "a@1"]).is_err());
+    let cmd = parse(&["review", "x", "--from", "a.toml", "--from", "b.toml"])
+        .unwrap()
+        .command;
+    let Command::Review(args) = cmd else {
+        panic!("not review");
+    };
+    assert_eq!(args.from.len(), 2);
+    assert!(parse(&["review", "x", "--from", "a.toml", "--auto-approve"]).is_err());
     // `--diff` only shows.
     assert!(parse(&["review", "x", "--diff"]).is_ok());
     for flag in [

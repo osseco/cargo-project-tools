@@ -67,7 +67,7 @@ cargo project-tools add -i cargo-nextest
 
 Copies the lock the tool ships with into `.project-tools/crates/<tool>/` and adds a `[tool.<name>]` entry. A tool that ships no lock gets one from `cargo generate-lockfile`, which only reads the index: nothing is compiled and no build script runs.
 
-Before anything is written, it [audits](#audit) what the lock builds and reports the advisories, with a `fix` for each, without failing on them (`check` and `install` do). With `--fix-advisories` it first moves every dependency it can to a semver-compatible fix, and lists what it couldn't, so the review below covers the lock that's kept. Then it [reviews the build-time code](build-review.md) the lock brings in, and stops while any of it isn't in `build-review.toml`. In a terminal it opens the [review screen](build-review.md#reviewing-on-the-terminal); otherwise look at the files it lists, then run it again with `--auto-approve`.
+Before anything is written, it [audits](#audit) what the lock builds and reports the advisories, with a `fix` for each, without failing on them (`check` and `install` do). With `--fix-advisories` it first moves every dependency it can to a semver-compatible fix, and lists what it couldn't, so the review below covers the lock that's kept. Then it [reviews the build-time code](build-review.md) the lock brings in. In a terminal it opens the [review screen](build-review.md#reviewing-on-the-terminal). Code that's still undecided after that, or outside a terminal, gets an `action = "pending"` entry in `build-review.toml`: the tool and its lock are written anyway, and `add` then fails saying how many pieces are waiting. Decide them with [`review`](#review); `check` and `install` refuse pending entries until then.
 
 ## remove
 
@@ -96,7 +96,7 @@ cargo project-tools update -i cargo-nextest
 | `--fix-advisories` | After the update, before the build review, move each dependency with advisories to the lowest semver-compatible version that fixes them all; not with `-i` |
 | `--auto-approve` | Record new or changed build-time code in [`build-review.toml`](build-review.md) |
 
-Runs `cargo update` against the tool's lock. Then it audits the result, as `add` does, and with `--fix-advisories` moves what it can to semver-compatible fixes. The lock is only saved if cargo resolves it, and if every build script, proc macro and cargo config it builds is [recorded](build-review.md).
+Runs `cargo update` against the tool's lock. Then it audits the result, as `add` does, and with `--fix-advisories` moves what it can to semver-compatible fixes. The lock is only saved if cargo resolves it. Build-time code without a decision gets a pending entry, as for `add`, and `update` fails saying how many pieces are waiting; decide them with [`review`](#review).
 
 With `--latest` or `--version`, the tool moves first. It starts from the new release's lock, then reapplies every dependency you had bumped past it, as long as cargo still resolves. If the new release ships no lock, it starts from yours instead: cargo keeps every pinned version that still fits and only resolves what the new version needs. Dependencies you name are updated after that. The new version (and commit, for git) is written to `project-tools.toml`.
 
@@ -178,16 +178,18 @@ When build-time code isn't recorded, the error names [`review`](#review).
 cargo project-tools review
 cargo project-tools review cargo-nextest --auto-approve
 cargo project-tools review cargo-nextest --approve zstd-sys@2.1.2+zstd.1.5.7=9e41… --strip ring@0.17.8
+cargo project-tools review cargo-nextest --from /tmp/other-branch-build-review.toml
 ```
 
-Runs each selected tool's [build review](build-review.md) as `install` would, then stops before building. In a terminal it opens the [review screen](build-review.md#reviewing-on-the-terminal); with `--auto-approve` it records everything new or changed at once; with `--approve`, `--strip` or `--override` it records just the pieces named, and fails listing the rest; elsewhere it fails listing what's pending, as `check` does. A tool that is up to date (its install stamp matches, binaries and all) has nothing to review. It doesn't check targets or audit; `check` and `install` do. Afterwards, commit `build-review.toml` (and `overrides/`).
+Runs each selected tool's [build review](build-review.md) as `install` would, then stops before building. In a terminal it opens the [review screen](build-review.md#reviewing-on-the-terminal); with `--auto-approve` it records everything new, changed or pending at once; with `--approve`, `--strip`, `--override` or `--from` it records just those pieces; elsewhere it lists what's waiting. What's left gets a `pending` entry, and the command fails listing it. A tool that is up to date (its install stamp matches, binaries and all) has nothing to review. It doesn't check targets or audit; `check` and `install` do. Afterwards, commit `build-review.toml` (and `overrides/`).
 
 | Option | Meaning |
 | --- | --- |
 | `--auto-approve` | Record new or changed build-time code in [`build-review.toml`](build-review.md) |
-| `--approve <spec>` | Record the pending build-time code of `package@version`, or a cargo config by its path, as `approve`. Add `=<hash>` (the `sha256`, or `checksum` for a whole crate) to make sure it's the code you read: a different hash fails before anything is written. Needs one tool; repeatable |
+| `--approve <spec>` | Record the pending build-time code of `package@version`, or a cargo config by its path, as `approve`. Add `=<hash>` (the `sha256`, or `checksum` for a whole crate) to make sure it's the code you read: a different hash fails before anything is written. Each `review-pending` record has a ready `spec`. Needs one tool; repeatable |
 | `--strip <spec>` | Record the pending build script (or cargo config) as `strip`, as for `--approve` |
 | `--override <spec>` | Record the pending build script (or cargo config) as `override`, with the file already at `overrides/<package>/<path>` (`overrides/cargo-config/<path>`) in the tool's crate directory, as for `--approve` |
+| `--from <file>` | Carry over the decisions in another `build-review.toml` (another branch's, say) for pieces with exactly the same kind, package, path, hash and crate. Overrides and pieces two files decide differently aren't carried over. Repeatable |
 | `--diff` | Show how each changed piece differs from the version its entry was recorded for, as a unified diff of the files its hash covers, and record nothing |
 | `--offline` | Vendor without the network |
 | `--config <value>` | Extra cargo `--config` values, as for `install` |
@@ -298,7 +300,7 @@ With `--message-format json`, stdout holds only JSON records, one per line. All 
 
 | `kind` | When | Fields |
 | --- | --- | --- |
-| `review-pending` | Build-time code isn't recorded in [`build-review.toml`](build-review.md) | `tool`, `file`, `line`, `item`, `entry` |
+| `review-pending` | Build-time code has no decision in [`build-review.toml`](build-review.md): none recorded, or `pending` | `tool`, `file`, `line`, `item`, `spec`, `entry` |
 | `review-unused` | An entry in `build-review.toml` matches nothing the tool builds | `tool`, `file`, `line`, `type`, `package`, `path` |
 | `target-missing` | This machine or `--target` isn't in the tool's [`targets`](configuration.md#targets) | `tool`, `file`, `line`, `targets` |
 | `sandbox-missing` | `[build].sandbox = "auto"` found no working [sandbox](configuration.md#sandbox), so the build runs without one | `message` |
@@ -325,7 +327,8 @@ Other fields:
   - `location` is the file or directory to read;
   - `previous` is the entry it replaces: `action`, `sha256` or `checksum`, the old crate's `checksum` or `commit`, and `changed`, the keys whose values changed. A build script with only `checksum` or `commit` in `changed` is the same script in a different crate. When the version the entry was recorded for could be fetched, `version` is that version and `location` its copy of the build script or crate, to compare with;
   - `known` (`tool`, `action`) is a decision another tool records for it.
-- `entry` is the TOML to put in `file`, with the action it would get.
+- `spec` is what `review --approve`, `--strip` and `--override` take for the piece: `package@version=hash`, or `path=hash` for cargo config.
+- `entry` is the TOML for `file`, with the action it would get, for deciding by hand.
 - In an `advisory`:
   - `package_version` is the package's version (not `version`, which is the schema's);
   - `type` is `vulnerability`, `unmaintained`, `unsound`, `notice`, `yanked` or `git-source`;

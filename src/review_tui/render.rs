@@ -90,6 +90,7 @@ impl App {
                             Action::Approve => "approved",
                             Action::Strip => "stripped",
                             Action::Override => "overridden",
+                            Action::Pending => "pending",
                         };
                         spans.push(Span::styled(
                             format!("  {done} in {}", shown(&k.tool)),

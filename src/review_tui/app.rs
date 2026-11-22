@@ -214,12 +214,19 @@ impl App {
         let nodes = tree::build(&items)?;
         let mut app = App {
             tool: tool.to_string(),
-            previous: pending.iter().map(|(_, p)| p.map(|e| e.action)).collect(),
+            // A pending entry is a placeholder, not an earlier decision.
+            previous: pending
+                .iter()
+                .map(|(_, p)| p.map(|e| e.action).filter(|a| *a != Action::Pending))
+                .collect(),
             // A changed piece starts on its earlier strip or override, but not on approve:
             // approving new content takes a look at it.
             radio: pending
                 .iter()
-                .map(|(_, p)| p.map(|e| e.action).filter(|a| *a != Action::Approve))
+                .map(|(_, p)| {
+                    p.map(|e| e.action)
+                        .filter(|a| !matches!(a, Action::Approve | Action::Pending))
+                })
                 .collect(),
             files: pending
                 .iter()
@@ -690,7 +697,7 @@ impl App {
                 Some(Action::Approve) => c[0] += 1,
                 Some(Action::Override) => c[1] += 1,
                 Some(Action::Strip) => c[2] += 1,
-                None => c[3] += 1,
+                Some(Action::Pending) | None => c[3] += 1,
             }
         }
         c
@@ -698,7 +705,7 @@ impl App {
 
     pub(super) fn glyph(&self, i: usize) -> &'static str {
         match (self.radio[i], &self.files[i]) {
-            (None, _) => "?",
+            (None | Some(Action::Pending), _) => "?",
             (Some(Action::Approve), _) => "✓",
             (Some(Action::Strip), _) => "⊘",
             (Some(Action::Override), Some(_)) => "✎",

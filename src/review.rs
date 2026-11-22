@@ -43,6 +43,9 @@ pub enum Action {
     Override,
     /// Remove it.
     Strip,
+    /// Not decided yet: a placeholder `add`, `update` and `review` write for new code, which
+    /// never counts as a decision.
+    Pending,
 }
 
 impl Action {
@@ -51,6 +54,7 @@ impl Action {
             Action::Approve => "approve",
             Action::Override => "override",
             Action::Strip => "strip",
+            Action::Pending => "pending",
         }
     }
 }
@@ -212,6 +216,7 @@ struct RawFile {
 pub fn recorded(path: &Path) -> Result<BTreeSet<(String, String)>> {
     Ok(load(path)?
         .into_iter()
+        .filter(|e| e.action != Action::Pending)
         .map(|e| (e.kind.table().to_string(), e.package))
         .collect())
 }
@@ -281,7 +286,7 @@ fn entry(kind: Kind, r: RawEntry) -> Result<Entry> {
             need(r.sha256, "sha256")?,
         ),
     };
-    if kind.whole_crate() && r.action != Action::Approve {
+    if kind.whole_crate() && !matches!(r.action, Action::Approve | Action::Pending) {
         bail!("[[{kind}]] `{package}` can only be approved");
     }
     match (r.action, &r.file) {
@@ -886,10 +891,15 @@ impl<'a> Decision<'a> {
         Decision {
             item,
             previous,
-            action: previous.map_or(Action::Approve, |p| p.action),
-            file: previous.and_then(|p| p.file.clone()),
+            action: decided_before(previous).map_or(Action::Approve, |p| p.action),
+            file: decided_before(previous).and_then(|p| p.file.clone()),
         }
     }
+}
+
+/// The entry a pending piece replaces, when it holds a decision rather than a placeholder.
+fn decided_before(previous: Option<&Entry>) -> Option<&Entry> {
+    previous.filter(|p| p.action != Action::Pending)
 }
 
 /// A decision recorded for the same piece (kind, package, path and hash) in another tool's
@@ -940,28 +950,58 @@ fn known_elsewhere(crates_dir: &Path, name: &str, tools: &[String]) -> KnownMap 
                 continue;
             }
         };
-        for e in entries {
-            let key = (e.kind, e.package, e.path, e.hash, e.pin);
-            match known.get(&key) {
-                Some(k) if k.action != e.action => {
-                    disputed.insert(key);
-                }
-                Some(_) => {}
-                None => {
-                    known.insert(
-                        key,
-                        Known {
-                            tool: tool.clone(),
-                            action: e.action,
-                            file: e.file.map(|f| dir.join(f)),
-                        },
-                    );
-                }
-            }
-        }
+        add_known(&mut known, &mut disputed, tool, &dir, entries);
     }
     known.retain(|k, _| !disputed.contains(k));
     known
+}
+
+/// The decisions in the review files at `paths` (`review --from`), as `known_elsewhere`
+/// keys them. Unlike other tools' files, these were named, so one that can't be read fails.
+pub fn known_from(paths: &[PathBuf]) -> Result<KnownMap> {
+    let mut known = KnownMap::new();
+    let mut disputed = BTreeSet::new();
+    for path in paths {
+        let entries = load(path)?;
+        if !path.is_file() {
+            bail!("{} doesn't exist", path.display());
+        }
+        let dir = path.parent().unwrap_or(Path::new(""));
+        let source = path.display().to_string();
+        add_known(&mut known, &mut disputed, &source, dir, entries);
+    }
+    known.retain(|k, _| !disputed.contains(k));
+    Ok(known)
+}
+
+/// Add the decisions in `entries`, from the review file in `dir`, to `known`. A piece with
+/// two different decisions goes in `disputed`; a pending entry is no decision.
+fn add_known(
+    known: &mut KnownMap,
+    disputed: &mut BTreeSet<(Kind, String, String, String, Pin)>,
+    source: &str,
+    dir: &Path,
+    entries: Vec<Entry>,
+) {
+    for e in entries.into_iter().filter(|e| e.action != Action::Pending) {
+        let key = (e.kind, e.package, e.path, e.hash, e.pin);
+        match known.get(&key) {
+            Some(k) if k.action != e.action => {
+                disputed.insert(key);
+            }
+            Some(_) => {}
+            None => {
+                known.insert(
+                    key,
+                    Known {
+                        tool: source.to_string(),
+                        action: e.action,
+                        file: e.file.map(|f| dir.join(f)),
+                    },
+                );
+            }
+        }
+    }
 }
 
 /// The tools in project-tools.toml, whose review decisions may be reused; none without one.
@@ -978,8 +1018,8 @@ fn configured_tools(project: &Project) -> Result<Vec<String>> {
 
 /// How `check` treats pending items.
 pub enum Mode<'a> {
-    /// Fail listing them.
-    Report,
+    /// Fail listing them; with `record`, after writing a pending entry for each new one.
+    Report { record: bool },
     /// Fail listing them, pointing at the `review` command (`check`).
     Check,
     /// Record them all (`--auto-approve`).
@@ -990,6 +1030,8 @@ pub enum Mode<'a> {
     /// listing the rest.
     Picked {
         picks: &'a [Pick],
+        /// Decisions to carry over from other review files (`--from`).
+        from: &'a KnownMap,
         crate_dir: &'a Path,
     },
 }
@@ -997,20 +1039,26 @@ pub enum Mode<'a> {
 /// How pending build-time code gets decided outside the review screen.
 #[derive(Debug, Clone, Copy)]
 pub enum Approval<'a> {
-    /// On the review screen in a terminal, else not at all.
-    Ask,
+    /// On the review screen in a terminal, else not at all. With `record`, new pieces get a
+    /// pending entry (`add`, `update`, `review`; not `install`).
+    Ask { record: bool },
     /// All of it (`--auto-approve`).
     All,
-    /// What the command line names (`review --approve` and the like).
-    Picked(&'a [Pick]),
+    /// What the command line names (`review --approve`, `--from` and the like).
+    Picked {
+        picks: &'a [Pick],
+        from: &'a KnownMap,
+    },
 }
 
 impl<'a> Approval<'a> {
-    pub fn new(all: bool, picks: &'a [Pick]) -> Approval<'a> {
-        match (all, picks) {
-            (true, _) => Approval::All,
-            (false, []) => Approval::Ask,
-            (false, picks) => Approval::Picked(picks),
+    pub fn new(all: bool, picks: &'a [Pick], from: &'a KnownMap, record: bool) -> Approval<'a> {
+        if all {
+            Approval::All
+        } else if picks.is_empty() && from.is_empty() {
+            Approval::Ask { record }
+        } else {
+            Approval::Picked { picks, from }
         }
     }
 }
@@ -1072,14 +1120,17 @@ pub fn check(
     root: &Path,
 ) -> Result<Vec<Decided>> {
     let entries = load(path)?;
+    // A pending entry is a placeholder: its piece is pending, and the entry is replaced when
+    // it's decided.
+    let decides = |i: &Item, e: &Entry| e.action != Action::Pending && i.matches(e);
     let stale: Vec<&Entry> = entries
         .iter()
-        .filter(|e| !items.iter().any(|i| i.matches(e)))
+        .filter(|e| !items.iter().any(|i| decides(i, e)))
         .collect();
     let mut decided = Vec::new();
     let mut pending: Vec<Pending> = Vec::new();
     for item in items {
-        match entries.iter().find(|e| item.matches(e)) {
+        match entries.iter().find(|e| decides(&item, e)) {
             Some(e) => decided.push(Decided {
                 item,
                 action: e.action,
@@ -1096,8 +1147,12 @@ pub fn check(
             let decisions = pending.into_iter().map(Decision::keep_or_approve).collect();
             decided.extend(record(path, decisions, &stale)?);
         }
-        Mode::Picked { picks, crate_dir } => {
-            let choices = picked(&pending, picks, crate_dir)?;
+        Mode::Picked {
+            picks,
+            from,
+            crate_dir,
+        } => {
+            let choices = picked(&pending, picks, from, crate_dir)?;
             // Only what's decided is compared again before it's recorded.
             let before = pending
                 .iter()
@@ -1125,17 +1180,11 @@ pub fn check(
                     path, pending, choices, &before, &stale, known, root,
                 )?),
                 // Cancelled.
-                None => report(path, &pending, &stale, known, root, false)?,
+                None => report(path, &pending, &stale, known, root, true)?,
             }
         }
-        _ => report(
-            path,
-            &pending,
-            &stale,
-            known,
-            root,
-            matches!(mode, Mode::Check),
-        )?,
+        Mode::Report { record } => report(path, &pending, &stale, known, root, record)?,
+        _ => report(path, &pending, &stale, known, root, false)?,
     }
     Ok(decided)
 }
@@ -1146,12 +1195,45 @@ pub fn check(
 fn picked(
     pending: &[Pending],
     picks: &[Pick],
+    from: &KnownMap,
     crate_dir: &Path,
 ) -> Result<Vec<Option<tui::Choice>>> {
     let mut choices: Vec<Option<tui::Choice>> = pending.iter().map(|_| None).collect();
+    // Decisions recorded elsewhere for exactly this code. An override's file is someone
+    // else's code, so it isn't copied: that piece stays pending.
+    for ((item, _), choice) in pending.iter().zip(choices.iter_mut()) {
+        let Some(k) = known_for(from, item) else {
+            continue;
+        };
+        match k.action {
+            Action::Approve | Action::Strip => {
+                say!(
+                    "  from {}: {} {}",
+                    shown_line(&k.tool),
+                    k.action.as_str(),
+                    shown_line(&item.describe())
+                );
+                *choice = Some(tui::Choice {
+                    action: k.action,
+                    file: None,
+                });
+            }
+            Action::Override => say!(
+                "  from {}: {} is overridden there with {}; read it, then copy it and use \
+                 --override",
+                shown_line(&k.tool),
+                shown_line(&item.describe()),
+                k.file
+                    .as_ref()
+                    .map_or_else(String::new, |f| shown_line(&f.display().to_string()))
+            ),
+            Action::Pending => {}
+        }
+    }
+    let carried: Vec<bool> = choices.iter().map(Option::is_some).collect();
     for pick in picks {
         let mut found = false;
-        for ((item, _), choice) in pending.iter().zip(choices.iter_mut()) {
+        for (((item, _), choice), carried) in pending.iter().zip(choices.iter_mut()).zip(&carried) {
             if !pick.selects(item) {
                 continue;
             }
@@ -1166,7 +1248,8 @@ fn picked(
                     shown_line(hash)
                 );
             }
-            if choice.is_some() {
+            // A pick wins over a decision carried over with `--from`.
+            if choice.is_some() && !carried {
                 bail!("{} is picked twice", shown_line(&item.describe()));
             }
             let file = match pick.action {
@@ -1234,7 +1317,7 @@ fn settle(
         .filter(|e| !keep.contains(e))
         .collect();
     let decided = record(path, decisions, &unused)?;
-    report(path, &rest, &[], known, root, false)?;
+    report(path, &rest, &[], known, root, true)?;
     Ok(decided)
 }
 
@@ -1262,17 +1345,38 @@ fn unchanged(item: &Item, before: &str) -> Result<()> {
     Ok(())
 }
 
+/// Build-time code waiting for a decision. `add` and `update` still write the tool when
+/// this is all that stopped them.
+#[derive(Debug)]
+pub struct PendingReview(String);
+
+impl fmt::Display for PendingReview {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for PendingReview {}
+
+/// What `review --approve` and the like take for an item: `package@version=hash`, or
+/// `path=hash` for cargo config.
+fn spec(item: &Item) -> String {
+    match item.kind {
+        Kind::CargoConfig => format!("{}={}", item.path, item.hash),
+        _ => format!("{}@{}={}", item.package, item.version, item.hash),
+    }
+}
+
 /// Warn about unused entries, and fail listing what's pending. All of it goes to stderr, so
-/// the list comes before the error on the same stream.
-/// `review` says to settle them with the `review` command rather than by running the same
-/// command again.
+/// the list comes before the error on the same stream. With `record_pending`, new pieces get
+/// a `pending` entry in the file first.
 fn report(
     path: &Path,
     pending: &[Pending],
     stale: &[&Entry],
     known: &KnownMap,
     root: &Path,
-    review: bool,
+    record_pending: bool,
 ) -> Result<()> {
     let rel = |p: &Path| shown(&p.strip_prefix(root).unwrap_or(p).display().to_string());
     // Records carry the raw text, which JSON escapes; humans get it `shown`.
@@ -1305,9 +1409,38 @@ fn report(
     if pending.is_empty() {
         return Ok(());
     }
+    // New pieces, and placeholders whose piece changed, get a current placeholder. A changed
+    // decision stays as it is: it's what the piece was.
+    let mut placeholders = Vec::new();
+    if record_pending {
+        let decisions: Vec<Decision> = pending
+            .iter()
+            .filter(|(item, prev)| {
+                prev.is_none_or(|p| p.action == Action::Pending && !item.matches(p))
+            })
+            .map(|(item, prev)| Decision {
+                item: item.clone(),
+                previous: *prev,
+                action: Action::Pending,
+                file: None,
+            })
+            .collect();
+        if !decisions.is_empty() {
+            record(path, decisions, &[])?;
+        }
+        placeholders = load(path)?
+            .into_iter()
+            .filter(|e| e.action == Action::Pending)
+            .collect();
+    }
+    let placeholder = |item: &Item| {
+        placeholders
+            .iter()
+            .find(|e| item.same_place(e) && item.matches(e))
+    };
     eprintln!("  build-time code to review:");
     for (item, previous) in pending {
-        let note = match (known_for(known, item), previous) {
+        let note = match (known_for(known, item), decided_before(*previous)) {
             (Some(k), _) => format!(" (reviewed for {}: {})", shown(&k.tool), k.action.as_str()),
             (None, Some(p)) if p.hash == item.hash && p.kind == Kind::BuildScript => format!(
                 " (crate changed, script unchanged; was {})",
@@ -1331,9 +1464,10 @@ fn report(
             );
         }
     }
+    let tool_shown = shown(&tool);
     eprintln!(
-        "  to decide piece by piece, put these in {} with the action you choose:",
-        rel(path)
+        "  to record a decision: cargo project-tools review {tool_shown} --approve, --strip or \
+         --override <spec>, with these specs:"
     );
     for (item, previous) in pending {
         // Never an absolute path in a record: what's built lives under the project.
@@ -1345,11 +1479,14 @@ fn report(
         }
         let found = known_for(known, item);
         let text = paste_ready(item, *previous, found, root);
-        eprint!("{}", shown(&text));
+        let spec = spec(item);
+        eprintln!("    {}", shown_line(&spec));
         output::emit(Record::ReviewPending {
             tool: tool.clone(),
             file: raw(path),
-            line: previous.and_then(|p| p.line),
+            line: placeholder(item)
+                .and_then(|e| e.line)
+                .or_else(|| previous.and_then(|p| p.line)),
             item: Box::new(review_item(
                 item,
                 *previous,
@@ -1357,6 +1494,7 @@ fn report(
                 raw(&item.location),
                 item.old.as_ref().map(|o| raw(&o.location(item))),
             )),
+            spec,
             entry: text
                 .lines()
                 .map(|l| format!("{}\n", l.trim_start()))
@@ -1364,33 +1502,17 @@ fn report(
         });
     }
     let what = match pending.len() {
-        1 => "1 piece of build-time code isn't".to_string(),
-        n => format!("{n} pieces of build-time code aren't"),
+        1 => "1 piece of build-time code is".to_string(),
+        n => format!("{n} pieces of build-time code are"),
     };
-    if review {
-        let tool = shown(&tool);
-        bail!(
-            "{what} recorded in {}; run `cargo project-tools review {tool}` where you have a \
-             terminal for the review screen, or with --approve, --strip or --override \
-             <package@version> for each decision, then commit {}",
-            rel(path),
-            rel(path)
-        )
-    }
-    if screen::interactive() {
-        bail!(
-            "{what} recorded in {}; review it, then rerun with --auto-approve",
-            rel(path)
-        )
-    }
-    bail!(
-        "{what} recorded in {}; run this command where you have a terminal for the review \
-         screen, or record each decision with `cargo project-tools review {} --approve, \
-         --strip or --override <package@version>`, then commit {}",
+    Err(PendingReview(format!(
+        "{what} waiting for a decision in {}; record each decision with `cargo project-tools review {tool_shown} \
+         --approve, --strip or --override <spec>`, or run `cargo project-tools review \
+         {tool_shown}` where you have a terminal for the review screen, then commit {}",
         rel(path),
-        shown(&tool),
         rel(path)
-    )
+    ))
+    .into())
 }
 
 /// A pending item as a `review-pending` record describes it.
@@ -1421,7 +1543,7 @@ fn review_item(
         checksum,
         commit,
         location,
-        previous: previous.map(|p| {
+        previous: decided_before(previous).map(|p| {
             let (sha256, mut checksum) = hash(p.kind, &p.hash);
             let mut commit = None;
             match &p.pin {
@@ -1507,8 +1629,8 @@ fn paste_ready(
             }
         }
         None => (
-            previous.map_or(Action::Approve, |p| p.action),
-            previous.and_then(|p| p.file.clone()),
+            decided_before(previous).map_or(Action::Approve, |p| p.action),
+            decided_before(previous).and_then(|p| p.file.clone()),
         ),
     };
     add_entry(&mut doc, item, action, file.as_deref());
@@ -1672,6 +1794,8 @@ pub fn apply(decided: &[Decided], crate_dir: &Path) -> Result<String> {
         let item = &d.item;
         match d.action {
             Action::Approve => continue,
+            // `check` never decides a placeholder; refuse rather than build it.
+            Action::Pending => bail!("{} is still pending", item.describe()),
             Action::Override => {
                 let rel = d.file.as_deref().context("override without a file")?;
                 let src = crate_dir.join(rel);
@@ -1767,18 +1891,19 @@ pub fn review(
     let crate_dir = project.crate_dir(name);
     let mode = match approval {
         Approval::All => Mode::ApproveAll,
-        Approval::Picked(picks) => Mode::Picked {
+        Approval::Picked { picks, from } => Mode::Picked {
             picks,
+            from,
             crate_dir: &crate_dir,
         },
-        Approval::Ask if screen::interactive() => Mode::Interactive {
+        Approval::Ask { .. } if screen::interactive() => Mode::Interactive {
             tool: name,
             crate_dir: &crate_dir,
         },
-        Approval::Ask => Mode::Report,
+        Approval::Ask { record } => Mode::Report { record },
     };
     // Without a terminal, the list and records point at the old version to compare with.
-    if matches!(mode, Mode::Report) {
+    if matches!(mode, Mode::Report { .. }) {
         previous::fetch(project, name, checkout, &mut items, offline)?;
     }
     let known = known_elsewhere(
