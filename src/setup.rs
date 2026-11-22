@@ -314,6 +314,12 @@ impl Setup {
         Ok(self.run(cmd)?.lines().map(str::to_string).collect())
     }
 
+    /// The command `audit` suggests for the open advisories of `name@version`, given the
+    /// patched ranges of each.
+    pub fn fix(&mut self, name: &str, version: &Version, patched: &[Vec<VersionReq>]) -> String {
+        crate::audit::fix_for(&self.name, name, version, patched, &mut self.auditor.index)
+    }
+
     /// Versions `name` could move to from `current`, newest first, yanked ones left out. The
     /// suggested one is the lowest that every open advisory with a patched range calls fixed;
     /// there's none when a vulnerability has no fix at all.

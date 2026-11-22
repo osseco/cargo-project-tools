@@ -72,7 +72,7 @@ cargo project-tools check --message-format json
 cargo project-tools install --message-format json
 ```
 
-`check` builds nothing, and fails on anything still missing: a `target-missing` this machine isn't listed for, a `review-pending`, or an `advisory` with severity `error`. For an advisory, run the command in its `fix` (it's an `update`), or ask the person whether to ignore it in the tool's `audit-ignore.toml`, with a reason and an `expires` date. Then run `install`.
+`check` builds nothing, and fails on anything still missing: a `target-missing` this machine isn't listed for, a `review-pending`, or an `advisory` with severity `error`. For an advisory, run the command in its `fix` (it's an `update`), or ask the person whether to ignore it in the tool's `audit-ignore.toml`, with a reason and an `expires` date. An advisory that can't affect the tool's `targets` (read its description: for example, Windows only, while no Windows target is listed) is a reason to propose an ignore, saying which targets it was checked against. Advisories aren't filtered by platform for you. Then run `install`.
 
 ## Updating later
 

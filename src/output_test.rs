@@ -121,3 +121,14 @@ fn characters_a_terminal_acts_on_or_hides_are_escaped() {
     let back: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(back["message"], message);
 }
+
+#[test]
+fn sfw_missing_is_a_record_of_its_own() {
+    let record = Record::SfwMissing {
+        message: "sfw not found on PATH; downloads are not filtered".into(),
+    };
+    assert_eq!(
+        line(&record),
+        r#"{"version":1,"kind":"sfw-missing","message":"sfw not found on PATH; downloads are not filtered"}"#
+    );
+}

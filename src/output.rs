@@ -184,6 +184,17 @@ pub enum Record {
     },
     /// What `inspect` found.
     Inspect(crate::inspect::Inspection),
+    /// A dependency named without a version that matches several locked versions.
+    AmbiguousDependency {
+        tool: String,
+        package: String,
+        /// The `name@version` specs to choose from.
+        candidates: Vec<String>,
+    },
+    /// `settings.sfw = "auto"` found no sfw, so downloads aren't filtered.
+    SfwMissing {
+        message: String,
+    },
     Error {
         message: String,
     },

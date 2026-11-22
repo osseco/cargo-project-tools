@@ -757,6 +757,22 @@ fn update(project: &Project, config: &Config, args: UpdateArgs) -> Result<()> {
         if args.recursive {
             cargo_args.push("--recursive".into());
         }
+        let ambiguous = lock::ambiguous(&lock::load(&checkout.lock_path())?, &args.deps);
+        for (dep, candidates) in &ambiguous {
+            say!("  {dep} is locked as {}", candidates.join(", "));
+            output::emit(output::Record::AmbiguousDependency {
+                tool: name.to_string(),
+                package: dep.clone(),
+                candidates: candidates.clone(),
+            });
+        }
+        if !ambiguous.is_empty() {
+            let names: Vec<&str> = ambiguous.iter().map(|(d, _)| d.as_str()).collect();
+            bail!(
+                "{} matches more than one locked version; name it as name@version",
+                names.join(", ")
+            );
+        }
         // Only a successful resolve reaches the copy below, so a failure leaves our lock as is.
         lock::cargo_update(&checkout.manifest_path(), &cargo_args)?;
     }

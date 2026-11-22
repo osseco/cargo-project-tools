@@ -3,6 +3,7 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 
 use crate::config::SfwMode;
+use crate::output::{self, Record};
 use crate::process;
 
 /// Set in the re-executed process so it doesn't wrap itself again.
@@ -36,7 +37,11 @@ pub fn reexec(mode: SfwMode) -> Result<Option<i32>> {
         if mode == SfwMode::Require {
             bail!("sfw is required (settings.sfw = \"require\") but not found on PATH");
         }
-        eprintln!("note: sfw not found on PATH; downloads are not filtered");
+        let message = "sfw not found on PATH; downloads are not filtered";
+        eprintln!("note: {message}");
+        output::emit(Record::SfwMissing {
+            message: message.to_string(),
+        });
         return Ok(None);
     };
     let setting = match mode {

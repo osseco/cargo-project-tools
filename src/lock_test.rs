@@ -220,3 +220,19 @@ fn semver_compat() {
     assert!(!compatible(&v("0.1.0"), &v("0.2.0")));
     assert!(compatible(&v("0.2.1"), &v("0.2.9")));
 }
+
+#[test]
+fn a_bare_name_with_two_locked_versions_is_ambiguous() {
+    let lock = parse(&format!(
+        "{LOCK_A}\n[[package]]\nname = \"dep\"\nversion = \"2.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+    ))
+    .unwrap();
+    let deps = ["dep", "gone", "dep@1.0.0", "missing"].map(String::from);
+    assert_eq!(
+        ambiguous(&lock, &deps),
+        [(
+            "dep".to_string(),
+            vec!["dep@1.0.0".to_string(), "dep@2.0.0".to_string()]
+        )]
+    );
+}

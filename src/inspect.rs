@@ -8,6 +8,7 @@ use anyhow::Result;
 use semver::Version;
 use serde::Serialize;
 
+use crate::audit;
 use crate::output::say;
 use crate::sanitize::shown_line;
 use crate::setup::Setup;
@@ -50,6 +51,10 @@ pub struct Finding {
     pub patched: Vec<String>,
     /// In the tool's `audit-ignore.toml`.
     pub ignored: bool,
+    /// The command to run, as `audit` suggests it, for an open vulnerability or a yanked
+    /// version.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix: Option<String>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Clone)]
@@ -82,26 +87,39 @@ struct State {
 }
 
 fn state(
-    setup: &Setup,
+    setup: &mut Setup,
     code: &BTreeSet<(String, String, Version)>,
     recorded: &BTreeSet<(String, String)>,
 ) -> State {
     let packages: BTreeSet<(String, Version)> = setup.built.clone();
-    let findings = setup
-        .findings
-        .iter()
-        .flat_map(|((name, version), list)| {
-            list.iter().map(move |f| Finding {
+    let mut findings = Vec::new();
+    for ((name, version), list) in setup.findings.clone() {
+        // One command for every open vulnerability of a package, as `audit` gives it.
+        let open: Vec<_> = list
+            .iter()
+            .filter(|f| f.is_vulnerability() && !f.ignored)
+            .map(|f| f.patched.clone())
+            .collect();
+        let vuln_fix = (!open.is_empty()).then(|| setup.fix(&name, &version, &open));
+        for f in list {
+            let fix = match f.kind.as_str() {
+                _ if f.ignored => None,
+                "vulnerability" => vuln_fix.clone(),
+                "yanked" => Some(audit::yanked_fix(&setup.name, &name, &version)),
+                _ => None,
+            };
+            findings.push(Finding {
                 package: name.clone(),
                 version: version.to_string(),
-                kind: f.kind.clone(),
-                id: f.id.clone(),
-                title: f.title.clone(),
+                kind: f.kind,
+                id: f.id,
+                title: f.title,
                 patched: f.patched.iter().map(ToString::to_string).collect(),
                 ignored: f.ignored,
-            })
-        })
-        .collect();
+                fix,
+            });
+        }
+    }
     let build_time = code
         .iter()
         .filter(|(_, name, version)| packages.contains(&(name.clone(), version.clone())))
@@ -308,6 +326,9 @@ pub fn print(i: &Inspection) {
         safe!("advisories:");
         for f in &i.findings {
             safe!("  {}", finding_line(f));
+            if let Some(fix) = &f.fix {
+                safe!("    fix: {fix}");
+            }
         }
     }
     if !i.build_time.is_empty() {
