@@ -41,6 +41,8 @@ cargo project-tools add <crate> --no-default-features -F <a>,<b> --message-forma
 cargo project-tools update <tool> --no-default-features -F <a>,<b> --message-format json
 ```
 
+Add `--fix-advisories` when `inspect` showed vulnerabilities: it moves each dependency to the lowest semver-compatible version that fixes its advisories before the build review, so the person reviews the lock that's kept, once. Both commands audit first and write an `advisory` record (with its `fix`) for what's left.
+
 Without a terminal, both stop before writing anything while build-time code isn't recorded. They write one `review-pending` record per piece, then `error` and `summary`.
 
 ## 3. Prepare the build review

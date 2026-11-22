@@ -17,6 +17,7 @@ use crate::graph;
 use crate::install;
 use crate::lock;
 use crate::process;
+use crate::sanitize::shown_line;
 use crate::source::Checkout;
 use crate::source::registry;
 
@@ -324,27 +325,11 @@ impl Setup {
     /// suggested one is the lowest that every open advisory with a patched range calls fixed;
     /// there's none when a vulnerability has no fix at all.
     pub fn versions(&mut self, name: &str, current: &Version) -> Vec<Choice> {
-        let open: Vec<&Finding> = self
-            .findings
-            .get(&(name.to_string(), current.clone()))
-            .into_iter()
-            .flatten()
-            .filter(|f| !f.ignored)
-            .collect();
-        let unfixable = open
-            .iter()
-            .any(|f| f.is_vulnerability() && f.patched.is_empty());
-        let patched: Vec<Vec<VersionReq>> = open
-            .iter()
-            .filter(|f| !f.patched.is_empty())
-            .map(|f| f.patched.clone())
-            .collect();
+        let patched = self.open_patched(name, current);
         let entries = self.auditor.index.get(name);
-        let suggested = if patched.is_empty() || unfixable {
-            None
-        } else {
-            registry::lowest_patched(entries, current, &patched).map(|e| e.vers.clone())
-        };
+        let suggested = patched
+            .and_then(|p| registry::lowest_patched(entries, current, &p))
+            .map(|e| e.vers.clone());
         let mut out: Vec<Choice> = entries
             .iter()
             .filter(|e| !e.yanked || e.vers == *current)
@@ -360,6 +345,107 @@ impl Setup {
         out.sort_by(|a, b| b.version.cmp(&a.version));
         out.dedup_by(|a, b| a.version == b.version);
         out
+    }
+
+    /// The patched ranges of `name@current`'s open advisories; none when there's nothing to
+    /// fix, or a vulnerability has no fix at all.
+    fn open_patched(&self, name: &str, current: &Version) -> Option<Vec<Vec<VersionReq>>> {
+        let open: Vec<&Finding> = self
+            .findings
+            .get(&(name.to_string(), current.clone()))
+            .into_iter()
+            .flatten()
+            .filter(|f| !f.ignored)
+            .collect();
+        let unfixable = open
+            .iter()
+            .any(|f| f.is_vulnerability() && f.patched.is_empty());
+        let patched: Vec<Vec<VersionReq>> = open
+            .iter()
+            .filter(|f| !f.patched.is_empty())
+            .map(|f| f.patched.clone())
+            .collect();
+        (!patched.is_empty() && !unfixable).then_some(patched)
+    }
+
+    /// The lowest semver-compatible version that fixes every open advisory of `name@current`.
+    pub fn compatible_fix(&mut self, name: &str, current: &Version) -> Option<Version> {
+        let patched = self.open_patched(name, current)?;
+        let compatible: Vec<registry::IndexEntry> = self
+            .auditor
+            .index
+            .get(name)
+            .iter()
+            .filter(|e| lock::compatible(&e.vers, current))
+            .cloned()
+            .collect();
+        registry::lowest_patched(&compatible, current, &patched).map(|e| e.vers.clone())
+    }
+
+    /// Move each package with open advisories, the tool itself aside, to its
+    /// `compatible_fix`, until nothing more moves. Returns the moves, and the packages still
+    /// with open advisories.
+    #[allow(clippy::type_complexity)]
+    pub fn fix_advisories(
+        &mut self,
+    ) -> Result<(Vec<(String, Version, Version)>, Vec<(String, Version)>)> {
+        let mut moved = Vec::new();
+        let mut tried = BTreeSet::new();
+        loop {
+            let mut any = false;
+            for (name, version) in self.open_packages() {
+                if !tried.insert((name.clone(), version.clone())) {
+                    continue;
+                }
+                let Some(to) = self.compatible_fix(&name, &version) else {
+                    continue;
+                };
+                match self.set_version(&name, &version, &to) {
+                    Ok(()) => {
+                        moved.push((name, version, to));
+                        any = true;
+                    }
+                    Err(e) => crate::output::note(format!(
+                        "note: couldn't move {name} {version} to {to}: {}",
+                        shown_line(&format!("{e:#}"))
+                    )),
+                }
+            }
+            if !any {
+                return Ok((moved, self.open_packages()));
+            }
+        }
+    }
+
+    /// The packages, the tool aside, with an open advisory that a version could fix.
+    fn open_packages(&self) -> Vec<(String, Version)> {
+        self.findings
+            .iter()
+            .filter(|((name, _), list)| {
+                *name != self.name
+                    && list
+                        .iter()
+                        .any(|f| !f.ignored && (f.is_vulnerability() || !f.patched.is_empty()))
+            })
+            .map(|(key, _)| key.clone())
+            .collect()
+    }
+
+    /// Audit the lock as `audit` does, printing and recording what it finds.
+    pub fn report(&mut self) -> Result<audit::Outcome> {
+        let report = self.auditor.audit(
+            &self.checkout.lock_path(),
+            &self.name,
+            self.git,
+            &self.built,
+        )?;
+        Ok(audit::evaluate(
+            &self.name,
+            &report,
+            &self.ignore,
+            &self.today,
+            &mut self.auditor.index,
+        ))
     }
 
     /// What `name` was when the setup started, when `version` isn't one of those: its

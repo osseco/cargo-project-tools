@@ -555,3 +555,25 @@ fn cargo_runs_without_colour() {
         .and_then(|(_, v)| v);
     assert_eq!(colour, Some(std::ffi::OsStr::new("never")));
 }
+
+#[test]
+fn the_compatible_fix_stays_on_the_same_major() {
+    let mut f = fixture(AuditIgnore::default());
+    assert_eq!(f.setup.compatible_fix("dep", &v("1.0.0")), Some(v("1.1.0")));
+
+    // Fixed only in 2.0.0: no compatible fix.
+    let mut f = fixture_with(
+        AuditIgnore::default(),
+        &[("RUSTSEC-2024-0009", "dep", "", "\">= 2.0.0\"")],
+    );
+    assert_eq!(f.setup.compatible_fix("dep", &v("1.0.0")), None);
+}
+
+#[test]
+fn fixing_advisories_reports_what_it_couldnt_move() {
+    // The offline registry ignores `--precise` (see above), so the move fails and dep stays.
+    let mut f = fixture(AuditIgnore::default());
+    let (moved, left) = f.setup.fix_advisories().unwrap();
+    assert!(moved.is_empty());
+    assert_eq!(left, [("dep".to_string(), v("1.0.0"))]);
+}
