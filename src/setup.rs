@@ -59,6 +59,8 @@ pub struct Finding {
     pub patched: Vec<VersionReq>,
     /// In the tool's `audit-ignore.toml`.
     pub ignored: bool,
+    /// The platforms and functions the advisory is limited to, when the database says.
+    pub affected: Option<crate::output::Affected>,
 }
 
 impl Finding {
@@ -89,6 +91,8 @@ pub struct Setup {
     pub git: bool,
     /// The tool's features and what each enables.
     pub features: BTreeMap<String, Vec<String>>,
+    /// The tool's binaries and the features each needs (`required-features`).
+    pub bins: BTreeMap<String, Vec<String>>,
     /// Features turned on besides the defaults.
     pub selected: BTreeSet<String>,
     pub default_features: bool,
@@ -124,6 +128,7 @@ impl Setup {
             checkout,
             git,
             features: BTreeMap::new(),
+            bins: BTreeMap::new(),
             selected,
             default_features,
             targets,
@@ -189,6 +194,14 @@ impl Setup {
         struct Package {
             name: String,
             features: BTreeMap<String, Vec<String>>,
+            targets: Vec<Target>,
+        }
+        #[derive(Deserialize)]
+        struct Target {
+            name: String,
+            kind: Vec<String>,
+            #[serde(default, rename = "required-features")]
+            required_features: Vec<String>,
         }
         let mut cmd = self.cargo("metadata");
         cmd.args(["--format-version", "1", "--no-deps"]);
@@ -199,6 +212,12 @@ impl Setup {
             .find(|p| p.name == self.name)
             .with_context(|| format!("{} isn't in its own checkout", self.name))?;
         self.features = pkg.features;
+        self.bins = pkg
+            .targets
+            .into_iter()
+            .filter(|t| t.kind.iter().any(|k| k == "bin"))
+            .map(|t| (t.name, t.required_features))
+            .collect();
         self.selected.retain(|f| self.features.contains_key(f));
         Ok(())
     }
@@ -757,6 +776,7 @@ fn findings(
                 title: v.advisory.title.clone(),
                 patched: v.patched.clone(),
                 ignored: ignored(ignore, today, &v.advisory.id, &v.advisory.aliases),
+                affected: v.advisory.affected.clone(),
             });
     }
     for (kind, warnings) in &report.warnings {
@@ -781,6 +801,7 @@ fn findings(
                     title,
                     patched: w.patched.clone(),
                     ignored: ign,
+                    affected: w.advisory.as_ref().and_then(|a| a.affected.clone()),
                 });
         }
     }

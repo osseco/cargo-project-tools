@@ -577,3 +577,28 @@ fn fixing_advisories_reports_what_it_couldnt_move() {
     assert!(moved.is_empty());
     assert_eq!(left, [("dep".to_string(), v("1.0.0"))]);
 }
+
+#[test]
+fn findings_carry_what_the_advisory_is_limited_to() {
+    let f = fixture_with(
+        AuditIgnore::default(),
+        &[(
+            "RUSTSEC-2024-0007",
+            "dep",
+            "\n[affected]\nos = [\"windows\"]",
+            "\">= 2.0.0\"",
+        )],
+    );
+    let findings = &f.setup.findings[&("dep".to_string(), v("1.0.0"))];
+    let limited = findings
+        .iter()
+        .find(|x| x.id == "RUSTSEC-2024-0007")
+        .unwrap();
+    assert_eq!(limited.affected.as_ref().unwrap().os, ["windows"]);
+    // The base advisory names no platform.
+    let open = findings
+        .iter()
+        .find(|x| x.id == "RUSTSEC-2024-0001")
+        .unwrap();
+    assert_eq!(open.affected, None);
+}

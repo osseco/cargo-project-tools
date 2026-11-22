@@ -322,6 +322,11 @@ fn safe_relative(p: &str) -> Result<()> {
 }
 
 /// `rel` with `/` separators, as cargo writes paths in `.cargo-checksum.json`.
+/// `path` relative to `root`, with forward slashes, as records name files.
+pub(crate) fn slash_rel(path: &Path, root: &Path) -> String {
+    slash(path.strip_prefix(root).unwrap_or(path))
+}
+
 fn slash(rel: &Path) -> String {
     rel.components()
         .map(|c| c.as_os_str().to_string_lossy())

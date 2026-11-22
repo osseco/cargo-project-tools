@@ -4,8 +4,9 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use cargo_lock::Lockfile;
 
-use crate::output::say;
+use crate::output::{self, Record, say};
 use crate::process;
+use crate::project::TOOLS_DIR;
 
 pub fn load(path: &Path) -> Result<Lockfile> {
     let lock = Lockfile::load(path).with_context(|| format!("reading {}", path.display()))?;
@@ -132,13 +133,28 @@ pub fn diff(old: &Lockfile, new: &Lockfile) -> Vec<Change> {
     out
 }
 
-pub fn print_diff(changes: &[Change]) {
+/// List the changes to `tool`'s lock, and write a `lock-change` record for each.
+pub fn print_diff(tool: &str, changes: &[Change]) {
+    say!("Changes to {tool}'s lock:");
     if changes.is_empty() {
         say!("  (no changes)");
     }
+    let file = format!("{TOOLS_DIR}/crates/{tool}/Cargo.lock");
     // Package names in a lock aren't checked when it's read.
     for c in changes {
         say!("{}", crate::sanitize::shown_line(&c.to_string()));
+        let (package, from, to) = match c {
+            Change::Added(n, v) => (n, None, Some(v)),
+            Change::Removed(n, v) => (n, Some(v), None),
+            Change::Updated(n, a, b) => (n, Some(a), Some(b)),
+        };
+        output::emit(Record::LockChange {
+            tool: tool.to_string(),
+            file: file.clone(),
+            package: package.clone(),
+            from: from.map(ToString::to_string),
+            to: to.map(ToString::to_string),
+        });
     }
 }
 

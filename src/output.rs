@@ -180,6 +180,9 @@ pub enum Record {
         severity: Severity,
         #[serde(skip_serializing_if = "Option::is_none")]
         fix: Option<String>,
+        /// What the advisory limits itself to, when the database says.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        affected: Option<Affected>,
     },
     IgnoreUnused {
         tool: String,
@@ -197,6 +200,18 @@ pub enum Record {
         line: Option<usize>,
         id: String,
         expires: String,
+    },
+    /// A package `add` or `update` added, removed or moved in the tool's lock.
+    LockChange {
+        tool: String,
+        file: String,
+        package: String,
+        /// The version before; none for an added package.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        from: Option<String>,
+        /// The version after; none for a removed package.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        to: Option<String>,
     },
     /// What `inspect` found.
     Inspect(crate::inspect::Inspection),
@@ -221,6 +236,31 @@ pub enum Record {
         pending_reviews: usize,
         missing_targets: usize,
     },
+}
+
+/// The platforms and functions an advisory is limited to. An empty list means the database
+/// doesn't limit it there; that metadata is often missing, so it can't rule anything out.
+#[derive(Debug, Serialize, PartialEq, Eq, Clone, Default)]
+pub struct Affected {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub os: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub arch: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub functions: Vec<String>,
+}
+
+impl Affected {
+    /// From the database entry; none when it names nothing.
+    pub fn of(advisory: &rustsec::Advisory) -> Option<Affected> {
+        let a = advisory.affected.as_ref()?;
+        let out = Affected {
+            os: a.os.clone(),
+            arch: a.arch.clone(),
+            functions: a.functions.keys().map(ToString::to_string).collect(),
+        };
+        (out != Affected::default()).then_some(out)
+    }
 }
 
 #[derive(Debug, Serialize, PartialEq, Clone, Copy)]

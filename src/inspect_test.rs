@@ -35,7 +35,7 @@ fn fixture(default_features: bool) -> Fixture {
     let manifest = tool_with(
         &src,
         "1.0.0",
-        "[dependencies]\ndep = \"1\"\nopt = { version = \"0.1\", optional = true }\nmac = { version = \"1\", optional = true }\n\n[features]\ndefault = [\"extra\"]\nextra = [\"dep:opt\"]\nderive = [\"dep:mac\"]\n",
+        "[dependencies]\ndep = \"1\"\nopt = { version = \"0.1\", optional = true }\nmac = { version = \"1\", optional = true }\n\n[features]\ndefault = [\"extra\"]\nextra = [\"dep:opt\"]\nderive = [\"dep:mac\"]\n\n[[bin]]\nname = \"extra-bin\"\npath = \"src/main.rs\"\nrequired-features = [\"extra\"]\n",
     );
     lock::shipped_or_generated(&manifest, &src.join("Cargo.lock"), &registry.cargo_args()).unwrap();
     let db = dir.path().join("db");
@@ -90,7 +90,7 @@ fn code(build_time: &[BuildTime]) -> Vec<String> {
 fn each_feature_shows_what_it_adds() {
     let mut f = fixture(true);
     let recorded = BTreeSet::from([("build-script".to_string(), "tool".to_string())]);
-    let found = inspect(&mut f.setup, &recorded).unwrap();
+    let found = inspect(&mut f.setup, &recorded, f._dir.path()).unwrap();
 
     assert_eq!(names(&found.packages), ["dep", "opt", "tool"]);
     assert_eq!(
@@ -117,7 +117,20 @@ fn each_feature_shows_what_it_adds() {
     assert_eq!(code(&derive.build_time), ["proc-macro mac false"]);
     assert!(derive.findings.is_empty());
 
+    // The binary that needs `extra` is built now, and dropped without the defaults.
+    let bins: Vec<(&str, bool)> = found
+        .bins
+        .iter()
+        .map(|b| (b.name.as_str(), b.built))
+        .collect();
+    // (An explicit `[[bin]]` on `src/main.rs` replaces the one cargo would find there.)
+    assert_eq!(bins, [("extra-bin", true)]);
+    assert_eq!(found.bins[0].required_features, ["extra"]);
+    assert_eq!(found.source, "src");
+    assert!(derive.bins.is_empty());
+
     let no_defaults = &found.feature_changes[1];
+    assert_eq!(no_defaults.bins, ["extra-bin"]);
     assert_eq!(names(&no_defaults.packages), ["opt"]);
     assert_eq!(code(&no_defaults.build_time), ["build-script opt false"]);
     assert_eq!(no_defaults.findings[0].package, "opt");
@@ -130,7 +143,7 @@ fn each_feature_shows_what_it_adds() {
 #[test]
 fn without_defaults_turning_them_on_is_tried() {
     let mut f = fixture(false);
-    let found = inspect(&mut f.setup, &BTreeSet::new()).unwrap();
+    let found = inspect(&mut f.setup, &BTreeSet::new(), f._dir.path()).unwrap();
     assert_eq!(names(&found.packages), ["dep", "tool"]);
     let changes: Vec<(&str, bool, Vec<&str>)> = found
         .feature_changes
@@ -150,7 +163,7 @@ fn without_defaults_turning_them_on_is_tried() {
 #[test]
 fn the_record_is_tagged_inspect() {
     let mut f = fixture(true);
-    let found = inspect(&mut f.setup, &BTreeSet::new()).unwrap();
+    let found = inspect(&mut f.setup, &BTreeSet::new(), f._dir.path()).unwrap();
     let json: serde_json::Value =
         serde_json::from_str(&crate::output::line(&crate::output::Record::Inspect(found))).unwrap();
     assert_eq!(json["version"], 1);
@@ -195,7 +208,7 @@ fn a_feature_already_on_through_the_selection_is_not_tried() {
     f.setup
         .set_features(BTreeSet::from(["derive".to_string()]), false)
         .unwrap();
-    let found = inspect(&mut f.setup, &BTreeSet::new()).unwrap();
+    let found = inspect(&mut f.setup, &BTreeSet::new(), f._dir.path()).unwrap();
     let tried: Vec<&str> = found
         .feature_changes
         .iter()

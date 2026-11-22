@@ -250,7 +250,7 @@ Then it:
 - warns about ignores that no longer match anything, and about expired ones,
 - prints an `update … --precise …` command for each vulnerability that has a patched version, or `update <tool> --latest` when the tool itself is affected.
 
-Advisories aren't filtered by the operating system or architecture they name, since that metadata is often missing. When one can't affect the tool's [`targets`](configuration.md#targets), for example a Windows-only bug in a tool you build only for Linux and macOS, ignore it in `audit-ignore.toml` with that as the reason, and look at it again when you add a target.
+Advisories aren't filtered by the operating system or architecture they name, since that metadata is often missing; where it's there, the record's `affected` shows it. When one can't affect the tool's [`targets`](configuration.md#targets), for example a Windows-only bug in a tool you build only for Linux and macOS, ignore it in `audit-ignore.toml` with that as the reason, and look at it again when you add a target.
 
 It also reports advisories against cargo-project-tools itself, and fails on them unless they're accepted in [`self-audit-ignore.toml`](configuration.md#advisories-against-cargo-project-tools-itself).
 
@@ -293,7 +293,7 @@ It reports:
 
 Each feature costs one `cargo tree` run. Like `audit`, it lets cargo download the dependencies to read their manifests, and compiles nothing.
 
-In JSON, the record has `tool`, `tool_version`, `features`, `default_features`, `selected`, `targets`, `packages` (`name`, `version`), `findings` (`package`, `version`, `type`, `id`, `title`, `patched`, `ignored`, and `fix`, the command `audit` would suggest, for a vulnerability or yanked version that isn't ignored), `build_time` (`type`, `package`, `version`, `recorded`) and `feature_changes`. Each entry of `feature_changes` has `feature`, `enable`, and the `packages`, `findings` and `build_time` it adds. When `enable` is `false` (only for `default`), they are what it removes.
+In JSON, the record has `tool`, `tool_version`, `features`, `default_features`, `selected`, `targets`, `source` (the tool's checked-out source in `.project-tools/targets/.inspect/<tool>/src`, kept until the next `inspect` of that tool, whose `Cargo.toml` and README say what the features are for), `bins` (`name`, `required_features`, and `built`: whether these features build it), `packages` (`name`, `version`), `findings` (`package`, `version`, `type`, `id`, `title`, `patched`, `ignored`, `fix`, the command `audit` would suggest, for a vulnerability or yanked version that isn't ignored, and `affected`, as in an `advisory` record), `build_time` (`type`, `package`, `version`, `recorded`) and `feature_changes`. Each entry of `feature_changes` has `feature`, `enable`, and the `packages`, `findings`, `build_time` and `bins` it adds. When `enable` is `false` (only for `default`), they are what it removes, so a binary listed there is one turning off the defaults would drop.
 
 ## JSON output
 
@@ -306,7 +306,8 @@ With `--message-format json`, stdout holds only JSON records, one per line. All 
 | `target-missing` | This machine or `--target` isn't in the tool's [`targets`](configuration.md#targets) | `tool`, `file`, `line`, `targets` |
 | `sandbox-missing` | The sandbox mode is `auto` and there's no working [sandbox](configuration.md#sandbox), so the tool builds without one | `tool`, `file`, `line` (the `sandbox` or `sandbox-os` setting that applied; left out for the default and `--sandbox`), `message` |
 | `built` | `install` built a tool | `tool`, `tool_version`, `sandbox` (`sandbox-exec`, `bwrap` or `none`), `bins` |
-| `advisory` | A finding of the [audit](#audit) that isn't ignored | `tool`, `file`, `line`, `id`, `type`, `package`, `package_version`, `title`, `patched`, `severity`, `fix` |
+| `advisory` | A finding of the [audit](#audit) that isn't ignored | `tool`, `file`, `line`, `id`, `type`, `package`, `package_version`, `title`, `patched`, `severity`, `fix`, `affected` |
+| `lock-change` | `add` or `update` changed the tool's lock: `add` lists what `--fix-advisories` or the setup screen changed in the published lock | `tool`, `file`, `package`, `from`, `to` (`from` left out for an added package, `to` for a removed one) |
 | `ignore-unused` | An ignore that matched nothing | `tool`, `file`, `line`, `id` |
 | `ignore-expired` | An ignore past its `expires` date | `tool`, `file`, `line`, `id`, `expires` |
 | `inspect` | What [`inspect`](#inspect) found | See [inspect](#inspect) |
@@ -320,7 +321,7 @@ Every record also has `"version": 1`. The version goes up when a record changes 
 Other fields:
 
 - `file` is the file to change, relative to the project root: `build-review.toml`, `project-tools.toml`, the tool's `Cargo.lock`, or the ignore file.
-- `line` is the 1-based line in `file` where it is: the package's `[[package]]` in `Cargo.lock` for an `advisory`, the entry in `build-review.toml` for `review-unused` (and for `review-pending` with `previous`, the entry it replaces), the `[[ignore]]` entry for `ignore-*`, and the `targets` line for `target-missing`. It's left out when there is no such spot, for example a new piece of build-time code, an advisory against cargo-project-tools itself, or a file that doesn't parse.
+- `line` is the 1-based line in `file` where it is: the package's `[[package]]` in `Cargo.lock` for an `advisory`, the entry in `build-review.toml` for `review-unused`, and for `review-pending` its `pending` entry or the entry it replaces, the `[[ignore]]` entry for `ignore-*`, and the `targets` line for `target-missing`. It's left out when there is no such spot, for example a new piece that `install` or `check` reports without writing a pending entry, an advisory against cargo-project-tools itself, or a file that doesn't parse.
 - `item` describes the piece of build-time code:
   - `type` is `build-script`, `proc-macro`, `build-dep` or `cargo-config`;
   - `package`, `version` and `path` are left out when they don't apply;
@@ -335,7 +336,8 @@ Other fields:
   - `package_version` is the package's version (not `version`, which is the schema's);
   - `type` is `vulnerability`, `unmaintained`, `unsound`, `notice`, `yanked` or `git-source`;
   - `severity` is `error` for a vulnerability and `warning` otherwise. With `--deny-warnings`, warnings fail the run too, and `summary.ok` says so;
-  - `fix` is the command to run, when one exists.
+  - `fix` is the command to run, when one exists;
+  - `affected` is what the advisory limits itself to, when the database says: `os` and `arch` (Rust's names, like `windows`) and `functions` (paths like `crate::module::fn`). It's left out when the database names none, which is common, so a missing `affected` doesn't mean every platform is affected.
 
 ```json
 {"version":1,"kind":"target-missing","tool":"cargo-deny","file":"project-tools.toml","line":4,"targets":["x86_64-unknown-linux-gnu"]}
