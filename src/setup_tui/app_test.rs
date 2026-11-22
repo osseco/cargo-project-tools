@@ -81,7 +81,7 @@ fn rows_start_with_the_tool_features_and_direct_dependencies() {
             "f:extra",
             "f:unused",
             "h:Dependencies",
-            "root",
+            "root:",
             "d:dep@1.0.0#tool/dep",
             "d:opt@0.1.0#tool/opt",
         ]
@@ -232,11 +232,11 @@ fn done_hands_back_the_setup_and_cancel_does_not() {
 #[test]
 fn folding_survives_a_refresh() {
     let (mut app, _guard) = new_app();
-    let root = row_of(&app, "root");
+    let root = row_of(&app, "root:");
     app.rows[root].expanded = false;
     app.queue(Op::ToggleFeature("unused".into()));
     app.run_pending();
-    let root = row_of(&app, "root");
+    let root = row_of(&app, "root:");
     assert!(!app.rows[root].expanded);
     assert!(!labels(&app).iter().any(|l| l.starts_with("d:dep")));
 }

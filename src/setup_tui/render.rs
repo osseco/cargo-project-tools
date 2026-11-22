@@ -122,7 +122,26 @@ impl App<'_> {
                     }
                     RowKind::Dep(i) => {
                         let d = &self.setup.tree[*i];
-                        spans.push(Span::raw(format!("{} {}", shown(&d.name), d.version)));
+                        let grouped = self.setup.targets.as_ref().is_some_and(|t| t.len() > 1);
+                        if d.depth == 0 && grouped {
+                            // The groups' roots: the tool is in the Tool section.
+                            let label = match &d.target {
+                                None => "All targets".to_string(),
+                                Some(t) => format!("Only {}", shown(t)),
+                            };
+                            spans.push(Span::raw(label).bold());
+                        } else if d.shared {
+                            // On the way to what the target adds; listed under All targets.
+                            spans.push(Span::styled(
+                                format!("{} {}", shown(&d.name), d.version),
+                                Style::default().fg(Color::DarkGray),
+                            ));
+                        } else {
+                            spans.push(Span::raw(format!("{} {}", shown(&d.name), d.version)));
+                        }
+                        if d.build {
+                            spans.push(Span::styled(" build", Style::default().dim()));
+                        }
                         if d.depth > 0 {
                             spans.extend(was(&self.setup.was(&d.name, &d.version)));
                         }
@@ -202,9 +221,31 @@ impl App<'_> {
                 };
                 lines.push(Line::raw(format!("{} {version}", shown(&name))).bold());
                 if let RowKind::Dep(i) = row.kind {
-                    let source = &self.setup.tree[i].source;
-                    if !source.is_empty() {
-                        lines.push(Line::styled(shown(source), dim));
+                    let d = &self.setup.tree[i];
+                    if !d.source.is_empty() {
+                        lines.push(Line::styled(shown(&d.source), dim));
+                    }
+                    if d.depth > 0 {
+                        if d.build {
+                            lines.push(Line::styled(
+                                "A build dependency of the package above it.",
+                                dim,
+                            ));
+                        }
+                        match (&d.target, d.shared) {
+                            (Some(t), true) => lines.push(Line::styled(
+                                format!(
+                                    "Built for every target, here on the way to what {} adds.",
+                                    shown(t)
+                                ),
+                                dim,
+                            )),
+                            (Some(t), false) => lines.push(Line::styled(
+                                format!("Pulled in this way only for {}.", shown(t)),
+                                dim,
+                            )),
+                            (None, _) => {}
+                        }
                     }
                 }
                 let findings = self

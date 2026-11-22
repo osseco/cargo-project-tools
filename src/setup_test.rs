@@ -227,18 +227,162 @@ fn cargo_errors_on_one_line() {
 #[test]
 fn tree_lines_parse() {
     let deps = parse_tree(
-        "0tool v1.0.0 (/src)\n1dep v1.0.0\n2inner v0.1.0 (proc-macro)\n1dep v1.0.0 (*)\n10deep v1.0.0-rc.1\n",
+        "tool v1.0.0 (/src)
+|-- dep v1.0.0
+|   |-- inner v0.1.0 (proc-macro)
+|   |   `-- deep v1.0.0-rc.1
+|   [build-dependencies]
+|   `-- cc v1.0.0
+|-- dep v1.0.0 (*)
+[build-dependencies]
+`-- cc v1.0.0
+",
     )
     .unwrap();
-    assert_eq!(deps.len(), 5);
+    let summary: Vec<(usize, &str, bool, bool)> = deps
+        .iter()
+        .map(|d| (d.depth, d.name.as_str(), d.build, d.repeat))
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            (0, "tool", false, false),
+            (1, "dep", false, false),
+            (2, "inner", false, false),
+            (3, "deep", false, false),
+            (2, "cc", true, false),
+            (1, "dep", false, true),
+            (1, "cc", true, false),
+        ]
+    );
     assert_eq!(deps[0].source, "/src");
     assert_eq!(deps[2].source, "proc-macro");
-    assert!(deps[3].repeat);
-    assert!(!deps[1].repeat);
-    assert_eq!(deps[4].depth, 10);
-    assert_eq!(deps[4].version, v("1.0.0-rc.1"));
+    assert_eq!(deps[3].version, v("1.0.0-rc.1"));
     assert!(parse_tree("").is_err());
-    assert!(parse_tree("xtool v1\n").is_err());
+    assert!(parse_tree("tool vx\n").is_err());
+    // One root per run: several would be several targets.
+    assert!(parse_tree("tool v1.0.0\ntool v1.0.0\n").is_err());
+}
+
+fn graph(text: &str) -> (Pkg, Edges) {
+    edges(&parse_tree(text).unwrap())
+}
+
+fn shown_tree(tree: &[Dep]) -> Vec<String> {
+    tree.iter()
+        .map(|d| {
+            let mut s = format!(
+                "{}{}{}",
+                d.target
+                    .as_deref()
+                    .map(|t| format!("{t}:"))
+                    .unwrap_or_default(),
+                "  ".repeat(d.depth),
+                d.name
+            );
+            for (on, mark) in [
+                (d.build, " build"),
+                (d.shared, " shared"),
+                (d.repeat, " (*)"),
+            ] {
+                if on {
+                    s.push_str(mark);
+                }
+            }
+            s
+        })
+        .collect()
+}
+
+#[test]
+fn every_repeat_is_marked_leaves_too() {
+    let tree = layout(&[(
+        String::new(),
+        graph(
+            "tool v1.0.0\n|-- a v1.0.0\n|   `-- libc v1.0.0\n`-- b v1.0.0\n    `-- libc v1.0.0\n",
+        ),
+    )]);
+    assert_eq!(
+        shown_tree(&tree),
+        ["tool", "  a", "    libc", "  b", "    libc (*)"]
+    );
+}
+
+#[test]
+fn targets_show_only_what_they_add() {
+    let linux = "tool v1.0.0
+|-- a v1.0.0
+|   `-- libc v1.0.0
+`-- b v1.0.0
+";
+    let windows = "tool v1.0.0
+|-- a v1.0.0
+|   |-- libc v1.0.0
+|   `-- windows-sys v1.0.0
+|       `-- windows-link v1.0.0
+`-- b v1.0.0
+";
+    let tree = layout(&[
+        ("linux".into(), graph(linux)),
+        ("windows".into(), graph(windows)),
+    ]);
+    assert_eq!(
+        shown_tree(&tree),
+        [
+            "tool",
+            "  a",
+            "    libc",
+            "  b",
+            // Linux adds nothing; Windows only the way to windows-sys.
+            "windows:tool",
+            "windows:  a shared",
+            "windows:    windows-sys",
+            "windows:      windows-link",
+        ]
+    );
+    // One target, or all of them: no groups.
+    let tree = layout(&[("linux".into(), graph(linux))]);
+    assert!(tree.iter().all(|d| d.target.is_none()));
+}
+
+#[test]
+fn several_targets_share_one_root() {
+    let registry = Registry::new(&[("dep", "1.0.0"), ("opt", "0.1.0")]);
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    let manifest = tool_with(
+        &src,
+        "1.0.0",
+        "[dependencies]\ndep = \"1\"\n\n[target.'cfg(windows)'.dependencies]\nopt = \"0.1\"\n",
+    );
+    lock::shipped_or_generated(&manifest, &src.join("Cargo.lock"), &registry.cargo_args()).unwrap();
+    let db = dir.path().join("db");
+    fs::create_dir_all(db.join("crates")).unwrap();
+    let setup = Setup::new(
+        "tool",
+        Checkout::at(src.clone(), src.clone(), src),
+        false,
+        BTreeSet::new(),
+        true,
+        Some(vec![
+            "x86_64-unknown-linux-gnu".into(),
+            "x86_64-pc-windows-msvc".into(),
+        ]),
+        Auditor::new(rustsec::Database::open(&db).unwrap()),
+        AuditIgnore::default(),
+        registry.cargo_args(),
+    )
+    .unwrap();
+    assert_eq!(
+        shown_tree(&setup.tree),
+        [
+            "tool",
+            "  dep",
+            "x86_64-pc-windows-msvc:tool",
+            "x86_64-pc-windows-msvc:  opt",
+        ]
+    );
+    assert_eq!(setup.counts(), (3, 0, 0));
 }
 
 #[test]

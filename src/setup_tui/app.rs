@@ -191,11 +191,16 @@ impl<'a> App<'a> {
             RowKind::Feature(f) => format!("f:{f}"),
             RowKind::Dep(i) => {
                 let d = &self.setup.tree[*i];
-                // The tree's root is the tool, which a move changes.
+                let group = d
+                    .target
+                    .as_deref()
+                    .map(|t| format!("{t}:"))
+                    .unwrap_or_default();
+                // A group's root is the tool, which a move changes.
                 if d.depth == 0 {
-                    "root".into()
+                    format!("root:{group}")
                 } else {
-                    format!("d:{}@{}#{}", d.name, d.version, self.dep_path(*i))
+                    format!("d:{group}{}@{}#{}", d.name, d.version, self.dep_path(*i))
                 }
             }
         }
@@ -285,8 +290,9 @@ impl<'a> App<'a> {
                 depth: d.depth + 1,
                 kind: RowKind::Dep(i),
                 folds,
-                // The tool's own dependencies show; deeper levels start folded.
-                expanded: d.depth == 0,
+                // What every target builds shows its first level; what a target adds, and
+                // deeper levels, start folded.
+                expanded: d.depth == 0 && d.target.is_none(),
                 key: String::new(),
             });
         }
@@ -522,6 +528,7 @@ impl<'a> App<'a> {
             RowKind::Dep(i) => {
                 let d = &app.setup.tree[i];
                 !d.repeat
+                    && !d.shared
                     && app
                         .setup
                         .findings
