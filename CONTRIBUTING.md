@@ -41,6 +41,8 @@ A push to `main` that changes the product runs `release.yml`. When the version c
 3. Attests build provenance and the SBOM for the binaries in `SHA256SUMS`.
 4. Creates a draft GitHub Release with every asset, then publishes it. Releases are immutable, so a broken release is fixed by the next version.
 
+Release runs go one at a time, and every push waits its turn (`concurrency.queue: max`, up to 100 waiting), so each push gets its own release rather than only the latest. GitHub doesn't guarantee the order. If a newer push's run goes first, it releases both pushes, and the older run finds no new commits and publishes nothing.
+
 ## Verifying a release
 
 See [docs/verifying-releases.md](docs/verifying-releases.md). Renaming `release.yml` or releasing from another branch changes the signing identity.

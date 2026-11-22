@@ -6,3 +6,6 @@ paths:
       # not know the form.
       - 'is not following the format "owner/repo/path/to/workflow\.yml@ref"'
       - 'specifying action "\$/'
+      # `concurrency.queue: max` (GitHub, May 2026) keeps every pending release run
+      # instead of only the latest; this actionlint release doesn't know the key yet.
+      - 'unexpected key "queue" for "concurrency" section'
