@@ -494,12 +494,8 @@ pub fn evaluate(
             }
             outcome.warnings += 1;
             let id = w.advisory.as_ref().map_or("-", |a| a.id.as_str());
-            let fix = (w.kind == "yanked").then(|| {
-                format!(
-                    "cargo {SUBCOMMAND} update {tool} {}@{}",
-                    w.package.name, w.package.version
-                )
-            });
+            let fix =
+                (w.kind == "yanked").then(|| yanked_fix(tool, &w.package.name, &w.package.version));
             let title = w.advisory.as_ref().map_or("", |a| a.title.as_str());
             record(id, &w.kind, &w.package, title, &w.patched, fix.clone());
             say!(
@@ -536,6 +532,11 @@ pub fn evaluate(
     outcome
 }
 
+/// The command moving a yanked package off its version.
+pub(crate) fn yanked_fix(tool: &str, name: &str, version: &Version) -> String {
+    format!("cargo {SUBCOMMAND} update {tool} {name}@{version}")
+}
+
 /// One command fixing every open advisory of a package: `--precise` with the lowest version
 /// that is patched for all of them, or a hint when no such version exists.
 fn suggestion(
@@ -545,14 +546,25 @@ fn suggestion(
     vulns: &[&Vulnerability],
     index: &mut IndexCache,
 ) -> String {
+    let advisories: Vec<Vec<VersionReq>> = vulns.iter().map(|v| v.patched.clone()).collect();
+    fix_for(tool, name, version, &advisories, index)
+}
+
+/// `suggestion` for the patched ranges of each open advisory.
+pub(crate) fn fix_for(
+    tool: &str,
+    name: &str,
+    version: &Version,
+    advisories: &[Vec<VersionReq>],
+    index: &mut IndexCache,
+) -> String {
     if name == tool {
         return format!("cargo {SUBCOMMAND} update {tool} --latest");
     }
-    let advisories: Vec<Vec<VersionReq>> = vulns.iter().map(|v| v.patched.clone()).collect();
     if advisories.iter().any(Vec::is_empty) {
         return "no patched version for every advisory; replace the dependency or ignore with a reason in audit-ignore.toml".to_string();
     }
-    match registry::lowest_patched(index.get(name), version, &advisories) {
+    match registry::lowest_patched(index.get(name), version, advisories) {
         Some(e) => format!(
             "cargo {SUBCOMMAND} update {tool} {name}@{version} --precise {}",
             e.vers

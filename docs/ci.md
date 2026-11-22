@@ -93,6 +93,13 @@ Then set `sandbox = "require"` in `[build]`, so a runner without a working sandb
 
 ## Socket Firewall in CI
 
-With `settings.sfw = "auto"`, downloads go through sfw only when it's on `PATH`. To filter them in CI too, install it first with [`osseco/setup-sfw-free`](https://github.com/osseco/setup-sfw-free), and set `sfw = "require"` if a missing sfw should fail the job.
+With `settings.sfw = "auto"`, downloads go through sfw only when it's on `PATH`, and otherwise carry on with only a note. For CI, install it with [`osseco/setup-sfw-free`](https://github.com/osseco/setup-sfw-free) and set `sfw = "require"`, so a runner without it fails instead of downloading unfiltered.
+
+If you keep `auto`, a missing sfw is also an `sfw-missing` record with `--message-format json`, which you can turn into your CI's own warning:
+
+```bash
+cargo project-tools install --message-format json > records.jsonl
+jq -r 'select(.kind == "sfw-missing") | "::warning::\(.message)"' records.jsonl
+```
 
 On Windows runners, also set `CARGO_HTTP_CHECK_REVOKE: "false"` in the job's `env:`. See [Configuration](configuration.md#sfw) for why.

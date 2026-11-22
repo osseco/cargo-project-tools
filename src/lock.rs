@@ -57,6 +57,23 @@ pub fn check_root(lock: &Lockfile, name: &str, version: &str) -> Result<()> {
     }
 }
 
+/// Bare names among `deps` that match more than one locked version, each with the
+/// `name@version` specs to choose from. Cargo refuses such a name, and with it the whole
+/// update.
+pub fn ambiguous(lock: &Lockfile, deps: &[String]) -> Vec<(String, Vec<String>)> {
+    let versions = versions(lock);
+    deps.iter()
+        .filter(|d| !d.contains(['@', ':', '/']))
+        .filter_map(|d| {
+            let found = versions.get(d.as_str()).filter(|v| v.len() > 1)?;
+            Some((
+                d.clone(),
+                found.iter().map(|v| format!("{d}@{v}")).collect(),
+            ))
+        })
+        .collect()
+}
+
 /// name → versions
 fn versions(lock: &Lockfile) -> BTreeMap<String, BTreeSet<semver::Version>> {
     let mut map: BTreeMap<String, BTreeSet<semver::Version>> = BTreeMap::new();

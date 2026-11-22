@@ -46,6 +46,8 @@ fn editor_keeps_comments() {
     let text = fs::read_to_string(&path).unwrap();
     assert!(text.contains("# Tools managed by"));
     assert!(text.contains("[tool.foo]\nversion = \"1.2.3\""));
+    // Only real tool tables, no commented example left next to them.
+    assert_eq!(text.matches("[tool.").count(), 1, "{text}");
     let config = Config::load(&path).unwrap();
     assert_eq!(config.tool["foo"].version, "1.2.3");
 

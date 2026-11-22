@@ -86,7 +86,7 @@ cargo project-tools update -i cargo-nextest
 
 | Option | Meaning |
 | --- | --- |
-| `[deps…]` | Dependencies to update (`name` or `name@version`); all when omitted, unless the tool moves or only features change |
+| `[deps…]` | Dependencies to update (`name` or `name@version`); all when omitted, unless the tool moves or only features change. A `name` locked at more than one version fails before anything is updated, listing the `name@version` to use instead |
 | `--precise <version>` | Update a single dependency to exactly this version |
 | `--recursive` | Also update the dependencies of the given dependencies |
 | `--latest` | Move the tool to its latest stable version; a git tool follows its tag or branch again |
@@ -245,6 +245,8 @@ Then it:
 - warns about ignores that no longer match anything, and about expired ones,
 - prints an `update … --precise …` command for each vulnerability that has a patched version, or `update <tool> --latest` when the tool itself is affected.
 
+Advisories aren't filtered by the operating system or architecture they name, since that metadata is often missing. When one can't affect the tool's [`targets`](configuration.md#targets), for example a Windows-only bug in a tool you build only for Linux and macOS, ignore it in `audit-ignore.toml` with that as the reason, and look at it again when you add a target.
+
 It also reports advisories against cargo-project-tools itself, and fails on them unless they're accepted in [`self-audit-ignore.toml`](configuration.md#advisories-against-cargo-project-tools-itself).
 
 | Option | Meaning |
@@ -286,7 +288,7 @@ It reports:
 
 Each feature costs one `cargo tree` run. Like `audit`, it lets cargo download the dependencies to read their manifests, and compiles nothing.
 
-In JSON, the record has `tool`, `tool_version`, `features`, `default_features`, `selected`, `targets`, `packages` (`name`, `version`), `findings` (`package`, `version`, `type`, `id`, `title`, `patched`, `ignored`), `build_time` (`type`, `package`, `version`, `recorded`) and `feature_changes`. Each entry of `feature_changes` has `feature`, `enable`, and the `packages`, `findings` and `build_time` it adds. When `enable` is `false` (only for `default`), they are what it removes.
+In JSON, the record has `tool`, `tool_version`, `features`, `default_features`, `selected`, `targets`, `packages` (`name`, `version`), `findings` (`package`, `version`, `type`, `id`, `title`, `patched`, `ignored`, and `fix`, the command `audit` would suggest, for a vulnerability or yanked version that isn't ignored), `build_time` (`type`, `package`, `version`, `recorded`) and `feature_changes`. Each entry of `feature_changes` has `feature`, `enable`, and the `packages`, `findings` and `build_time` it adds. When `enable` is `false` (only for `default`), they are what it removes.
 
 ## JSON output
 
@@ -302,6 +304,8 @@ With `--message-format json`, stdout holds only JSON records, one per line. All 
 | `ignore-unused` | An ignore that matched nothing | `tool`, `file`, `line`, `id` |
 | `ignore-expired` | An ignore past its `expires` date | `tool`, `file`, `line`, `id`, `expires` |
 | `inspect` | What [`inspect`](#inspect) found | See [inspect](#inspect) |
+| `ambiguous-dependency` | `update` was given a bare name that is locked at more than one version | `tool`, `package`, `candidates` (each `name@version`) |
+| `sfw-missing` | `settings.sfw = "auto"` found no `sfw`, so downloads aren't filtered | `message` |
 | `error` | The command failed | `message` |
 | `summary` | The last record of `add`, `update`, `install`, `check`, `review` and `audit` | `ok`, `vulnerabilities`, `warnings`, `pending_reviews`, `missing_targets` |
 

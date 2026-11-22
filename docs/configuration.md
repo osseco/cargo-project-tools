@@ -71,7 +71,7 @@ Package downloads (`add`, `update`, `install`, `audit`) can run through [Socket 
 
 | `settings.sfw` | Behavior |
 | --- | --- |
-| `"auto"` (default) | Use `sfw` when it's on `PATH`, otherwise carry on with a note |
+| `"auto"` (default) | Use `sfw` when it's on `PATH`, otherwise carry on with a note (and an `sfw-missing` [JSON record](commands.md#json-output)) |
 | `"require"` | Fail when `sfw` isn't on `PATH` |
 | `"off"` | Never use `sfw` |
 

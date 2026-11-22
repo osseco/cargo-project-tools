@@ -99,6 +99,10 @@ fn each_feature_shows_what_it_adds() {
     );
     assert_eq!(found.findings.len(), 1);
     assert_eq!(found.findings[0].id, "RUSTSEC-2024-0002");
+    assert_eq!(
+        found.findings[0].fix.as_deref(),
+        Some("cargo project-tools update tool opt@0.1.0")
+    );
 
     // `extra` is on through the defaults, so only `derive` and the defaults are tried.
     let changes: Vec<(&str, bool)> = found

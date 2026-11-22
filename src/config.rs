@@ -39,9 +39,6 @@ profile = "release"
 strip = "symbols"
 lto = "thin"
 codegen-units = 1
-
-# [tool.cargo-nextest]
-# version = "0.9.80"
 "#;
 
 /// `TEMPLATE` with `[settings].targets` set to `targets`, or left out (all targets).
