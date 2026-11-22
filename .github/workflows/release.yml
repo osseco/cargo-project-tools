@@ -26,9 +26,13 @@ on:
 
 permissions: {}
 
+# One release at a time, and every push waits its turn (up to 100) instead of only the
+# latest: each gets its own release. A run that starts after a newer one finds its
+# commits already released, and publishes nothing.
 concurrency:
   group: release
   cancel-in-progress: false
+  queue: max
 
 jobs:
   version:
