@@ -173,6 +173,19 @@ To decide piece by piece without the screen, name each decision: `cargo project-
 
 To decide piece by piece, copy the printed entries into the file, set each `action` (and `file` for `override`), and rerun. For a changed piece, replace the old entry named in the comment. To change a recorded decision, edit its `action` (and `file`) and run `install`. A changed decision makes `install` rebuild the tool from scratch, since cargo doesn't notice edits to vendored sources.
 
+## Who approved it
+
+An entry doesn't say who wrote it. `action = "approve"` reads the same whether a person decided it, or a script, an AI agent or a careless merge wrote it, and a `reviewed-by` field would be no better, since whoever writes the entry can write that too. Who approved what is in your history: the commit that changed `build-review.toml` (and `overrides/`), its author and its signature.
+
+To make that count, have the people who review build-time code own these files, and require their review before a merge. On GitHub, with a `CODEOWNERS` file:
+
+```text
+/.project-tools/crates/*/build-review.toml  @your-org/build-reviewers
+/.project-tools/crates/*/overrides/         @your-org/build-reviewers
+```
+
+Then, in the branch protection or ruleset for your default branch, turn on "Require review from Code Owners", and also "Require signed commits" if you want each decision tied to a key. Other hosts have the same idea under another name, such as GitLab's code owners with approval rules.
+
 ## Limits
 
 A build script's files are found by reading its source, not by compiling it. A file it reads at run time (`std::fs::read`, say) isn't part of its sha256, but its entry names the crate's checksum or commit, so any change to the crate comes up again.
