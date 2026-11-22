@@ -68,4 +68,5 @@ Which packages a tool builds comes from `cargo tree` and is kept in `bin/.stamps
 - Downloads and git clones are https only, with normal TLS verification. A lock with a source that isn't https (`git+ssh://`, `git://`, `file://`, plain http) is refused, and cargo fetches git dependencies with the git command, limited to https.
 - Every `.crate` is checked against the index checksum before use. Archive paths that escape the crate directory are rejected, and so is an archive with a `.git` in it, whose config could make git run commands.
 - A git tool's clone is only reused when this tool made it, at that commit and from that url. Git runs with no hooks and no fsmonitor, whatever a repository's config says.
+- The build sets `GIT_CEILING_DIRECTORIES` to `.project-tools/targets/<tool>`. A build script that runs git, for example to embed a commit, sees the tool's own clone, but never your project's repository.
 - Package downloads run through [Socket Firewall Free](https://docs.socket.dev/docs/socket-firewall-free) when `sfw` is installed. See [Configuration](configuration.md#sfw).

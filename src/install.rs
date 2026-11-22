@@ -380,9 +380,10 @@ pub fn install(
     // The tracking key contains the source path, so binaries from an earlier install are
     // owned by a "different" package: --force lets cargo replace them. Our stamp decides
     // whether to build at all.
+    let mut cmd = process::cargo();
+    process::git_ceiling(&mut cmd, &target_dir)?;
     process::run(
-        process::cargo()
-            .args(["install", "--locked", "--force"])
+        cmd.args(["install", "--locked", "--force"])
             .arg("--path")
             .arg(&checkout.package_dir)
             .arg("--root")
