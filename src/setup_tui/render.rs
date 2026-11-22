@@ -5,9 +5,11 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Clear, List, ListItem, Paragraph};
 
+use super::advisory;
 use super::app::{App, BUTTONS, Focus, RowKind};
+use super::text_view::TextView;
 use crate::sanitize::shown;
 use crate::setup::Finding;
 
@@ -51,6 +53,50 @@ impl App<'_> {
         self.render_tree(frame, left);
         self.render_details(frame, right);
         self.render_bottom(frame, bottom);
+        self.render_dialog(frame, main);
+    }
+
+    /// The advisory dialog, over the middle of `area`.
+    fn render_dialog(&mut self, frame: &mut Frame, area: Rect) {
+        let Some(dialog) = &mut self.dialog else {
+            return;
+        };
+        let id = &dialog.ids[dialog.index];
+        let lines = self
+            .setup
+            .advisory(id)
+            .map(advisory::lines)
+            .unwrap_or_default();
+        let [_, middle, _] = Layout::vertical([
+            Constraint::Percentage(5),
+            Constraint::Percentage(90),
+            Constraint::Percentage(5),
+        ])
+        .areas(area);
+        let [_, middle, _] = Layout::horizontal([
+            Constraint::Percentage(8),
+            Constraint::Percentage(84),
+            Constraint::Percentage(8),
+        ])
+        .areas(middle);
+        dialog.area = middle;
+        let mut title = format!(" {}", shown(id));
+        if dialog.ids.len() > 1 {
+            title.push_str(&format!(
+                " ({}/{}) · ←/→ others",
+                dialog.index + 1,
+                dialog.ids.len()
+            ));
+        }
+        title.push_str(" · Esc closes ");
+        let block = Block::bordered()
+            .title(Line::from(title).bold())
+            .title_bottom(scroll_hint(&dialog.view))
+            .border_style(Style::default().fg(Color::Cyan));
+        let inner = block.inner(middle);
+        frame.render_widget(Clear, middle);
+        frame.render_widget(block, middle);
+        dialog.view.render(frame, inner, &lines);
     }
 
     fn border(&self, focus: Focus) -> Style {
@@ -175,8 +221,10 @@ impl App<'_> {
         frame.render_stateful_widget(list, area, &mut self.tree_state);
     }
 
-    /// The text part of the details for the selected row.
-    fn detail_lines(&self) -> Vec<Line<'static>> {
+    /// The text part of the details for the selected row. Notes where its `[view]` links
+    /// are.
+    fn detail_lines(&mut self) -> Vec<Line<'static>> {
+        self.areas.views.clear();
         let mut lines = Vec::new();
         let Some(row) = self.rows.get(self.selected) else {
             return lines;
@@ -185,7 +233,14 @@ impl App<'_> {
         match &row.kind {
             RowKind::Header(_) => {
                 lines.push(Line::raw("Space toggles a feature; Enter on a package lists its versions and why it's built."));
-                lines.push(Line::raw("n jumps to the next package with an advisory."));
+                lines.push(Line::raw(
+                    "n jumps to the next package with an advisory; v or [view] shows it.",
+                ));
+                lines.push(Line::raw("Drag over text here or in an advisory to copy it; y copies it again. PgUp/PgDn scroll."));
+                lines.push(Line::styled(
+                    "Shift- or Option-drag gives the terminal's own selection, across the whole screen.",
+                    dim,
+                ));
             }
             RowKind::Default => {
                 let list = self
@@ -269,7 +324,16 @@ impl App<'_> {
                     if f.ignored {
                         text.push_str(" (ignored)");
                     }
-                    lines.push(Line::styled(text, style));
+                    let mut line = Line::from(Span::styled(text, style));
+                    if self.setup.advisory(&f.id).is_some() {
+                        line.push_span(Span::raw(" "));
+                        self.areas.views.push(((lines.len(), 2), f.id.clone()));
+                        line.push_span(Span::styled(
+                            "[view]",
+                            Style::default().fg(Color::Cyan).underlined(),
+                        ));
+                    }
+                    lines.push(line);
                 }
                 if tool && self.setup.git {
                     lines.push(Line::raw(""));
@@ -298,6 +362,7 @@ impl App<'_> {
     fn render_details(&mut self, frame: &mut Frame, area: Rect) {
         let block = Block::bordered()
             .title(" Details ")
+            .title_bottom(scroll_hint(&self.details))
             .border_style(self.border(Focus::Details));
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -309,10 +374,8 @@ impl App<'_> {
         };
         let [text, versions] =
             Layout::vertical([Constraint::Min(0), Constraint::Length(list_height)]).areas(inner);
-        frame.render_widget(
-            Paragraph::new(self.detail_lines()).wrap(Wrap { trim: false }),
-            text,
-        );
+        let lines = self.detail_lines();
+        self.details.render(frame, text, &lines);
         self.areas.versions = Rect::default();
         let Some(d) = &self.detail else {
             return;
@@ -403,6 +466,17 @@ impl App<'_> {
 }
 
 /// `  (was 1.2.3)`, for a package moved from its original version.
+/// `↑`/`↓` when there's more of the text that way.
+fn scroll_hint(view: &TextView) -> Line<'static> {
+    let hint = match (view.more_above(), view.more_below()) {
+        (true, true) => " ↑↓ more ",
+        (true, false) => " ↑ more ",
+        (false, true) => " ↓ more ",
+        (false, false) => "",
+    };
+    Line::styled(hint, Style::default().dim()).right_aligned()
+}
+
 fn was(versions: &[semver::Version]) -> Option<Span<'static>> {
     if versions.is_empty() {
         return None;

@@ -436,6 +436,11 @@ impl Setup {
         Ok(out)
     }
 
+    /// The advisory with this id, if the database has it.
+    pub fn advisory(&self, id: &str) -> Option<&rustsec::Advisory> {
+        self.auditor.advisory(id)
+    }
+
     /// The lock as it is now.
     pub fn lock_path(&self) -> std::path::PathBuf {
         self.checkout.lock_path()

@@ -8,6 +8,7 @@ use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
 use semver::Version;
 
+use super::text_view::{self, TextView};
 use crate::sanitize::shown_line;
 use crate::setup::{Choice, Setup};
 use crate::source::Checkout;
@@ -115,6 +116,31 @@ pub(super) struct Areas {
     pub(super) tree: Rect,
     pub(super) versions: Rect,
     pub(super) buttons: Vec<(Rect, Button)>,
+    /// The details' `[view]` spans, by (line, span), and the advisory each opens.
+    pub(super) views: Vec<((usize, usize), String)>,
+}
+
+/// An advisory shown over the screen.
+pub(super) struct AdvisoryDialog {
+    /// The selected package's advisories, to move between.
+    pub(super) ids: Vec<String>,
+    pub(super) index: usize,
+    pub(super) view: TextView,
+    /// Where the dialog was drawn; a click outside closes it.
+    pub(super) area: Rect,
+}
+
+/// Puts copied text on the clipboard.
+pub(super) type Copier<'a> = Box<dyn FnMut(&str) + 'a>;
+
+/// The terminal's clipboard, through OSC 52.
+fn osc52_copier() -> Copier<'static> {
+    Box::new(|text| {
+        use std::io::Write;
+        let mut out = std::io::stdout();
+        let _ = out.write_all(text_view::osc52(text).as_bytes());
+        let _ = out.flush();
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,6 +165,10 @@ pub struct App<'a> {
     pub(super) message: Option<(String, bool)>,
     pub(super) areas: Areas,
     pub(super) exit: Option<Exit>,
+    /// The details' text.
+    pub(super) details: TextView,
+    pub(super) dialog: Option<AdvisoryDialog>,
+    pub(super) copier: Copier<'a>,
 }
 
 impl<'a> App<'a> {
@@ -158,6 +188,9 @@ impl<'a> App<'a> {
             message: None,
             areas: Areas::default(),
             exit: None,
+            details: TextView::default(),
+            dialog: None,
+            copier: osc52_copier(),
         };
         app.rebuild();
         app.selected = app
@@ -345,6 +378,7 @@ impl<'a> App<'a> {
         if row != self.selected {
             self.selected = row;
             self.versions_state.select(None);
+            self.details.reset();
             if self
                 .detail
                 .as_ref()
@@ -562,6 +596,47 @@ impl<'a> App<'a> {
             Button::Done => self.exit = Some(Exit::Done),
             Button::Cancel => self.exit = Some(Exit::Cancel),
         }
+    }
+
+    /// Put `text` on the clipboard.
+    pub(super) fn copy(&mut self, text: &str) {
+        (self.copier)(text);
+        self.say(format!("copied {} characters", text.chars().count()));
+    }
+
+    /// The selected package's advisories that the database has, open ones first.
+    pub(super) fn advisories(&self) -> Vec<String> {
+        let Some((name, version, _)) = self.selected_package() else {
+            return Vec::new();
+        };
+        let mut found: Vec<_> = self
+            .setup
+            .findings
+            .get(&(name, version))
+            .into_iter()
+            .flatten()
+            .filter(|f| self.setup.advisory(&f.id).is_some())
+            .collect();
+        found.sort_by_key(|f| f.ignored);
+        found.iter().map(|f| f.id.clone()).collect()
+    }
+
+    /// Show advisory `id` of the selected package, or its first.
+    pub(super) fn open_advisory(&mut self, id: Option<&str>) {
+        let ids = self.advisories();
+        if ids.is_empty() {
+            self.say("no advisory to view here");
+            return;
+        }
+        let index = id
+            .and_then(|id| ids.iter().position(|i| i == id))
+            .unwrap_or(0);
+        self.dialog = Some(AdvisoryDialog {
+            ids,
+            index,
+            view: TextView::default(),
+            area: Rect::default(),
+        });
     }
 
     /// Whether `feature` is on: chosen, or one of the defaults while they're on.

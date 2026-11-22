@@ -4,6 +4,8 @@
 //!
 //! - `app`: the screen's state and what its actions do.
 //! - `input` and `render`: keys and mouse, and drawing.
+//! - `text_view`: text that scrolls and that a mouse drag selects and copies.
+//! - `advisory`: an advisory as text for its dialog.
 
 use anyhow::Result;
 use ratatui::crossterm::event;
@@ -12,9 +14,11 @@ use crate::output;
 use crate::screen::Terminal;
 use crate::setup::Setup;
 
+mod advisory;
 mod app;
 mod input;
 mod render;
+mod text_view;
 
 pub use app::{App, Mover};
 
