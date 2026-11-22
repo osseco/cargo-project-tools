@@ -93,7 +93,7 @@ In the sandbox, the build can write only to `.project-tools/targets/<tool>` (the
 
 | `sandbox` | Behavior |
 | --- | --- |
-| `"auto"` (default) | Use the sandbox when this OS has one that works, otherwise build without it, with a note (and a `sandbox-missing` [JSON record](commands.md#json-output)) |
+| `"auto"` (default) | Use the sandbox when this OS has one that works, otherwise build without it, with a note and a `sandbox-missing` [JSON record](commands.md#json-output) that names the tool and the setting |
 | `"require"` | Fail when there's no working sandbox. On Windows that's always |
 | `"off"` | Never use it |
 
@@ -106,7 +106,9 @@ linux = "auto"
 windows = "off"
 ```
 
-A tool's own `[tool.<name>.build]` can set both too. `--no-sandbox` turns it off for one run. Changing it doesn't rebuild a tool that's up to date.
+A tool's own `[tool.<name>.build]` can set both too. `--sandbox auto|require|off` on `install`, `check` and `verify --repair` overrides all of them for one run (`--no-sandbox` still works as `--sandbox off`). Changing it doesn't rebuild a tool that's up to date.
+
+`check` probes the sandbox with the mode in effect for each tool, also for tools that are up to date, and `install` probes before it downloads anything, so `require` fails before any work is done. The probe runs once per command. `install` prints `Building <tool> <version> in sandbox-exec` (or `without a sandbox`) and writes a `built` [JSON record](commands.md#json-output) per tool, with the `sandbox` it used.
 
 A build script that needs the network, for example one that downloads a library, fails in the sandbox. Look at why in its review before you turn the sandbox off for that tool.
 

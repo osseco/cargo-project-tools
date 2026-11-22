@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -10,13 +11,14 @@ use crate::cli::BuildArgs;
 use crate::config::{Build, SandboxMode, Tool};
 use crate::graph;
 use crate::lock;
-use crate::output::say;
+use crate::output::{self, Record, say};
 use crate::process;
 use crate::project::Project;
 use crate::review;
 use crate::sandbox;
 use crate::source::registry::sha256_hex as registry_hash;
 use crate::source::{self, Dest, Origin};
+use crate::toml_line;
 use crate::vendor;
 
 /// Where stamps lived before they moved to `bin/.stamps`.
@@ -310,6 +312,12 @@ pub fn install(
     );
     let target_dir = project.target_dir(name);
     let stamp_path = project.stamp_path(name);
+    let choice = sandbox_choice(project, name, tool, build, args);
+    // `check` probes the sandbox even for a tool that's up to date: CI that requires one
+    // learns it's missing before it has anything to build.
+    if opts.stage == Stage::Check {
+        sandbox::choose(name, &choice)?;
+    }
     // Approving reviews now, even when the binaries are current.
     if !opts.force
         && !opts.auto_approve
@@ -339,6 +347,11 @@ pub fn install(
         Stage::Review => say!("Reviewing {name} {}", tool.version),
         Stage::Diff => say!("Comparing {name} {}", tool.version),
     }
+    // Before anything is downloaded, so `require` without a sandbox fails early.
+    let sandbox = match opts.stage {
+        Stage::Install => sandbox::choose(name, &choice)?,
+        _ => None,
+    };
     let checkout = source::checkout(
         project,
         name,
@@ -399,17 +412,13 @@ pub fn install(
     // The tracking key contains the source path, so binaries from an earlier install are
     // owned by a "different" package: --force lets cargo replace them. Our stamp decides
     // whether to build at all.
-    let mut cmd = process::cargo();
-    process::git_ceiling(&mut cmd, &target_dir)?;
-    cmd.args(["install", "--locked", "--force"])
-        .arg("--path")
-        .arg(&checkout.package_dir)
-        .arg("--root")
-        .arg(project.install_root())
-        .arg("--target-dir")
-        .arg(&target_dir)
-        .args(&vendored.config_args)
-        .args(&cargo_args);
+    let cmd = build_command(
+        project,
+        &target_dir,
+        &checkout.package_dir,
+        &vendored.config_args,
+        &cargo_args,
+    )?;
     // What `cargo install` writes: the build, the binaries and its records of them.
     let writable = sandbox::Writable {
         dirs: vec![target_dir.clone(), project.bin_dir()],
@@ -417,15 +426,37 @@ pub fn install(
             .map(|f| project.install_root().join(f))
             .to_vec(),
     };
-    let mode = if args.no_sandbox {
-        SandboxMode::Off
-    } else {
-        build.sandbox_for(std::env::consts::OS)
+    let mut cmd = match &sandbox {
+        Some(kind) => {
+            say!("Building {name} {} in {}", tool.version, kind.name());
+            sandbox::wrap(cmd, kind, &writable, &target_dir.join("tmp"))?
+        }
+        None => {
+            say!("Building {name} {} without a sandbox", tool.version);
+            cmd
+        }
     };
-    let mut cmd = sandbox::wrap(cmd, mode, &writable, &target_dir.join("tmp"))?;
     process::run(&mut cmd)?;
 
     let bins = installed_bins(project, name, &tool.version);
+    say!(
+        "{name}: {} in {}",
+        bins.join(", "),
+        project
+            .bin_dir()
+            .strip_prefix(&project.root)
+            .unwrap_or(&project.bin_dir())
+            .display()
+    );
+    output::emit(Record::Built {
+        tool: name.to_string(),
+        tool_version: tool.version.clone(),
+        sandbox: sandbox
+            .as_ref()
+            .map_or("none", sandbox::Kind::name)
+            .to_string(),
+        bins: bins.clone(),
+    });
     match opts.checksums {
         Checksums::Write => checksum::write(project, name, &bins)?,
         Checksums::Expect => expect_recorded(project, name, &bins)?,
@@ -442,6 +473,82 @@ pub fn install(
         fs::remove_file(&old).with_context(|| format!("removing {}", old.display()))?;
     }
     Ok(())
+}
+
+/// The `cargo install` that builds the tool in `package_dir`.
+fn build_command(
+    project: &Project,
+    target_dir: &Path,
+    package_dir: &Path,
+    vendor_args: &[String],
+    cargo_args: &[String],
+) -> Result<Command> {
+    let mut cmd = process::cargo();
+    process::git_ceiling(&mut cmd, target_dir)?;
+    cmd.args(["install", "--locked", "--force"])
+        .arg("--path")
+        .arg(package_dir)
+        .arg("--root")
+        .arg(project.install_root())
+        .arg("--target-dir")
+        .arg(target_dir)
+        .args(vendor_args)
+        .args(cargo_args);
+    // The build uses only the vendored sources: it never needs the network, so cargo is
+    // told so, sandbox or not.
+    if !cargo_args.iter().any(|a| a == "--offline") {
+        cmd.arg("--offline");
+    }
+    // Cargo warns when the install root's `bin` isn't on PATH. Appended, so nothing there
+    // takes the place of a system binary a build script runs.
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths: Vec<_> = std::env::split_paths(&path).collect();
+    paths.push(project.bin_dir());
+    cmd.env("PATH", std::env::join_paths(paths)?);
+    Ok(cmd)
+}
+
+/// The sandbox mode for building `name`: `--sandbox` (or `--no-sandbox`), else the merged
+/// `[build]` setting for this OS, with the line in project-tools.toml that set it.
+fn sandbox_choice(
+    project: &Project,
+    name: &str,
+    tool: &Tool,
+    build: &Build,
+    args: &BuildArgs,
+) -> sandbox::Choice {
+    let cli = if args.no_sandbox {
+        Some(SandboxMode::Off)
+    } else {
+        args.sandbox
+    };
+    if let Some(mode) = cli {
+        return sandbox::Choice {
+            mode,
+            from_cli: true,
+            line: None,
+        };
+    }
+    let os = std::env::consts::OS;
+    let own = tool.build.as_ref();
+    // As `Build::sandbox_for` picks: an OS entry first, the tool's own before the global one.
+    let (path, key): (Vec<&str>, &str) = if own.is_some_and(|b| b.sandbox_os.contains_key(os)) {
+        (vec!["tool", name, "build", "sandbox-os"], os)
+    } else if build.sandbox_os.contains_key(os) {
+        (vec!["build", "sandbox-os"], os)
+    } else if own.is_some_and(|b| b.sandbox.is_some()) {
+        (vec!["tool", name, "build"], "sandbox")
+    } else {
+        (vec!["build"], "sandbox")
+    };
+    let line = fs::read_to_string(project.config_path())
+        .ok()
+        .and_then(|text| toml_line::key_line(&text, &path, key));
+    sandbox::Choice {
+        mode: build.sandbox_for(os),
+        from_cli: false,
+        line,
+    }
 }
 
 /// Fails, removing the tool's binaries so nothing unverified stays on PATH, when the

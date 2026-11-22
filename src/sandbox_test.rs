@@ -50,33 +50,55 @@ fn bwrap_binds_only_what_is_writable() {
     );
 }
 
+fn choice(mode: SandboxMode, from_cli: bool) -> Choice {
+    Choice {
+        mode,
+        from_cli,
+        line: Some(7),
+    }
+}
+
 #[test]
-fn off_runs_the_command_as_it_is() {
-    let tmp = tempfile::tempdir().unwrap();
-    let mut cmd = Command::new("cargo");
-    cmd.arg("install");
-    let out = wrap(
-        cmd,
-        SandboxMode::Off,
-        &writable(tmp.path()),
-        &tmp.path().join("tmp"),
-    )
-    .unwrap();
-    assert_eq!(out.get_program(), "cargo");
+fn the_mode_decides_what_a_missing_sandbox_means() {
+    let missing: std::result::Result<Kind, String> = Err("bwrap isn't on PATH".into());
+    let found = Ok(Kind::SandboxExec);
+
+    assert_eq!(
+        decide("t", &choice(SandboxMode::Off, false), &found).unwrap(),
+        None
+    );
+    assert_eq!(
+        decide("t", &choice(SandboxMode::Auto, false), &found).unwrap(),
+        Some(Kind::SandboxExec)
+    );
+    // Auto carries on without one; require fails, naming where it was required.
+    assert_eq!(
+        decide("t", &choice(SandboxMode::Auto, false), &missing).unwrap(),
+        None
+    );
+    let err = decide("t", &choice(SandboxMode::Require, false), &missing)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("sandbox = \"require\""), "{err}");
+    assert!(err.contains("bwrap isn't on PATH"), "{err}");
+    let err = decide("t", &choice(SandboxMode::Require, true), &missing)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("--sandbox require"), "{err}");
+}
+
+#[test]
+fn kinds_have_record_names() {
+    assert_eq!(Kind::SandboxExec.name(), "sandbox-exec");
+    assert_eq!(Kind::Bwrap(PathBuf::from("/usr/bin/bwrap")).name(), "bwrap");
 }
 
 /// A sandboxed `/bin/sh -c script` in `dir`, or `None` where this machine has no sandbox.
 fn sandboxed(dir: &Path, script: &str) -> Option<std::process::Output> {
-    available().ok()?;
+    let kind = available().ok()?;
     let mut cmd = Command::new("/bin/sh");
     cmd.args(["-c", script]).current_dir(dir);
-    let mut cmd = wrap(
-        cmd,
-        SandboxMode::Require,
-        &writable(dir),
-        &dir.join("out/tmp"),
-    )
-    .unwrap();
+    let mut cmd = wrap(cmd, &kind, &writable(dir), &dir.join("out/tmp")).unwrap();
     Some(cmd.output().unwrap())
 }
 

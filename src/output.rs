@@ -146,7 +146,20 @@ pub enum Record {
     },
     /// `[build].sandbox = "auto"` found no sandbox, so the build runs without one.
     SandboxMissing {
+        tool: String,
+        file: String,
+        /// 1-based: the `sandbox` or `sandbox-os` setting that applied, when one did.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        line: Option<usize>,
         message: String,
+    },
+    /// A tool `install` built, and the sandbox it built in: `sandbox-exec`, `bwrap` or
+    /// `none`.
+    Built {
+        tool: String,
+        tool_version: String,
+        sandbox: String,
+        bins: Vec<String>,
     },
     Advisory {
         tool: String,
