@@ -26,7 +26,7 @@ pub const FILE: &str = "build-review.toml";
 
 const TEMPLATE: &str =
     "# Code that runs while building this tool. `install` halts on anything not listed here.
-# Review it on the review screen, or record it with `--auto-approve`. See docs/build-review.md.
+# Review it on the review screen: `cargo project-tools review <tool>`. See docs/build-review.md.
 
 ";
 
@@ -1120,7 +1120,7 @@ fn report(
                 path: e.path.clone(),
             });
             eprintln!(
-                "  warning: unused [[{}]] {}{} in {}; --auto-approve removes it",
+                "  warning: unused [[{}]] {}{} in {}; delete it",
                 e.kind,
                 shown(&e.package),
                 shown(&e.path),
@@ -1135,6 +1135,10 @@ fn report(
     for (item, previous) in pending {
         let note = match (known_for(known, item), previous) {
             (Some(k), _) => format!(" (reviewed for {}: {})", shown(&k.tool), k.action.as_str()),
+            (None, Some(p)) if p.hash == item.hash && p.kind == Kind::BuildScript => format!(
+                " (crate changed, script unchanged; was {})",
+                p.action.as_str()
+            ),
             (None, Some(p)) => format!(" (changed; was {})", p.action.as_str()),
             (None, None) => String::new(),
         };
@@ -1165,7 +1169,7 @@ fn report(
             tool: tool.clone(),
             file: raw(path),
             line: previous.and_then(|p| p.line),
-            item: review_item(item, *previous, found, raw(&item.location)),
+            item: Box::new(review_item(item, *previous, found, raw(&item.location))),
             entry: text
                 .lines()
                 .map(|l| format!("{}\n", l.trim_start()))
@@ -1180,8 +1184,7 @@ fn report(
         let tool = shown(&tool);
         bail!(
             "{what} recorded in {}; run `cargo project-tools review {tool}` where you have a \
-             terminal for the review screen (or with --auto-approve after reading the files), \
-             then commit {}",
+             terminal for the review screen, then commit {}",
             rel(path),
             rel(path)
         )
@@ -1193,9 +1196,10 @@ fn report(
         )
     }
     bail!(
-        "{what} recorded in {}; review it where you have a terminal (run this command there \
-         for the review screen, or with --auto-approve after reading the files), then \
-         commit {}",
+        "{what} recorded in {}; run this command where you have a terminal for the review \
+         screen, or put each entry listed above in {} with the action the reviewer chose, \
+         then commit {}",
+        rel(path),
         rel(path),
         rel(path)
     )
@@ -1229,11 +1233,19 @@ fn review_item(
         commit,
         location,
         previous: previous.map(|p| {
-            let (sha256, checksum) = hash(p.kind, &p.hash);
+            let (sha256, mut checksum) = hash(p.kind, &p.hash);
+            let mut commit = None;
+            match &p.pin {
+                Pin::Checksum(c) => checksum = Some(c.clone()),
+                Pin::Commit(c) => commit = Some(c.clone()),
+                Pin::None => {}
+            }
             output::Previous {
                 action: p.action.as_str().to_string(),
                 sha256,
                 checksum,
+                commit,
+                changed: changed_keys(item, p),
             }
         }),
         known: known.map(|k| output::Known {
@@ -1241,6 +1253,35 @@ fn review_item(
             action: k.action.as_str().to_string(),
         }),
     }
+}
+
+/// The keys whose values differ between a pending item and the entry it replaces.
+fn changed_keys(item: &Item, previous: &Entry) -> Vec<&'static str> {
+    let mut keys = Vec::new();
+    if item.hash != previous.hash {
+        keys.push(previous.kind.hash_key());
+    }
+    if item.pin != previous.pin {
+        for pin in [&previous.pin, &item.pin] {
+            if let Some((key, _)) = pin.key()
+                && !keys.contains(&key)
+            {
+                keys.push(key);
+            }
+        }
+    }
+    keys
+}
+
+/// The key and value that name the entry a pending item replaces: its hash, or, when only
+/// the crate changed, its pin.
+fn replaced_key<'a>(item: &Item, previous: &'a Entry) -> (&'static str, &'a str) {
+    if item.hash == previous.hash
+        && let Some(pin) = previous.pin.key()
+    {
+        return pin;
+    }
+    (previous.kind.hash_key(), &previous.hash)
 }
 
 /// The review-file entry for a pending item, indented: with the decision another tool
@@ -1281,10 +1322,10 @@ fn paste_ready(
     };
     add_entry(&mut doc, item, action, file.as_deref());
     if let Some(p) = previous {
+        let (key, value) = replaced_key(item, p);
         out.push_str(&format!(
-            "    # replaces the entry with {} = \"{}\"\n",
-            p.kind.hash_key(),
-            p.hash
+            "    # replaces the entry with {key} = \"{}\"\n",
+            shown_line(value)
         ));
     }
     for line in doc.to_string().lines() {
