@@ -36,8 +36,16 @@ impl App<'_> {
             }
             return;
         }
+        if self.dialog.is_some() {
+            self.dialog_key(key);
+            return;
+        }
         if ctrl && key.code == KeyCode::Char('w') {
             self.chord = true;
+            return;
+        }
+        if key.code == KeyCode::Char('v') {
+            self.open_advisory(None);
             return;
         }
         match self.focus {
@@ -86,10 +94,51 @@ impl App<'_> {
         }
     }
 
+    fn dialog_key(&mut self, key: KeyEvent) {
+        let Some(dialog) = &mut self.dialog else {
+            return;
+        };
+        let n = dialog.ids.len();
+        let view = &mut dialog.view;
+        match key.code {
+            KeyCode::Esc if view.selected().is_some() => view.clear_selection(),
+            KeyCode::Esc | KeyCode::Char('q') => self.dialog = None,
+            KeyCode::Right | KeyCode::Char('l' | 'n') => {
+                dialog.index = (dialog.index + 1) % n;
+                dialog.view.reset();
+            }
+            KeyCode::Left | KeyCode::Char('h' | 'p') => {
+                dialog.index = (dialog.index + n - 1) % n;
+                dialog.view.reset();
+            }
+            KeyCode::Down | KeyCode::Char('j') => view.scroll(1),
+            KeyCode::Up | KeyCode::Char('k') => view.scroll(-1),
+            KeyCode::PageDown | KeyCode::Char(' ') => view.scroll(view.page()),
+            KeyCode::PageUp => view.scroll(-view.page()),
+            KeyCode::Char('y') => {
+                if let Some(text) = view.selected() {
+                    self.copy(&text);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn details_key(&mut self, key: KeyEvent) {
         let count = self.detail.as_ref().map_or(0, |d| d.versions.len());
         let cursor = self.versions_state.selected();
         match key.code {
+            KeyCode::PageDown => self.details.scroll(self.details.page()),
+            KeyCode::PageUp => self.details.scroll(-self.details.page()),
+            // Without a versions list, j and k scroll the text.
+            KeyCode::Char('j') | KeyCode::Down if count == 0 => self.details.scroll(1),
+            KeyCode::Char('k') | KeyCode::Up if count == 0 => self.details.scroll(-1),
+            KeyCode::Char('y') => {
+                if let Some(text) = self.details.selected() {
+                    self.copy(&text);
+                }
+            }
+            KeyCode::Esc if self.details.selected().is_some() => self.details.clear_selection(),
             KeyCode::Char('j') | KeyCode::Down if count > 0 => {
                 let next = cursor.map_or(0, |c| (c + 1).min(count - 1));
                 self.versions_state.select(Some(next));
@@ -117,13 +166,57 @@ impl App<'_> {
         }
     }
 
+    fn dialog_mouse(&mut self, mouse: MouseEvent) {
+        let at = Position::new(mouse.column, mouse.row);
+        let Some(dialog) = &mut self.dialog else {
+            return;
+        };
+        let view = &mut dialog.view;
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if !dialog.area.contains(at) {
+                    self.dialog = None;
+                } else {
+                    view.press(at);
+                }
+            }
+            MouseEventKind::Drag(MouseButton::Left) => view.drag(at),
+            MouseEventKind::Up(MouseButton::Left) => {
+                if let Some(text) = view.release() {
+                    self.copy(&text);
+                }
+            }
+            MouseEventKind::ScrollDown => view.scroll(3),
+            MouseEventKind::ScrollUp => view.scroll(-3),
+            _ => {}
+        }
+    }
+
     fn mouse(&mut self, mouse: MouseEvent) {
+        if self.dialog.is_some() {
+            self.dialog_mouse(mouse);
+            return;
+        }
         let at = Position::new(mouse.column, mouse.row);
         let in_tree = self.areas.tree.contains(at);
         let in_versions = self.areas.versions.contains(at);
+        let in_text = self.details.area.contains(at);
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                if in_tree {
+                if in_text {
+                    self.focus = Focus::Details;
+                    let view = self
+                        .details
+                        .hit(at)
+                        .and_then(|hit| self.areas.views.iter().find(|(h, _)| *h == hit))
+                        .map(|(_, id)| id.clone());
+                    match view {
+                        Some(id) => self.open_advisory(Some(&id)),
+                        None => {
+                            self.details.press(at);
+                        }
+                    }
+                } else if in_tree {
                     self.focus = Focus::Tree;
                     let row = (mouse.row - self.areas.tree.y) as usize + self.tree_state.offset();
                     let Some(&r) = self.visible().get(row) else {
@@ -160,6 +253,14 @@ impl App<'_> {
                     self.press(button);
                 }
             }
+            MouseEventKind::Drag(MouseButton::Left) => self.details.drag(at),
+            MouseEventKind::Up(MouseButton::Left) => {
+                if let Some(text) = self.details.release() {
+                    self.copy(&text);
+                }
+            }
+            MouseEventKind::ScrollDown if in_text => self.details.scroll(3),
+            MouseEventKind::ScrollUp if in_text => self.details.scroll(-3),
             MouseEventKind::ScrollDown | MouseEventKind::ScrollUp if in_tree => {
                 let code = if mouse.kind == MouseEventKind::ScrollDown {
                     KeyCode::Down

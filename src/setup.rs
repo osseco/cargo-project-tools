@@ -20,17 +20,31 @@ use crate::process;
 use crate::source::Checkout;
 use crate::source::registry;
 
-/// A package in the dependency tree, as `cargo tree` lists it.
+/// A package in the dependency tree. The tree holds one group per target: first what every
+/// target builds, then for each target only what it adds. Each group starts with the tool at
+/// depth 0.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dep {
     pub depth: usize,
     pub name: String,
     pub version: Version,
-    /// What cargo shows in parentheses: a path or git source; empty for crates.io.
+    /// What cargo shows in parentheses: a path or git source, or `proc-macro`; empty for
+    /// crates.io.
     pub source: String,
-    /// Listed before; its dependencies are shown there.
+    /// Listed before in its group; its dependencies are shown there.
     pub repeat: bool,
+    /// A build dependency of the package above it.
+    pub build: bool,
+    /// In a target's group: on the way to what the target adds, and built for every target.
+    pub shared: bool,
+    /// `None` for what every target builds, else the one target this group is for.
+    pub target: Option<String>,
 }
+
+/// A package as the tree knows it: name, version, source.
+type Pkg = (String, Version, String);
+/// What each package depends on: (build dependency, package).
+type Edges = BTreeMap<Pkg, BTreeSet<(bool, Pkg)>>;
 
 /// What the advisory database says about a package.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +93,8 @@ pub struct Setup {
     pub default_features: bool,
     pub targets: Option<Vec<String>>,
     pub tree: Vec<Dep>,
+    /// Every package built, for any of the targets.
+    pub built: graph::Built,
     pub findings: BTreeMap<(String, Version), Vec<Finding>>,
     /// Each package's versions in the lock when the setup started, the tool's included.
     pub original: BTreeMap<String, BTreeSet<Version>>,
@@ -111,6 +127,7 @@ impl Setup {
             default_features,
             targets,
             tree: Vec::new(),
+            built: graph::Built::new(),
             findings: BTreeMap::new(),
             original: BTreeMap::new(),
             auditor,
@@ -185,29 +202,46 @@ impl Setup {
         Ok(())
     }
 
-    /// The tree and findings for the current features, targets and lock.
+    /// The tree and findings for the current features, targets and lock. `cargo tree` runs
+    /// once per target: given several, it prints a tree for each without saying which.
     fn refresh(&mut self) -> Result<()> {
-        let mut cmd = self.cargo("tree");
-        cmd.args([
-            "--locked",
-            "--edges",
-            "normal,build",
-            "--prefix",
-            "depth",
-            "--format",
-            "{p}",
-        ])
-        .args(self.feature_args())
-        .args(graph::target_args(self.targets.as_deref()));
-        self.tree = parse_tree(&self.run(cmd)?)?;
-        let built: graph::Built = self
-            .tree
+        let targets: Vec<Option<String>> = match &self.targets {
+            Some(list) if !list.is_empty() => list.iter().cloned().map(Some).collect(),
+            _ => vec![None],
+        };
+        let mut graphs = Vec::new();
+        for target in targets {
+            let mut cmd = self.cargo("tree");
+            cmd.args([
+                "--locked",
+                "--edges",
+                "normal,build",
+                "--prefix",
+                "indent",
+                "--charset",
+                "ascii",
+                "--format",
+                "{p}",
+            ])
+            .args(self.feature_args())
+            .args(graph::target_args(
+                target.as_ref().map(std::slice::from_ref),
+            ));
+            let lines = parse_tree(&self.run(cmd)?)?;
+            graphs.push((target.unwrap_or_default(), edges(&lines)));
+        }
+        self.built = graphs
             .iter()
-            .map(|d| (d.name.clone(), d.version.clone()))
+            .flat_map(|(_, (_, e))| e.keys())
+            .map(|(name, version, _)| (name.clone(), version.clone()))
             .collect();
-        let report =
-            self.auditor
-                .audit(&self.checkout.lock_path(), &self.name, self.git, &built)?;
+        self.tree = layout(&graphs);
+        let report = self.auditor.audit(
+            &self.checkout.lock_path(),
+            &self.name,
+            self.git,
+            &self.built,
+        )?;
         self.findings = findings(&report, &self.ignore, &self.today);
         Ok(())
     }
@@ -332,10 +366,10 @@ impl Setup {
             return Vec::new();
         }
         let now: BTreeSet<&Version> = self
-            .tree
+            .built
             .iter()
-            .filter(|d| d.name == name)
-            .map(|d| &d.version)
+            .filter(|(n, _)| n == name)
+            .map(|(_, v)| v)
             .collect();
         original
             .iter()
@@ -346,11 +380,6 @@ impl Setup {
 
     /// How many packages are built, and how many have open vulnerabilities and warnings.
     pub fn counts(&self) -> (usize, usize, usize) {
-        let built: BTreeSet<(&str, &Version)> = self
-            .tree
-            .iter()
-            .map(|d| (d.name.as_str(), &d.version))
-            .collect();
         let open = |vuln: bool| {
             self.findings
                 .values()
@@ -360,7 +389,7 @@ impl Setup {
                 })
                 .count()
         };
-        (built.len(), open(true), open(false))
+        (self.built.len(), open(true), open(false))
     }
 
     /// The packages in the lock with build-time code, by kind (`build-script`, `proc-macro`,
@@ -407,21 +436,42 @@ impl Setup {
         Ok(out)
     }
 
+    /// The advisory with this id, if the database has it.
+    pub fn advisory(&self, id: &str) -> Option<&rustsec::Advisory> {
+        self.auditor.advisory(id)
+    }
+
     /// The lock as it is now.
     pub fn lock_path(&self) -> std::path::PathBuf {
         self.checkout.lock_path()
     }
 }
 
-/// Parse `cargo tree --prefix depth --format {p}` lines: `2name v1.2.3 (source) (*)`.
+/// Parse `cargo tree --prefix indent --charset ascii --format {p}` lines:
+/// `|   |-- name v1.2.3 (source) (*)`, four columns a level. A `[build-dependencies]` line
+/// marks the dependencies after it, at the next level, as build dependencies.
 fn parse_tree(out: &str) -> Result<Vec<Dep>> {
     let mut deps = Vec::new();
+    // Whether the dependencies at each depth are build dependencies, so far.
+    let mut section: Vec<bool> = Vec::new();
     for line in out.lines().filter(|l| !l.trim().is_empty()) {
-        let digits = line.chars().take_while(char::is_ascii_digit).count();
-        let (depth, rest) = line.split_at(digits);
-        let depth: usize = depth
-            .parse()
-            .with_context(|| format!("unexpected `cargo tree` line: {line}"))?;
+        let indent = line
+            .chars()
+            .take_while(|c| matches!(c, '|' | '`' | '-' | ' '))
+            .count();
+        // The prefix is ASCII, one byte a character.
+        let rest = &line[indent..];
+        let depth = indent / 4;
+        if let Some(header) = rest.strip_prefix('[') {
+            let level = depth + 1;
+            section.truncate(level);
+            section.resize(level + 1, false);
+            section[level] = header.starts_with("build-dependencies]");
+            continue;
+        }
+        let build = section.get(depth).copied().unwrap_or(false);
+        // What follows at the next level starts as normal dependencies.
+        section.truncate(depth + 1);
         let (rest, repeat) = match rest.strip_suffix(" (*)") {
             Some(r) => (r, true),
             None => (rest, false),
@@ -447,12 +497,148 @@ fn parse_tree(out: &str) -> Result<Vec<Dep>> {
             version,
             source,
             repeat,
+            build,
+            shared: false,
+            target: None,
         });
     }
     if deps.is_empty() {
         bail!("`cargo tree` listed nothing");
     }
+    if deps[0].depth != 0 || deps[1..].iter().any(|d| d.depth == 0) {
+        bail!("`cargo tree` listed more than one root");
+    }
     Ok(deps)
+}
+
+fn pkg(d: &Dep) -> Pkg {
+    (d.name.clone(), d.version.clone(), d.source.clone())
+}
+
+/// The root and what each package depends on, from one `cargo tree`. Cargo lists a package's
+/// dependencies only where it first shows it; a package it shows more than once, with other
+/// features, gets what any of them depends on.
+fn edges(lines: &[Dep]) -> (Pkg, Edges) {
+    let mut edges = Edges::new();
+    let mut path: Vec<Pkg> = Vec::new();
+    for d in lines {
+        let p = pkg(d);
+        edges.entry(p.clone()).or_default();
+        path.truncate(d.depth);
+        if let Some(parent) = path.last() {
+            edges
+                .entry(parent.clone())
+                .or_default()
+                .insert((d.build, p.clone()));
+        }
+        path.push(p);
+    }
+    (pkg(&lines[0]), edges)
+}
+
+/// The tree to show: what every target builds, then per target only the way to what it
+/// adds. With one target (or `--target all`) there's only the first group.
+fn layout(graphs: &[(String, (Pkg, Edges))]) -> Vec<Dep> {
+    let Some((_, (root, first))) = graphs.first() else {
+        return Vec::new();
+    };
+    // The dependencies every target has.
+    let mut common = Edges::new();
+    for (p, children) in first {
+        let mut shared = children.clone();
+        for (_, (_, other)) in &graphs[1..] {
+            match other.get(p) {
+                Some(c) => shared.retain(|e| c.contains(e)),
+                None => shared.clear(),
+            }
+        }
+        common.insert(p.clone(), shared);
+    }
+    let mut out = Vec::new();
+    let mut walk = Walk {
+        out: &mut out,
+        edges: &common,
+        common: &common,
+        target: None,
+        seen: BTreeSet::new(),
+        adds: BTreeMap::new(),
+    };
+    walk.push(root, 0, false, false);
+    if graphs.len() > 1 {
+        for (target, (root, edges)) in graphs {
+            let mut walk = Walk {
+                out: &mut out,
+                edges,
+                common: &common,
+                target: Some(target),
+                seen: BTreeSet::new(),
+                adds: BTreeMap::new(),
+            };
+            if walk.adds(root) {
+                walk.push(root, 0, false, false);
+            }
+        }
+    }
+    out
+}
+
+/// One group of the tree, depth first.
+struct Walk<'a> {
+    out: &'a mut Vec<Dep>,
+    edges: &'a Edges,
+    common: &'a Edges,
+    /// `None` for the group of what every target builds.
+    target: Option<&'a String>,
+    seen: BTreeSet<Pkg>,
+    /// Whether a package leads to something only this target builds.
+    adds: BTreeMap<Pkg, bool>,
+}
+
+impl Walk<'_> {
+    fn is_common(&self, parent: &Pkg, edge: &(bool, Pkg)) -> bool {
+        self.common.get(parent).is_some_and(|c| c.contains(edge))
+    }
+
+    fn adds(&mut self, p: &Pkg) -> bool {
+        if let Some(&known) = self.adds.get(p) {
+            return known;
+        }
+        // Dependency graphs have no cycles, but don't loop if one did.
+        self.adds.insert(p.clone(), false);
+        let edges = self.edges;
+        let found = edges
+            .get(p)
+            .into_iter()
+            .flatten()
+            .any(|e| !self.is_common(p, e) || self.adds(&e.1));
+        self.adds.insert(p.clone(), found);
+        found
+    }
+
+    fn push(&mut self, p: &Pkg, depth: usize, build: bool, shared: bool) {
+        let repeat = !self.seen.insert(p.clone());
+        self.out.push(Dep {
+            depth,
+            name: p.0.clone(),
+            version: p.1.clone(),
+            source: p.2.clone(),
+            repeat,
+            build,
+            shared,
+            target: self.target.cloned(),
+        });
+        if repeat {
+            return;
+        }
+        let edges = self.edges;
+        for e in edges.get(p).into_iter().flatten() {
+            let common = self.target.is_some() && self.is_common(p, e);
+            if common && !self.adds(&e.1) {
+                continue;
+            }
+            self.push(&e.1, depth + 1, e.0, common);
+        }
+    }
 }
 
 /// Whether the tool's ignore file covers `id` (or one of its aliases) today.

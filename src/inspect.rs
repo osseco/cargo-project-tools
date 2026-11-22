@@ -86,11 +86,7 @@ fn state(
     code: &BTreeSet<(String, String, Version)>,
     recorded: &BTreeSet<(String, String)>,
 ) -> State {
-    let packages: BTreeSet<(String, Version)> = setup
-        .tree
-        .iter()
-        .map(|d| (d.name.clone(), d.version.clone()))
-        .collect();
+    let packages: BTreeSet<(String, Version)> = setup.built.clone();
     let findings = setup
         .findings
         .iter()

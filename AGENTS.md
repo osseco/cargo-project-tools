@@ -94,7 +94,7 @@ Never stage `site/dist/` or `site/node_modules/`.
 - `src/vendor.rs`: `cargo vendor` into `targets/<tool>/vendor`; builds use it through source replacement.
 - `src/graph.rs`: which locked packages a tool builds with its features and targets (`cargo tree` on a scratch copy).
 - `src/setup.rs`: the model behind interactive setup: a tool's features, the dependency tree they build (`cargo tree`), audit findings per package, why a package is built, version choices, and moving a dependency or the tool. Captures cargo's output.
-- `src/setup_tui.rs` and `src/setup_tui/`: the setup screen for `add -i`/`update -i` over a `Setup`: `app.rs` holds the state and the slow steps (run after `working…` is drawn), `input.rs` and `render.rs` handle keys, mouse and drawing.
+- `src/setup_tui.rs` and `src/setup_tui/`: the setup screen for `add -i`/`update -i` over a `Setup`: `app.rs` holds the state and the slow steps (run after `working…` is drawn), `input.rs` and `render.rs` handle keys, mouse and drawing, `text_view.rs` is text that scrolls and copies a mouse selection (OSC 52), and `advisory.rs` turns an advisory into safe text for its dialog.
 - `src/inspect.rs`: `inspect`, the setup model without the screen: what the features build, and what each other feature adds.
 - `src/targets.rs`: the host triple, the check that it and `--target` are approved targets, and the target suggestions for `init` (this machine and GitHub workflow runners).
 - `src/audit.rs`: matches locks against the advisory database with rustsec (root and git packages included), our own yanked check, ignore list, fix suggestions.

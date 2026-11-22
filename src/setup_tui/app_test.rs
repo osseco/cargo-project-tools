@@ -81,7 +81,7 @@ fn rows_start_with_the_tool_features_and_direct_dependencies() {
             "f:extra",
             "f:unused",
             "h:Dependencies",
-            "root",
+            "root:",
             "d:dep@1.0.0#tool/dep",
             "d:opt@0.1.0#tool/opt",
         ]
@@ -232,11 +232,11 @@ fn done_hands_back_the_setup_and_cancel_does_not() {
 #[test]
 fn folding_survives_a_refresh() {
     let (mut app, _guard) = new_app();
-    let root = row_of(&app, "root");
+    let root = row_of(&app, "root:");
     app.rows[root].expanded = false;
     app.queue(Op::ToggleFeature("unused".into()));
     app.run_pending();
-    let root = row_of(&app, "root");
+    let root = row_of(&app, "root:");
     assert!(!app.rows[root].expanded);
     assert!(!labels(&app).iter().any(|l| l.starts_with("d:dep")));
 }
@@ -299,4 +299,110 @@ fn a_moved_tool_shows_what_it_was() {
     // The tree's root is the tool itself, and isn't marked twice.
     assert_eq!(screen.matches("(was 1.0.0)").count(), 2, "{screen}");
     drop(next);
+}
+
+/// Where `text` is on the screen: (column, row).
+fn find(screen: &str, text: &str) -> (u16, u16) {
+    screen
+        .lines()
+        .enumerate()
+        .find_map(|(y, line)| {
+            let x = line.find(text)?;
+            Some((line[..x].chars().count() as u16, y as u16))
+        })
+        .unwrap_or_else(|| panic!("{text} not on screen:\n{screen}"))
+}
+
+fn mouse(app: &mut App, kind: MouseEventKind, x: u16, y: u16) {
+    app.handle(Event::Mouse(MouseEvent {
+        kind,
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    }));
+}
+
+/// The app with what it copies kept.
+fn copying_app() -> (
+    App<'static>,
+    std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    impl Sized,
+) {
+    let (mut app, guard) = new_app();
+    let copied = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let sink = copied.clone();
+    app.copier = Box::new(move |t| sink.borrow_mut().push(t.to_string()));
+    (app, copied, guard)
+}
+
+#[test]
+fn view_opens_the_advisory_and_esc_closes_it() {
+    let (mut app, _guard) = new_app();
+    app.select(row_of(&app, "d:dep@1.0.0#tool/dep"));
+    let screen = draw(&mut app);
+    let (x, y) = find(&screen, "[view]");
+    click(&mut app, x + 1, y);
+    let screen = draw(&mut app);
+    assert!(app.dialog.is_some());
+    assert!(
+        screen.contains("RUSTSEC-2024-0001 · Esc closes"),
+        "{screen}"
+    );
+    assert!(screen.contains(">=1.1.0"), "{screen}");
+    assert!(screen.contains("Description."), "{screen}");
+    press(&mut app, KeyCode::Esc);
+    assert!(app.dialog.is_none());
+    // `v` opens it too; a click outside closes it.
+    press(&mut app, KeyCode::Char('v'));
+    draw(&mut app);
+    assert!(app.dialog.is_some());
+    click(&mut app, 0, 0);
+    assert!(app.dialog.is_none());
+}
+
+#[test]
+fn v_without_an_advisory_says_so() {
+    let (mut app, _guard) = new_app();
+    app.select(row_of(&app, "d:opt@0.1.0#tool/opt"));
+    press(&mut app, KeyCode::Char('v'));
+    assert!(app.dialog.is_none());
+    assert_eq!(app.message.clone().unwrap().0, "no advisory to view here");
+}
+
+#[test]
+fn dragging_in_the_details_copies_and_stays_out_of_the_tree() {
+    let (mut app, copied, _guard) = copying_app();
+    app.select(row_of(&app, "d:dep@1.0.0#tool/dep"));
+    let screen = draw(&mut app);
+    let (x, y) = find(&screen, "vulnerability RUSTSEC");
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), x, y);
+    // Into the tree: kept at the details' left edge.
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), 0, y);
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), x + 13, y);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), x + 13, y);
+    assert_eq!(*copied.borrow(), ["vulnerability"]);
+    assert_eq!(app.message.clone().unwrap().0, "copied 13 characters");
+    // `y` copies the selection again; Esc clears it.
+    press(&mut app, KeyCode::Char('y'));
+    assert_eq!(copied.borrow().len(), 2);
+    press(&mut app, KeyCode::Esc);
+    press(&mut app, KeyCode::Char('y'));
+    assert_eq!(copied.borrow().len(), 2);
+}
+
+#[test]
+fn the_advisory_scrolls_and_copies() {
+    let (mut app, copied, _guard) = copying_app();
+    app.select(row_of(&app, "d:dep@1.0.0#tool/dep"));
+    press(&mut app, KeyCode::Char('v'));
+    let screen = draw(&mut app);
+    let (x, y) = find(&screen, "Dep is broken");
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), x, y);
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), x + 3, y);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), x + 3, y);
+    assert_eq!(*copied.borrow(), ["Dep"]);
+    // Short enough to fit: scrolling keeps it in place.
+    press(&mut app, KeyCode::PageDown);
+    let screen = draw(&mut app);
+    assert!(screen.contains("Dep is broken"), "{screen}");
 }

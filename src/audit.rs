@@ -261,6 +261,11 @@ impl Auditor {
         self_check(&self.db)
     }
 
+    /// The advisory with this id, if the database has it.
+    pub fn advisory(&self, id: &str) -> Option<&rustsec::Advisory> {
+        self.db.get(&id.parse().ok()?)
+    }
+
     /// `root` is the tool's package name; `git_tool` whether it's installed from git. Only
     /// the lock's packages in `built` are checked.
     pub fn audit(
