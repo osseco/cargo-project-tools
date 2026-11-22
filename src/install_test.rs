@@ -111,3 +111,77 @@ fn stamp_depends_on_targets() {
     assert_ne!(key(Some(&linux)), key(Some(&both)));
     assert_ne!(key(Some(&linux)), key(None));
 }
+
+#[test]
+fn the_build_is_offline_and_puts_bin_last_on_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = Project {
+        root: tmp.path().to_path_buf(),
+    };
+    let target = tmp.path().join("t");
+    fs::create_dir_all(&target).unwrap();
+    let cmd = build_command(&project, &target, tmp.path(), &[], &[]).unwrap();
+    let args: Vec<_> = cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(args.iter().filter(|a| *a == "--offline").count(), 1);
+    let path = cmd
+        .get_envs()
+        .find(|(k, _)| *k == "PATH")
+        .and_then(|(_, v)| v)
+        .unwrap();
+    assert_eq!(std::env::split_paths(path).last(), Some(project.bin_dir()));
+
+    // Not twice when the user passed it.
+    let cmd = build_command(&project, &target, tmp.path(), &[], &["--offline".into()]).unwrap();
+    assert_eq!(cmd.get_args().filter(|a| *a == "--offline").count(), 1);
+}
+
+#[test]
+fn the_sandbox_choice_names_the_setting_that_applied() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = Project {
+        root: tmp.path().to_path_buf(),
+    };
+    let os = std::env::consts::OS;
+    let text = format!(
+        "[build]\nsandbox = \"auto\"\n\n[build.sandbox-os]\n{os} = \"require\"\n\n[tool.t]\nversion = \"1.0.0\"\n"
+    );
+    fs::write(project.config_path(), &text).unwrap();
+    let config: crate::config::Config = toml::from_str(&text).unwrap();
+    let tool = &config.tool["t"];
+    let build = config.build.merged(tool.build.as_ref());
+
+    let c = sandbox_choice(&project, "t", tool, &build, &install_args(&[]));
+    assert_eq!(c.mode, SandboxMode::Require);
+    assert_eq!(c.line, Some(5));
+    assert!(!c.from_cli);
+
+    let c = sandbox_choice(
+        &project,
+        "t",
+        tool,
+        &build,
+        &install_args(&["--sandbox", "off"]),
+    );
+    assert_eq!((c.mode, c.from_cli, c.line), (SandboxMode::Off, true, None));
+    let c = sandbox_choice(
+        &project,
+        "t",
+        tool,
+        &build,
+        &install_args(&["--no-sandbox"]),
+    );
+    assert_eq!(c.mode, SandboxMode::Off);
+    assert!(
+        crate::cli::Cli::try_parse_from([
+            "cargo-project-tools",
+            "install",
+            "--sandbox",
+            "auto",
+            "--no-sandbox"
+        ])
+        .is_err()
+    );
+}

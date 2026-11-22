@@ -150,7 +150,7 @@ To check all this without building, use [`check`](#check).
 | `--profile <name>`, `--debug` | Override `[build].profile` |
 | `--target <triple>` | Override `[build].target` |
 | `--config <value>` | Extra cargo `--config` values |
-| `--no-sandbox` | Build without the [OS sandbox](configuration.md#sandbox), whatever `[build].sandbox` says |
+| `--sandbox <mode>` | The [OS sandbox](configuration.md#sandbox) for this run, `auto`, `require` or `off`, whatever `[build].sandbox` and `[build.sandbox-os]` say |
 | `-j`, `--offline`, `--frozen`, `-q`, `-v`, `--color`, `--keep-going`, `--timings` | Passed through to cargo |
 
 ## check
@@ -169,6 +169,7 @@ It never approves anything, so it has no `--auto-approve`, `--approve-target` or
 | `--no-audit` | Skip the audit |
 | `--deny-warnings` | Also fail on warnings that aren't ignored |
 | `--target <triple>`, `--config <value>`, `--profile <name>`, `--debug`, `--offline` | As for `install`: what would be built, and so what is checked |
+| `--sandbox <mode>` | As for `install`. `check` probes the [sandbox](configuration.md#sandbox) for every tool, up to date or not: `require` without one fails, `auto` writes `sandbox-missing` |
 
 When build-time code isn't recorded, the error names [`review`](#review).
 
@@ -211,7 +212,7 @@ The checksum sits next to the binaries. It catches corruption, partial cache res
 | --- | --- |
 | `--repair` | Rebuild tools that fail, and require the rebuild to match |
 | `--no-audit`, `--deny-warnings` | As for `install`; only with `--repair` |
-| `--profile <name>`, `--debug`, `--target <triple>`, `--config <value>`, `-j`, `--offline`, … | The build options of `install`. Use the ones you installed with, or the rebuild won't match |
+| `--profile <name>`, `--debug`, `--target <triple>`, `--config <value>`, `-j`, `--offline`, `--sandbox <mode>`, … | The build options of `install`. Use the ones you installed with, or the rebuild won't match (the sandbox doesn't change the binary) |
 
 ### When a repair can match
 
@@ -303,7 +304,8 @@ With `--message-format json`, stdout holds only JSON records, one per line. All 
 | `review-pending` | Build-time code has no decision in [`build-review.toml`](build-review.md): none recorded, or `pending` | `tool`, `file`, `line`, `item`, `spec`, `entry` |
 | `review-unused` | An entry in `build-review.toml` matches nothing the tool builds | `tool`, `file`, `line`, `type`, `package`, `path` |
 | `target-missing` | This machine or `--target` isn't in the tool's [`targets`](configuration.md#targets) | `tool`, `file`, `line`, `targets` |
-| `sandbox-missing` | `[build].sandbox = "auto"` found no working [sandbox](configuration.md#sandbox), so the build runs without one | `message` |
+| `sandbox-missing` | The sandbox mode is `auto` and there's no working [sandbox](configuration.md#sandbox), so the tool builds without one | `tool`, `file`, `line` (the `sandbox` or `sandbox-os` setting that applied; left out for the default and `--sandbox`), `message` |
+| `built` | `install` built a tool | `tool`, `tool_version`, `sandbox` (`sandbox-exec`, `bwrap` or `none`), `bins` |
 | `advisory` | A finding of the [audit](#audit) that isn't ignored | `tool`, `file`, `line`, `id`, `type`, `package`, `package_version`, `title`, `patched`, `severity`, `fix` |
 | `ignore-unused` | An ignore that matched nothing | `tool`, `file`, `line`, `id` |
 | `ignore-expired` | An ignore past its `expires` date | `tool`, `file`, `line`, `id`, `expires` |

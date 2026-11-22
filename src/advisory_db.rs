@@ -81,6 +81,9 @@ fn ensure_with(
     now: u64,
     get: impl FnOnce(Option<&str>) -> Result<Fetched>,
 ) -> Result<rustsec::Database> {
+    // Runs in parallel (or CI jobs sharing a cache) take turns: the first fetches, and the
+    // others then find the copy fresh.
+    let _lock = lock(path)?;
     let state = read_state(path);
     let mut fetched = None;
     match decide(state.as_ref(), policy, max_age, now)? {
@@ -105,6 +108,35 @@ fn ensure_with(
         None => rustsec::Database::open(path)
             .with_context(|| format!("opening advisory database {}", path.display())),
     }
+}
+
+/// An exclusive lock on `<path>.lock`, held until it's dropped. Where it can't be created (a
+/// read-only project), there's nothing to race with, so there's no lock either.
+fn lock(path: &Path) -> Result<Option<fs::File>> {
+    let lock_path = path.with_extension("lock");
+    if let Some(parent) = lock_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let file = match fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+    {
+        Ok(f) => f,
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::ReadOnlyFilesystem | std::io::ErrorKind::PermissionDenied
+            ) =>
+        {
+            return Ok(None);
+        }
+        Err(e) => return Err(e).with_context(|| format!("opening {}", lock_path.display())),
+    };
+    file.lock()
+        .with_context(|| format!("locking {}", lock_path.display()))?;
+    Ok(Some(file))
 }
 
 /// Conditional GET. Returns the new database when the server sent one.

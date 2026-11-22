@@ -13,6 +13,7 @@ const IGNORED: &[&str] = &[
     "/bin/",
     "/targets/",
     "/advisory-db/",
+    "/advisory-db.lock",
     // Left behind if a database download is interrupted.
     "/.advisory-db-*/",
     "/.crates.toml",

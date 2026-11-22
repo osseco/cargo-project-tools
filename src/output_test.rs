@@ -133,3 +133,27 @@ fn sfw_missing_is_a_record_of_its_own() {
         r#"{"version":1,"kind":"sfw-missing","message":"sfw not found on PATH; downloads are not filtered"}"#
     );
 }
+
+#[test]
+fn sandbox_records_name_the_tool_and_setting() {
+    let missing = Record::SandboxMissing {
+        tool: "t".into(),
+        file: "project-tools.toml".into(),
+        line: Some(5),
+        message: "no build sandbox".into(),
+    };
+    assert_eq!(
+        line(&missing),
+        r#"{"version":1,"kind":"sandbox-missing","tool":"t","file":"project-tools.toml","line":5,"message":"no build sandbox"}"#
+    );
+    let built = Record::Built {
+        tool: "t".into(),
+        tool_version: "1.0.0".into(),
+        sandbox: "sandbox-exec".into(),
+        bins: vec!["t".into()],
+    };
+    assert_eq!(
+        line(&built),
+        r#"{"version":1,"kind":"built","tool":"t","tool_version":"1.0.0","sandbox":"sandbox-exec","bins":["t"]}"#
+    );
+}

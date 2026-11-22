@@ -6,6 +6,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result, bail};
 
@@ -22,36 +23,86 @@ pub struct Writable {
     pub files: Vec<PathBuf>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum Kind {
+/// A working sandbox.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Kind {
     SandboxExec,
     Bwrap(PathBuf),
 }
 
-/// `cmd` to run in the build sandbox for `mode`, with `tmp` as its temp directory. `cmd`
-/// itself when the mode is off, or when it's auto and there's no sandbox here.
-pub fn wrap(cmd: Command, mode: SandboxMode, writable: &Writable, tmp: &Path) -> Result<Command> {
-    if mode == SandboxMode::Off {
-        output::note("note: not sandboxing the build (sandbox is off)".to_string());
-        return Ok(cmd);
+impl Kind {
+    /// As records name it.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Kind::SandboxExec => "sandbox-exec",
+            Kind::Bwrap(_) => "bwrap",
+        }
     }
-    let kind = match available() {
-        Ok(kind) => kind,
-        Err(why) if mode == SandboxMode::Require => {
-            bail!("a build sandbox is required (sandbox = \"require\"), but {why}")
-        }
-        Err(why) => {
-            let message = format!(
-                "no build sandbox ({why}); build scripts run with network and write access"
-            );
-            output::note(format!("note: {message}"));
-            output::emit(Record::SandboxMissing { message });
-            return Ok(cmd);
-        }
+}
+
+/// The sandbox mode for one tool, and where it was set, for records.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Choice {
+    pub mode: SandboxMode,
+    /// `--sandbox` (or `--no-sandbox`) rather than `project-tools.toml`.
+    pub from_cli: bool,
+    /// The line in `project-tools.toml` of the setting that applied; none for the default.
+    pub line: Option<usize>,
+}
+
+/// The sandbox to build `tool` in under `choice`: none when the mode is off, or when it's
+/// auto and this machine has no working sandbox (with a note and a `sandbox-missing`
+/// record). Fails under `require` without one. The probe runs once per run.
+pub fn choose(tool: &str, choice: &Choice) -> Result<Option<Kind>> {
+    if choice.mode == SandboxMode::Off {
+        output::note(format!("note: not sandboxing {tool} (sandbox is off)"));
+        return Ok(None);
+    }
+    decide(tool, choice, probe())
+}
+
+/// The sandbox this machine has, or why there's none; checked once per run.
+pub fn probe() -> &'static std::result::Result<Kind, String> {
+    static PROBE: OnceLock<std::result::Result<Kind, String>> = OnceLock::new();
+    PROBE.get_or_init(available)
+}
+
+/// `choose` with the probe's result passed in.
+fn decide(
+    tool: &str,
+    choice: &Choice,
+    probe: &std::result::Result<Kind, String>,
+) -> Result<Option<Kind>> {
+    let why = match (probe, choice.mode) {
+        (_, SandboxMode::Off) => return Ok(None),
+        (Ok(kind), _) => return Ok(Some(kind.clone())),
+        (Err(why), _) => why,
     };
+    if choice.mode == SandboxMode::Require {
+        let set = if choice.from_cli {
+            "--sandbox require"
+        } else {
+            "sandbox = \"require\""
+        };
+        bail!("{tool}: a build sandbox is required ({set}), but {why}");
+    }
+    let message =
+        format!("no build sandbox ({why}); build scripts run with network and write access");
+    output::note(format!("note: {tool}: {message}"));
+    output::emit(Record::SandboxMissing {
+        tool: tool.to_string(),
+        file: crate::project::CONFIG_FILE.to_string(),
+        line: choice.line.filter(|_| !choice.from_cli),
+        message,
+    });
+    Ok(None)
+}
+
+/// `cmd` to run in the sandbox `kind`, with `tmp` as its temp directory.
+pub fn wrap(cmd: Command, kind: &Kind, writable: &Writable, tmp: &Path) -> Result<Command> {
     let writable = resolve(writable, tmp)?;
     let tmp = tmp.canonicalize()?;
-    let mut out = match &kind {
+    let mut out = match kind {
         Kind::SandboxExec => {
             let mut c = Command::new(SANDBOX_EXEC);
             c.arg("-p").arg(seatbelt_profile(&writable));

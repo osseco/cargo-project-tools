@@ -115,7 +115,7 @@ pub enum SfwMode {
     Off,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum SandboxMode {
     #[default]

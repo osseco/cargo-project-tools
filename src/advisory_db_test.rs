@@ -273,3 +273,24 @@ fn offline_never_fetches() {
     let db = ensure_with(&path, Policy::Offline, DAY, much_later, no_request).unwrap();
     assert_eq!(db.iter().count(), 1);
 }
+
+#[test]
+fn parallel_first_fetches_download_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("advisory-db");
+    let downloads = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|s| {
+        for _ in 0..3 {
+            s.spawn(|| {
+                ensure_with(&path, Policy::Auto, DAY, NOW, |_| {
+                    downloads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    body(&["RUSTSEC-2020-0001"], "\"v1\"")
+                })
+                .unwrap();
+            });
+        }
+    });
+    assert_eq!(downloads.into_inner(), 1);
+    assert!(leftovers(dir.path()).is_empty());
+}

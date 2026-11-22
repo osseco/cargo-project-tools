@@ -89,7 +89,18 @@ macOS runners have `sandbox-exec`. On Linux runners, install bubblewrap first. U
     sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 ```
 
-Then set `sandbox = "require"` in `[build]`, so a runner without a working sandbox fails instead of building without it. Windows has no sandbox, so give it `windows = "off"` (or `"auto"`) under `[build.sandbox-os]`. See [Configuration](configuration.md#sandbox).
+Then require it, either in `[build]` with `sandbox = "require"`, or for the job only with `--sandbox require` on `check` and `install` (without editing `project-tools.toml`). A runner without a working sandbox then fails instead of building without one. Windows has no sandbox, so give it `windows = "off"` (or `"auto"`) under `[build.sandbox-os]`, or pass `--sandbox off` there. See [Configuration](configuration.md#sandbox).
+
+`check` probes the sandbox for every tool, even one that's up to date, and `install` probes it before downloading anything. So a missing sandbox fails the job early. Under `auto` it's a `sandbox-missing` record (with the `tool`, and the `file` and `line` of the setting that applied). After each build, `install` writes a `built` record with the `sandbox` it used (`sandbox-exec`, `bwrap` or `none`), so the job can check that every tool really was sandboxed:
+
+```bash
+cargo project-tools install --message-format json > records.jsonl
+jq -e 'select(.kind == "built" and .sandbox == "none") | halt_error' records.jsonl
+```
+
+## Offline builds
+
+Downloading needs the network: the tool's source, the advisory database, and vendoring each tool's dependencies. The compile itself doesn't. It builds only from what was fetched and checked (the tool's source in `targets/<tool>/src` and its vendored dependencies), always with cargo's `--offline`, and writes only to `.project-tools/targets/<tool>`, `.project-tools/bin` and cargo's `.crates.toml` and `.crates2.json`. It never writes to `CARGO_HOME`, so that can be mounted read-only for the build. The [sandbox](configuration.md#sandbox) enforces both where there is one. Where there isn't, for example a container you provide, cut its network and mount `CARGO_HOME` read-only yourself, and pass `--sandbox off`.
 
 ## Socket Firewall in CI
 

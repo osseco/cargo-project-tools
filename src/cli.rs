@@ -369,8 +369,11 @@ pub struct BuildArgs {
     pub keep_going: bool,
     #[arg(long)]
     pub timings: bool,
-    /// Build without the OS sandbox, whatever [build].sandbox says.
-    #[arg(long)]
+    /// The OS sandbox for this run, whatever [build].sandbox and [build.sandbox-os] say.
+    #[arg(long, value_enum, value_name = "MODE")]
+    pub sandbox: Option<crate::config::SandboxMode>,
+    /// `--sandbox off`, kept for scripts that use it.
+    #[arg(long, hide = true, conflicts_with = "sandbox")]
     pub no_sandbox: bool,
 }
 

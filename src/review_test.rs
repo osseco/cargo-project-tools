@@ -948,6 +948,42 @@ fn an_unpinned_entry_of_the_tool_comes_up_again() {
 }
 
 #[test]
+fn the_vendored_build_runs_offline_in_the_sandbox() {
+    let Ok(kind) = crate::sandbox::probe() else {
+        return;
+    };
+    let f = Fixture::new();
+    let target = f.tmp.path().join("target");
+    let mut cmd = crate::process::cargo();
+    cmd.args(["build", "--offline", "--locked"])
+        .arg("--manifest-path")
+        .arg(f.checkout.manifest_path())
+        .arg("--target-dir")
+        .arg(&target)
+        .args(&f.vendored.config_args);
+    // Writes only to the build, the tool's source (inside the build directory in a real
+    // install) and the build scripts' markers: CARGO_HOME and the network are out of reach.
+    let writable = crate::sandbox::Writable {
+        dirs: vec![
+            target.clone(),
+            f.checkout.root.clone(),
+            f.tmp.path().join("markers"),
+        ],
+        files: Vec::new(),
+    };
+    let out = crate::sandbox::wrap(cmd, kind, &writable, &target.join("tmp"))
+        .unwrap()
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(f.marker("upstream"));
+}
+
+#[test]
 fn check_only_records_nothing() {
     let f = Fixture::new();
     let selection = || crate::graph::Selection {
