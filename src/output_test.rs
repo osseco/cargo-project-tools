@@ -20,7 +20,7 @@ fn review_pending_names_its_hash_by_kind() {
         tool: "t".into(),
         file: ".project-tools/crates/t/build-review.toml".into(),
         line: Some(12),
-        item: ReviewItem {
+        item: Box::new(ReviewItem {
             kind: "proc-macro".into(),
             package: "serde_derive".into(),
             version: "1.0.0".into(),
@@ -33,14 +33,16 @@ fn review_pending_names_its_hash_by_kind() {
                 action: "approve".into(),
                 sha256: None,
                 checksum: Some("bb".into()),
+                commit: None,
+                changed: vec!["checksum"],
             }),
             known: None,
-        },
+        }),
         entry: "[[proc-macro]]\n".into(),
     };
     assert_eq!(
         line(&record),
-        r#"{"version":1,"kind":"review-pending","tool":"t","file":".project-tools/crates/t/build-review.toml","line":12,"item":{"type":"proc-macro","package":"serde_derive","version":"1.0.0","checksum":"cc","location":".project-tools/targets/t/vendor/serde_derive-1.0.0","previous":{"action":"approve","checksum":"bb"}},"entry":"[[proc-macro]]\n"}"#
+        r#"{"version":1,"kind":"review-pending","tool":"t","file":".project-tools/crates/t/build-review.toml","line":12,"item":{"type":"proc-macro","package":"serde_derive","version":"1.0.0","checksum":"cc","location":".project-tools/targets/t/vendor/serde_derive-1.0.0","previous":{"action":"approve","checksum":"bb","changed":["checksum"]}},"entry":"[[proc-macro]]\n"}"#
     );
 }
 

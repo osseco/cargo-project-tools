@@ -312,7 +312,7 @@ Other fields:
   - `sha256` is given for build scripts and cargo config, `checksum` for proc macros and build-time libraries;
   - a build script also has its crate's `checksum`, or `commit` for a git package;
   - `location` is the file or directory to read;
-  - `previous` (`action`, plus `sha256` or `checksum`) is the entry it replaces;
+  - `previous` is the entry it replaces: `action`, `sha256` or `checksum`, the old crate's `checksum` or `commit`, and `changed`, the keys whose values changed. A build script with only `checksum` or `commit` in `changed` is the same script in a different crate;
   - `known` (`tool`, `action`) is a decision another tool records for it.
 - `entry` is the TOML to put in `file`, with the action it would get.
 - In an `advisory`:

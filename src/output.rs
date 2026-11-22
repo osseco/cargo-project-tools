@@ -117,7 +117,7 @@ pub enum Record {
         /// 1-based, where in `file` it is.
         #[serde(skip_serializing_if = "Option::is_none")]
         line: Option<usize>,
-        item: ReviewItem,
+        item: Box<ReviewItem>,
         /// The entry to put in `file`, with the action it would get.
         entry: String,
     },
@@ -238,6 +238,10 @@ pub struct Previous {
     pub sha256: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checksum: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+    /// The keys whose values changed: `sha256`, `checksum` or `commit`.
+    pub changed: Vec<&'static str>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]

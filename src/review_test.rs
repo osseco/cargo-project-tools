@@ -179,6 +179,12 @@ fn changed_code_keeps_its_action_and_drops_the_old_entry() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("1 piece of"), "{err}");
+    assert!(!err.contains("--auto-approve"), "{err}");
+    let err = check(&file, items(), Mode::Check, &KnownMap::new(), tmp.path())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("review"), "{err}");
+    assert!(!err.contains("--auto-approve"), "{err}");
 
     let decided = check(
         &file,
@@ -269,6 +275,7 @@ fn review_records_name_the_hash_and_what_it_replaces() {
     let previous = item.previous.unwrap();
     assert_eq!(previous.action, "strip");
     assert_eq!(previous.sha256.as_deref(), Some("old"));
+    assert_eq!(previous.changed, ["sha256"]);
 
     let known = Known {
         tool: "other".into(),
@@ -284,6 +291,34 @@ fn review_records_name_the_hash_and_what_it_replaces() {
     assert_eq!(item.checksum.as_deref(), Some("cc"));
     assert_eq!(item.sha256, None);
     assert_eq!(item.known.unwrap().tool, "other");
+}
+
+#[test]
+fn a_crate_change_with_the_same_script_names_the_old_checksum() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut item = script(tmp.path(), "zstd-safe", "same");
+    item.pin = Pin::Checksum("new-crate".into());
+    let previous = Entry {
+        kind: Kind::BuildScript,
+        package: "zstd-safe".into(),
+        path: "build.rs".into(),
+        hash: "same".into(),
+        pin: Pin::Checksum("old-crate".into()),
+        action: Action::Approve,
+        file: None,
+        line: None,
+    };
+    let record = review_item(&item, Some(&previous), None, "v".into());
+    let p = record.previous.unwrap();
+    assert_eq!(p.sha256.as_deref(), Some("same"));
+    assert_eq!(p.checksum.as_deref(), Some("old-crate"));
+    assert_eq!(p.changed, ["checksum"]);
+
+    let text = paste_ready(&item, Some(&previous), None, tmp.path());
+    assert!(
+        text.contains("# replaces the entry with checksum = \"old-crate\""),
+        "{text}"
+    );
 }
 
 #[test]

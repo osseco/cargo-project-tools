@@ -154,10 +154,12 @@ Outside a terminal (in CI, or with input or output redirected), `add`, `update`,
     path = "build.rs"
     sha256 = "9e41…"
     action = "approve"
-error: 1 piece of build-time code isn't recorded in .project-tools/crates/cargo-nextest/build-review.toml; review it where you have a terminal (run this command there for the review screen, or with --auto-approve after reading the files), then commit .project-tools/crates/cargo-nextest/build-review.toml
+error: 1 piece of build-time code isn't recorded in .project-tools/crates/cargo-nextest/build-review.toml; run this command where you have a terminal for the review screen, or put each entry listed above in .project-tools/crates/cargo-nextest/build-review.toml with the action the reviewer chose, then commit .project-tools/crates/cargo-nextest/build-review.toml
 ```
 
 Don't approve on a CI runner: review where you work, and commit `build-review.toml`. When [`check`](commands.md#check) finds something, its error names [`review`](commands.md#review), which runs just this review, without building: `cargo project-tools review <tool>`. After Cancel on the review screen, the error says to rerun with `--auto-approve` instead.
+
+A build script whose crate changed while the script and the files it pulls in didn't is listed as `(crate changed, script unchanged; was approve)`, and its entry replaces the one with the old `checksum` or `commit`. It still needs a look, since a build script can read any file of its crate.
 
 A piece another tool already records is listed with that tool's decision (`reviewed for <tool>: strip`), and its printed entry uses it. For an override, the entry also says which file to copy.
 
