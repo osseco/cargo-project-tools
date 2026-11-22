@@ -154,7 +154,7 @@ Outside a terminal (in CI, or with input or output redirected), `add`, `update`,
     path = "build.rs"
     sha256 = "9e41…"
     action = "approve"
-error: 1 piece of build-time code isn't recorded in .project-tools/crates/cargo-nextest/build-review.toml; run this command where you have a terminal for the review screen, or put each entry listed above in .project-tools/crates/cargo-nextest/build-review.toml with the action the reviewer chose, then commit .project-tools/crates/cargo-nextest/build-review.toml
+error: 1 piece of build-time code isn't recorded in .project-tools/crates/cargo-nextest/build-review.toml; run this command where you have a terminal for the review screen, or record each decision with `cargo project-tools review cargo-nextest --approve, --strip or --override <package@version>`, then commit .project-tools/crates/cargo-nextest/build-review.toml
 ```
 
 Don't approve on a CI runner: review where you work, and commit `build-review.toml`. When [`check`](commands.md#check) finds something, its error names [`review`](commands.md#review), which runs just this review, without building: `cargo project-tools review <tool>`. After Cancel on the review screen, the error says to rerun with `--auto-approve` instead.
@@ -164,6 +164,8 @@ A build script whose crate changed while the script and the files it pulls in di
 A piece another tool already records is listed with that tool's decision (`reviewed for <tool>: strip`), and its printed entry uses it. For an override, the entry also says which file to copy.
 
 After reviewing, run the same command with `--auto-approve`. New pieces are recorded as `approve`. A changed piece keeps its action and file, and its entry is updated in place, so comments next to it stay. Entries that no longer match anything are removed, for example after you narrow `targets`. Without the flag they're only reported. `install --auto-approve` reviews even when the tool is up to date.
+
+To decide piece by piece without the screen, name each decision: `cargo project-tools review <tool> --approve <package@version> --strip <package@version> --override <package@version>`. Add `=<sha256>` (`=<checksum>` for a whole crate) to tie it to the code you read; when that code changed since, nothing is written. Entries are updated in place as with `--auto-approve`, and what you don't name stays pending. See [`review`](commands.md#review).
 
 To decide piece by piece, copy the printed entries into the file, set each `action` (and `file` for `override`), and rerun. For a changed piece, replace the old entry named in the comment. To change a recorded decision, edit its `action` (and `file`) and run `install`. A changed decision makes `install` rebuild the tool from scratch, since cargo doesn't notice edits to vendored sources.
 

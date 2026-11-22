@@ -56,6 +56,8 @@ pub struct Options<'a> {
     pub force: bool,
     /// Record new or changed build-time code in the review file.
     pub auto_approve: bool,
+    /// Decisions named on the command line (`review --approve` and the like).
+    pub picks: &'a [review::Pick],
     pub stage: Stage,
     pub checksums: Checksums,
     /// The targets build-time code is reviewed for; all when `None`.
@@ -306,6 +308,7 @@ pub fn install(
     // Approving reviews now, even when the binaries are current.
     if !opts.force
         && !opts.auto_approve
+        && opts.picks.is_empty()
         && let Some(stamp) = read_stamp(&stamp_path)
         && stamp.key == key
         && !stamp.bins.is_empty()
@@ -360,7 +363,7 @@ pub fn install(
         &checkout,
         &vendored,
         args.offline,
-        opts.auto_approve,
+        review::Approval::new(opts.auto_approve, opts.picks),
     )?;
     clean_if_changed(&target_dir, &changes)?;
     vendor::settle(&vendored)?;
