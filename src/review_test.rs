@@ -1223,3 +1223,50 @@ fn pieces_outside_the_project_are_refused() {
     .to_string();
     assert!(err.contains("outside the project"), "{err}");
 }
+
+#[test]
+fn build_scripts_behind_a_feature_are_collected() {
+    use crate::test_registry::{Crate, Registry, tool_with};
+    let tmp = tempfile::tempdir().unwrap();
+    let registry = Registry::with(vec![
+        Crate::new("opt", "1.0.0").build("fn main() {}\n"),
+        Crate::new("mac", "1.0.0").proc_macro(),
+    ]);
+    let src = tmp.path().join("src");
+    let manifest = tool_with(
+        &src,
+        "1.0.0",
+        "[dependencies]\nopt = { version = \"1\", optional = true }\nmac = { version = \"1\", optional = true }\n\n[features]\nx = [\"dep:opt\", \"dep:mac\"]\n",
+    );
+    crate::lock::shipped_or_generated(&manifest, &src.join("Cargo.lock"), &registry.cargo_args())
+        .unwrap();
+    let project = Project {
+        root: tmp.path().to_path_buf(),
+    };
+    let checkout = Checkout::at(src.clone(), src.clone(), src);
+    let vendored =
+        crate::vendor::vendor(&project, "tool", &checkout, false, &registry.cargo_args()).unwrap();
+    let features = ["--features".to_string(), "x".to_string()];
+    let selection = crate::graph::Selection {
+        features: &features,
+        targets: None,
+        config: &[],
+    };
+    let items = collect("tool", selection, &checkout, &vendored, true).unwrap();
+    let found: Vec<String> = items
+        .iter()
+        .map(|i| format!("{} {}", i.kind, i.package))
+        .collect();
+    assert_eq!(
+        found,
+        ["build-script opt", "build-script tool", "proc-macro mac"]
+    );
+    // Without the feature, they aren't built and don't count.
+    let selection = crate::graph::Selection {
+        features: &[],
+        targets: None,
+        config: &[],
+    };
+    let items = collect("tool", selection, &checkout, &vendored, true).unwrap();
+    assert_eq!(packages(&items), ["tool"]);
+}
