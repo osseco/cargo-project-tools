@@ -100,6 +100,27 @@ fn self_ignores_need_an_expiry() {
 }
 
 #[test]
+fn ignores_know_their_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("audit-ignore.toml");
+    fs::write(
+        &path,
+        format!(
+            "{AUDIT_IGNORE_TEMPLATE}\n[[ignore]]\nid = \"A\"\nreason = \"x\"\n\n[[ignore]]\nid = \"B\"\nreason = \"y\"\n"
+        ),
+    )
+    .unwrap();
+    let start = AUDIT_IGNORE_TEMPLATE.lines().count() + 2;
+    let lines: Vec<_> = AuditIgnore::load(&path)
+        .unwrap()
+        .ignore
+        .iter()
+        .map(|e| e.line)
+        .collect();
+    assert_eq!(lines, [Some(start), Some(start + 4)]);
+}
+
+#[test]
 fn tool_targets_replace_the_project_list() {
     let config: Config = toml::from_str(
         "[settings]\ntargets = [\"a-b\", \"c-d\"]\n[tool.x]\nversion = \"1.0.0\"\n[tool.y]\nversion = \"1.0.0\"\ntargets = [\"e-f\"]\n",

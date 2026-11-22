@@ -71,6 +71,8 @@ action = "strip"
     assert_eq!(entries[2].kind, Kind::ProcMacro);
     assert_eq!(entries[2].hash, "cc");
     assert_eq!(entries[3].action, Action::Strip);
+    let lines: Vec<_> = entries.iter().map(|e| e.line).collect();
+    assert_eq!(lines, [Some(2), Some(8), Some(15), Some(20)]);
 }
 
 #[test]
@@ -224,6 +226,7 @@ fn paste_ready_entry_of_changed_code_keeps_its_decision() {
         pin: Pin::None,
         action: Action::Override,
         file: Some("overrides/ring.rs".into()),
+        line: None,
     };
     let text = paste_ready(
         &script(tmp.path(), "ring", "new"),
@@ -252,6 +255,7 @@ fn review_records_name_the_hash_and_what_it_replaces() {
         pin: Pin::None,
         action: Action::Strip,
         file: None,
+        line: None,
     };
     let item = review_item(
         &script(tmp.path(), "ring", "new"),

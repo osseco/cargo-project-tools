@@ -288,12 +288,12 @@ With `--message-format json`, stdout holds only JSON records, one per line. All 
 
 | `kind` | When | Fields |
 | --- | --- | --- |
-| `review-pending` | Build-time code isn't recorded in [`build-review.toml`](build-review.md) | `tool`, `file`, `item`, `entry` |
-| `review-unused` | An entry in `build-review.toml` matches nothing the tool builds | `tool`, `file`, `type`, `package`, `path` |
-| `target-missing` | This machine or `--target` isn't in the tool's [`targets`](configuration.md#targets) | `tool`, `file`, `targets` |
-| `advisory` | A finding of the [audit](#audit) that isn't ignored | `tool`, `file`, `id`, `type`, `package`, `package_version`, `title`, `patched`, `severity`, `fix` |
-| `ignore-unused` | An ignore that matched nothing | `tool`, `file`, `id` |
-| `ignore-expired` | An ignore past its `expires` date | `tool`, `file`, `id`, `expires` |
+| `review-pending` | Build-time code isn't recorded in [`build-review.toml`](build-review.md) | `tool`, `file`, `line`, `item`, `entry` |
+| `review-unused` | An entry in `build-review.toml` matches nothing the tool builds | `tool`, `file`, `line`, `type`, `package`, `path` |
+| `target-missing` | This machine or `--target` isn't in the tool's [`targets`](configuration.md#targets) | `tool`, `file`, `line`, `targets` |
+| `advisory` | A finding of the [audit](#audit) that isn't ignored | `tool`, `file`, `line`, `id`, `type`, `package`, `package_version`, `title`, `patched`, `severity`, `fix` |
+| `ignore-unused` | An ignore that matched nothing | `tool`, `file`, `line`, `id` |
+| `ignore-expired` | An ignore past its `expires` date | `tool`, `file`, `line`, `id`, `expires` |
 | `inspect` | What [`inspect`](#inspect) found | See [inspect](#inspect) |
 | `error` | The command failed | `message` |
 | `summary` | The last record of `add`, `update`, `install`, `check`, `review` and `audit` | `ok`, `vulnerabilities`, `warnings`, `pending_reviews`, `missing_targets` |
@@ -303,6 +303,7 @@ Every record also has `"version": 1`. The version goes up when a record changes 
 Other fields:
 
 - `file` is the file to change, relative to the project root: `build-review.toml`, `project-tools.toml`, the tool's `Cargo.lock`, or the ignore file.
+- `line` is the 1-based line in `file` where it is: the package's `[[package]]` in `Cargo.lock` for an `advisory`, the entry in `build-review.toml` for `review-unused` (and for `review-pending` with `previous`, the entry it replaces), the `[[ignore]]` entry for `ignore-*`, and the `targets` line for `target-missing`. It's left out when there is no such spot, for example a new piece of build-time code, an advisory against cargo-project-tools itself, or a file that doesn't parse.
 - `item` describes the piece of build-time code:
   - `type` is `build-script`, `proc-macro`, `build-dep` or `cargo-config`;
   - `package`, `version` and `path` are left out when they don't apply;
@@ -319,13 +320,13 @@ Other fields:
   - `fix` is the command to run, when one exists.
 
 ```json
-{"version":1,"kind":"target-missing","tool":"cargo-deny","file":"project-tools.toml","targets":["x86_64-unknown-linux-gnu"]}
+{"version":1,"kind":"target-missing","tool":"cargo-deny","file":"project-tools.toml","line":4,"targets":["x86_64-unknown-linux-gnu"]}
 {"version":1,"kind":"summary","ok":false,"vulnerabilities":0,"warnings":0,"pending_reviews":0,"missing_targets":1}
 ```
 
 Control characters, DEL, C1 controls, and characters that hide or reorder text (bidi controls, zero-width and other invisible characters, line and paragraph separators) are written as `\uXXXX` escapes, so `cat`ing the records can't drive a terminal. The values themselves aren't changed. Check a value before you use it in a command or a CI annotation, above all one that comes from someone else:
 
-- From cargo-project-tools: `kind`, `version`, `tool` and `file`. A tool name is a crate name, checked when the tool is added, and `file` is always one of the paths above, built from it.
+- From cargo-project-tools: `kind`, `version`, `tool`, `file` and `line`. A tool name is a crate name, checked when the tool is added, and `file` is always one of the paths above, built from it.
 - From the project's own files: `targets` in `target-missing`, and `id` and `expires` in `ignore-unused` and `ignore-expired`.
 - From the locks, the tools' sources and the advisory database, which you don't control: everything else. That covers `package`, `package_version`, `item` (its `path` and `location` among them), `entry`, an advisory's `id`, `title` and `patched`, `fix`, `message`, and everything in an `inspect` record except `tool`.
 

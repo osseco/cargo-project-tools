@@ -5,11 +5,12 @@ fn records_carry_kind_and_version() {
     let record = Record::TargetMissing {
         tool: "cargo-deny".into(),
         file: "project-tools.toml".into(),
+        line: Some(4),
         targets: vec!["x86_64-unknown-linux-gnu".into()],
     };
     assert_eq!(
         line(&record),
-        r#"{"version":1,"kind":"target-missing","tool":"cargo-deny","file":"project-tools.toml","targets":["x86_64-unknown-linux-gnu"]}"#
+        r#"{"version":1,"kind":"target-missing","tool":"cargo-deny","file":"project-tools.toml","line":4,"targets":["x86_64-unknown-linux-gnu"]}"#
     );
 }
 
@@ -18,6 +19,7 @@ fn review_pending_names_its_hash_by_kind() {
     let record = Record::ReviewPending {
         tool: "t".into(),
         file: ".project-tools/crates/t/build-review.toml".into(),
+        line: Some(12),
         item: ReviewItem {
             kind: "proc-macro".into(),
             package: "serde_derive".into(),
@@ -38,7 +40,7 @@ fn review_pending_names_its_hash_by_kind() {
     };
     assert_eq!(
         line(&record),
-        r#"{"version":1,"kind":"review-pending","tool":"t","file":".project-tools/crates/t/build-review.toml","item":{"type":"proc-macro","package":"serde_derive","version":"1.0.0","checksum":"cc","location":".project-tools/targets/t/vendor/serde_derive-1.0.0","previous":{"action":"approve","checksum":"bb"}},"entry":"[[proc-macro]]\n"}"#
+        r#"{"version":1,"kind":"review-pending","tool":"t","file":".project-tools/crates/t/build-review.toml","line":12,"item":{"type":"proc-macro","package":"serde_derive","version":"1.0.0","checksum":"cc","location":".project-tools/targets/t/vendor/serde_derive-1.0.0","previous":{"action":"approve","checksum":"bb"}},"entry":"[[proc-macro]]\n"}"#
     );
 }
 
@@ -47,6 +49,7 @@ fn advisory_leaves_out_a_missing_fix() {
     let record = Record::Advisory {
         tool: "t".into(),
         file: ".project-tools/crates/t/Cargo.lock".into(),
+        line: None,
         id: "RUSTSEC-2026-0001".into(),
         kind: "unmaintained".into(),
         package: "p".into(),

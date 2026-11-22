@@ -24,6 +24,7 @@ mod source;
 mod targets;
 #[cfg(test)]
 mod test_registry;
+mod toml_line;
 mod vendor;
 
 use std::fs;
@@ -1089,11 +1090,17 @@ fn check_targets(
     }
     if !approve {
         // On stderr, so the list comes before the error on the same stream.
-        for (name, _, absent) in &missing {
+        let text = std::fs::read_to_string(project.config_path()).unwrap_or_default();
+        for (name, own, absent) in &missing {
             eprintln!("  {name}: {} isn't an approved target", absent.join(", "));
+            let table = match own {
+                Some(tool) => vec!["tool", tool],
+                None => vec!["settings"],
+            };
             output::emit(output::Record::TargetMissing {
                 tool: name.to_string(),
                 file: project::CONFIG_FILE.to_string(),
+                line: toml_line::key_line(&text, &table, "targets"),
                 targets: absent.clone(),
             });
         }

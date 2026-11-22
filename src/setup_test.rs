@@ -156,6 +156,7 @@ fn advisories_are_found_and_ignores_respected() {
             id: "RUSTSEC-2024-0001".into(),
             reason: "not reachable".into(),
             expires: None,
+            line: None,
         }],
     });
     assert!(f.setup.findings[&("dep".to_string(), v("1.0.0"))][0].ignored);

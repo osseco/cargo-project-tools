@@ -24,6 +24,8 @@ pub struct Report {
     pub warnings: BTreeMap<String, Vec<Warning>>,
     /// Lock packages left out because the tool's features don't build them.
     pub skipped: usize,
+    /// (name, version) → the line of its `[[package]]` in the lock, for records.
+    pub lines: BTreeMap<(String, String), usize>,
 }
 
 #[derive(Debug)]
@@ -219,6 +221,7 @@ pub fn evaluate_self(found: &[(Package, Advisory)], ignore: &AuditIgnore, today:
         output::emit(Record::Advisory {
             tool: tool.clone(),
             file: file.clone(),
+            line: None,
             id: advisory.id.clone(),
             kind: "vulnerability".into(),
             package: package.name.clone(),
@@ -237,6 +240,7 @@ pub fn evaluate_self(found: &[(Package, Advisory)], ignore: &AuditIgnore, today:
         output::emit(Record::IgnoreUnused {
             tool: tool.clone(),
             file: file.clone(),
+            line: entry.line,
             id: entry.id.clone(),
         });
     }
@@ -283,6 +287,7 @@ impl Auditor {
             .retain(|p| built.contains(&(p.name.as_str().to_string(), p.version.clone())));
         let mut report = scan(&self.db, &lock, root, git_tool);
         report.skipped = total - lock.packages.len();
+        report.lines = package_lines(&text);
         let yanked = yanked(&lock, root, git_tool, &mut self.index);
         if !yanked.is_empty() {
             report
@@ -293,6 +298,20 @@ impl Auditor {
         }
         Ok(report)
     }
+}
+
+/// (name, version) → the line of its `[[package]]` in the lock text. The first one wins when
+/// a name and version come from more than one source.
+fn package_lines(text: &str) -> BTreeMap<(String, String), usize> {
+    let mut out = BTreeMap::new();
+    for (line, t) in crate::toml_line::tables(text, "package") {
+        let get = |k: &str| t.get(k).and_then(|i| i.as_str());
+        if let (Some(name), Some(version)) = (get("name"), get("version")) {
+            out.entry((name.to_string(), version.to_string()))
+                .or_insert(line);
+        }
+    }
+    out
 }
 
 /// Today as `YYYY-MM-DD` (UTC).
@@ -344,6 +363,7 @@ impl<'a> Ignores<'a> {
                     output::emit(Record::IgnoreExpired {
                         tool: tool.to_string(),
                         file: path.to_string(),
+                        line: entry.line,
                         id: entry.id.clone(),
                         expires: exp.clone(),
                     });
@@ -396,6 +416,10 @@ pub fn evaluate(
         output::emit(Record::Advisory {
             tool: tool.to_string(),
             file: lock_file.clone(),
+            line: report
+                .lines
+                .get(&(package.name.clone(), package.version.to_string()))
+                .copied(),
             id: id.to_string(),
             kind: kind.to_string(),
             package: package.name.clone(),
@@ -505,6 +529,7 @@ pub fn evaluate(
         output::emit(Record::IgnoreUnused {
             tool: tool.to_string(),
             file: ignore_file.clone(),
+            line: entry.line,
             id: entry.id.clone(),
         });
     }

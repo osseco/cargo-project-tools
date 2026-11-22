@@ -172,6 +172,8 @@ pub struct Entry {
     pub action: Action,
     /// With `override`: the replacement, relative to the tool's crate directory.
     pub file: Option<String>,
+    /// Where its `[[…]]` is in the file, for records.
+    pub line: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -226,8 +228,11 @@ fn parse(text: &str) -> Result<Vec<Entry>> {
         (Kind::BuildDep, raw.build_dep),
         (Kind::CargoConfig, raw.cargo_config),
     ] {
+        let mut lines = crate::toml_line::tables(text, kind.table()).into_iter();
         for r in list {
-            out.push(entry(kind, r)?);
+            let mut e = entry(kind, r)?;
+            e.line = lines.next().map(|(line, _)| line);
+            out.push(e);
         }
     }
     Ok(out)
@@ -286,6 +291,7 @@ fn entry(kind: Kind, r: RawEntry) -> Result<Entry> {
         pin,
         action: r.action,
         file: r.file,
+        line: None,
     })
 }
 
@@ -1108,6 +1114,7 @@ fn report(
             output::emit(Record::ReviewUnused {
                 tool: tool.clone(),
                 file: raw(path),
+                line: e.line,
                 kind: e.kind.table().to_string(),
                 package: e.package.clone(),
                 path: e.path.clone(),
@@ -1157,6 +1164,7 @@ fn report(
         output::emit(Record::ReviewPending {
             tool: tool.clone(),
             file: raw(path),
+            line: previous.and_then(|p| p.line),
             item: review_item(item, *previous, found, raw(&item.location)),
             entry: text
                 .lines()

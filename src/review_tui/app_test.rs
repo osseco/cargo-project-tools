@@ -651,6 +651,7 @@ fn earlier(item: &Item, action: Action) -> Entry {
         pin: Pin::None,
         action,
         file: None,
+        line: None,
     }
 }
 
