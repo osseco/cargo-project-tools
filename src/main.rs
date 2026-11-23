@@ -1030,6 +1030,7 @@ fn audit_tool(
     say!("{name}:");
     let built = built_of(name, tool)?;
     let report = auditor.audit(&project.lock_path(name), name, tool.git.is_some(), &built)?;
+    output::audited();
     if report.skipped > 0 {
         say!(
             "  skipped {} packages not built with these features",
