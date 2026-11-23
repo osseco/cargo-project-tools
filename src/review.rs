@@ -187,6 +187,24 @@ pub struct Entry {
     pub line: Option<usize>,
 }
 
+impl Entry {
+    /// How messages name the entry. It has no version: its pin or checksum tells versions
+    /// apart.
+    fn describe(&self) -> String {
+        let short = |s: &str| s.chars().take(12).collect::<String>();
+        match self.kind {
+            Kind::BuildScript => match self.pin.key() {
+                Some((k, v)) => format!("{} {} ({k} {})", self.package, self.path, short(v)),
+                None => format!("{} {}", self.package, self.path),
+            },
+            Kind::ProcMacro | Kind::BuildDep => {
+                format!("{} (checksum {})", self.package, short(&self.hash))
+            }
+            Kind::CargoConfig => self.path.clone(),
+        }
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawEntry {
@@ -289,10 +307,15 @@ fn entry(kind: Kind, r: RawEntry) -> Result<Entry> {
     if kind.whole_crate() && !matches!(r.action, Action::Approve | Action::Pending) {
         bail!("[[{kind}]] `{package}` can only be approved");
     }
+    let name = [package.as_str(), path.as_str()]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
     match (r.action, &r.file) {
-        (Action::Override, None) => bail!("[[{kind}]] `{package}{path}`: override needs `file`"),
+        (Action::Override, None) => bail!("[[{kind}]] `{name}`: override needs `file`"),
         (Action::Override, Some(f)) => safe_relative(f)?,
-        (_, Some(_)) => bail!("[[{kind}]] `{package}{path}`: `file` only goes with override"),
+        (_, Some(_)) => bail!("[[{kind}]] `{name}`: `file` only goes with override"),
         _ => {}
     }
     Ok(Entry {
@@ -1133,7 +1156,7 @@ pub fn check(
         .filter(|e| !items.iter().any(|i| decides(i, e)))
         .collect();
     let mut decided = Vec::new();
-    let mut pending: Vec<Pending> = Vec::new();
+    let mut undecided = Vec::new();
     for item in items {
         match entries.iter().find(|e| decides(&item, e)) {
             Some(e) => decided.push(Decided {
@@ -1141,12 +1164,11 @@ pub fn check(
                 action: e.action,
                 file: e.file.clone(),
             }),
-            None => {
-                let previous = stale.iter().find(|e| item.same_place(e)).copied();
-                pending.push((item, previous));
-            }
+            None => undecided.push(item),
         }
     }
+    let previous = previous_entries(&undecided, &stale);
+    let pending: Vec<Pending> = undecided.into_iter().zip(previous).collect();
     match mode {
         Mode::ApproveAll => {
             let decisions = pending.into_iter().map(Decision::keep_or_approve).collect();
@@ -1192,6 +1214,32 @@ pub fn check(
         _ => report(path, &pending, &stale, known, root, false)?,
     }
     Ok(decided)
+}
+
+/// The stale entry each undecided item replaces, each entry for at most one item. Versions of
+/// a package share kind, package and path, so the closest entry goes first: the same content,
+/// then the same crate, then the same script, then any for that place.
+fn previous_entries<'a>(items: &[Item], stale: &[&'a Entry]) -> Vec<Option<&'a Entry>> {
+    let tiers: [fn(&Item, &Entry) -> bool; 4] = [
+        |i, e| i.matches(e),
+        |i, e| i.same_place(e) && i.pin == e.pin,
+        |i, e| i.same_place(e) && i.hash == e.hash,
+        |i, e| i.same_place(e),
+    ];
+    let mut taken = vec![false; stale.len()];
+    let mut out = vec![None; items.len()];
+    for tier in tiers {
+        for (item, slot) in items.iter().zip(out.iter_mut()) {
+            if slot.is_some() {
+                continue;
+            }
+            if let Some(n) = (0..stale.len()).find(|&n| !taken[n] && tier(item, stale[n])) {
+                taken[n] = true;
+                *slot = Some(stale[n]);
+            }
+        }
+    }
+    out
 }
 
 /// The decision `picks` make for each pending item, if any. Fails, before anything is
@@ -1403,10 +1451,9 @@ fn report(
                 path: e.path.clone(),
             });
             eprintln!(
-                "  warning: unused [[{}]] {}{} in {}; delete it",
+                "  warning: unused [[{}]] {} in {}; delete it",
                 e.kind,
-                shown(&e.package),
-                shown(&e.path),
+                shown(&e.describe()),
                 rel(path)
             );
         }
@@ -1665,6 +1712,16 @@ fn record(path: &Path, decisions: Vec<Decision>, stale: &[&Entry]) -> Result<Vec
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
     let mut doc: toml_edit::DocumentMut = text.parse()?;
+    // Unused entries go first: they're found by content, which a new entry may share.
+    let replaced: Vec<&Entry> = decisions.iter().filter_map(|d| d.previous).collect();
+    for e in stale.iter().filter(|e| !replaced.contains(e)) {
+        remove_entry(&mut doc, e);
+        say!(
+            "  removed unused [[{}]] {}",
+            e.kind,
+            shown_line(&e.describe())
+        );
+    }
     let mut decided = Vec::new();
     // An entry whose content changed is updated in place, so comments on it stay.
     let mut reused: Vec<&Entry> = Vec::new();
@@ -1675,12 +1732,12 @@ fn record(path: &Path, decisions: Vec<Decision>, stale: &[&Entry]) -> Result<Vec
         file,
     } in decisions
     {
-        match previous.filter(|p| !reused.contains(p)) {
-            Some(p) => {
-                update_entry(&mut doc, p, &item, action, file.as_deref());
-                reused.push(p);
-            }
-            None => add_entry(&mut doc, &item, action, file.as_deref()),
+        let updated = previous.filter(|p| !reused.contains(p)).is_some_and(|p| {
+            reused.push(p);
+            update_entry(&mut doc, p, &item, action, file.as_deref())
+        });
+        if !updated {
+            add_entry(&mut doc, &item, action, file.as_deref());
         }
         say!(
             "  recorded {:<12} {} ({})",
@@ -1690,13 +1747,19 @@ fn record(path: &Path, decisions: Vec<Decision>, stale: &[&Entry]) -> Result<Vec
         );
         decided.push(Decided { item, action, file });
     }
-    for e in stale.iter().filter(|e| !reused.contains(e)) {
-        remove_entry(&mut doc, e);
-        say!(
-            "  removed unused [[{}]] {}",
-            e.kind,
-            shown_line(&format!("{}{}", e.package, e.path))
-        );
+    // Every decision must read back as recorded, or `check` would find it pending.
+    let written = parse(&doc.to_string())?;
+    for d in &decided {
+        if !written
+            .iter()
+            .any(|e| e.action == d.action && d.item.matches(e))
+        {
+            bail!(
+                "recording {} in {} lost it; nothing was written",
+                shown_line(&d.item.describe()),
+                path.display()
+            );
+        }
     }
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
@@ -1743,26 +1806,29 @@ fn set_pin(t: &mut toml_edit::Table, pin: &Pin) {
 }
 
 /// Point entry `e` at `item`'s content and the new decision, keeping its place and comments.
+/// False when `e` isn't in the document.
 fn update_entry(
     doc: &mut toml_edit::DocumentMut,
     e: &Entry,
     item: &Item,
     action: Action,
     file: Option<&str>,
-) {
-    if let Some(t) = tables_of(doc, e.kind).iter_mut().find(|t| is_entry(t, e)) {
-        t[e.kind.hash_key()] = toml_edit::value(item.hash.as_str());
-        if e.kind == Kind::BuildScript {
-            set_pin(t, &item.pin);
-        }
-        t["action"] = toml_edit::value(action.as_str());
-        match file {
-            Some(f) => t["file"] = toml_edit::value(f),
-            None => {
-                t.remove("file");
-            }
+) -> bool {
+    let Some(t) = tables_of(doc, e.kind).iter_mut().find(|t| is_entry(t, e)) else {
+        return false;
+    };
+    t[e.kind.hash_key()] = toml_edit::value(item.hash.as_str());
+    if e.kind == Kind::BuildScript {
+        set_pin(t, &item.pin);
+    }
+    t["action"] = toml_edit::value(action.as_str());
+    match file {
+        Some(f) => t["file"] = toml_edit::value(f),
+        None => {
+            t.remove("file");
         }
     }
+    true
 }
 
 fn remove_entry(doc: &mut toml_edit::DocumentMut, e: &Entry) {

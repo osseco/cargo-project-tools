@@ -410,6 +410,133 @@ fn two_versions_of_a_proc_macro_are_separate_entries() {
     );
 }
 
+/// The build script of `package@version`, with its crate checksum `pin`.
+fn script_version(dir: &Path, package: &str, version: &str, hash: &str, pin: &str) -> Item {
+    let mut item = under(script(dir, package, hash), dir);
+    item.version = version.into();
+    item.pin = Pin::Checksum(pin.into());
+    item
+}
+
+#[test]
+fn deciding_several_versions_at_once_keeps_every_entry() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join(FILE);
+    let items = || {
+        let mut syn1 = proc_macro("syn", "s1");
+        syn1.kind = Kind::BuildDep;
+        let mut syn2 = proc_macro("syn", "s2");
+        syn2.kind = Kind::BuildDep;
+        vec![
+            script_version(tmp.path(), "rustix", "0.38.44", "aa", "c1"),
+            script_version(tmp.path(), "rustix", "1.1.6", "bb", "c2"),
+            under(proc_macro("thiserror-impl", "t1"), tmp.path()),
+            under(proc_macro("thiserror-impl", "t2"), tmp.path()),
+            under(syn1, tmp.path()),
+            under(syn2, tmp.path()),
+        ]
+    };
+    // Placeholders for all of them first, as `add` leaves them.
+    check(
+        &file,
+        items(),
+        Mode::Report { record: true },
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap_err();
+    assert_eq!(load(&file).unwrap().len(), 6);
+
+    check(
+        &file,
+        items(),
+        Mode::ApproveAll,
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap();
+    let entries = load(&file).unwrap();
+    assert_eq!(entries.len(), 6);
+    assert!(entries.iter().all(|e| e.action == Action::Approve));
+    check(&file, items(), Mode::Check, &KnownMap::new(), tmp.path()).unwrap();
+}
+
+#[test]
+fn decisions_carried_over_for_several_versions_keep_every_entry() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join(FILE);
+    let other = tmp.path().join("other.toml");
+    let version = |v: &str, pin: &str| {
+        let pkg = tmp.path().join("vendor").join(format!("rustix-{v}"));
+        fs::create_dir_all(&pkg).unwrap();
+        fs::write(pkg.join("build.rs"), format!("fn main() {{ v{} }}", pin)).unwrap();
+        let mut item = script_version(tmp.path(), "rustix", v, "", pin);
+        item.location = pkg.join("build.rs");
+        item.hash = script_hash(&pkg, &item.location, &Pulled::default(), true).unwrap();
+        item.base = pkg;
+        item
+    };
+    let items = || vec![version("0.38.44", "c1"), version("1.1.6", "c2")];
+    let mut text = String::new();
+    for item in items() {
+        text += &format!(
+            "[[build-script]]\npackage = \"rustix\"\npath = \"build.rs\"\nsha256 = \"{}\"\nchecksum = \"{}\"\naction = \"approve\"\n\n",
+            item.hash,
+            match &item.pin {
+                Pin::Checksum(c) => c,
+                _ => unreachable!(),
+            }
+        );
+    }
+    fs::write(&other, text).unwrap();
+    check(
+        &file,
+        items(),
+        Mode::Report { record: true },
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap_err();
+
+    let from = known_from(std::slice::from_ref(&other)).unwrap();
+    check(
+        &file,
+        items(),
+        Mode::Picked {
+            picks: &[],
+            from: &from,
+            crate_dir: tmp.path(),
+        },
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap();
+    let entries = load(&file).unwrap();
+    assert_eq!(entries.len(), 2);
+    assert!(entries.iter().all(|e| e.action == Action::Approve));
+    check(&file, items(), Mode::Check, &KnownMap::new(), tmp.path()).unwrap();
+}
+
+#[test]
+fn entries_are_named_with_their_pin() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join(FILE);
+    let item = script_version(tmp.path(), "rustix", "1.1.6", "aa", "0123456789abcdef");
+    check(
+        &file,
+        vec![item],
+        Mode::ApproveAll,
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap();
+    let entries = load(&file).unwrap();
+    assert_eq!(
+        entries[0].describe(),
+        "rustix build.rs (checksum 0123456789ab)"
+    );
+}
+
 fn vendored_package(dir: &Path) -> PathBuf {
     let pkg = dir.join("vendor/dep-1.0.0");
     fs::create_dir_all(&pkg).unwrap();

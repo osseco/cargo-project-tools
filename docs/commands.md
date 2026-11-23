@@ -59,8 +59,6 @@ cargo project-tools add -i cargo-nextest
 | `-F`, `--features <list>` | Features to enable, comma-separated |
 | `--no-default-features` | Turn off default features |
 | `--bin <name>` | Binaries to install (repeatable; default: all) |
-| `-F`, `--features <list>` | Build with these features, replacing the tool's list; `-F ""` clears it |
-| `--no-default-features`, `--default-features` | Build without, or again with, the default features |
 | `-i`, `--interactive` | Choose the version, features and dependency versions on the [setup screen](#interactive-setup) first |
 | `--fix-advisories` | Before the build review, move each dependency with advisories to the lowest semver-compatible version that fixes them all; not with `-i` |
 | `--auto-approve` | Record the tool's build scripts, proc macros and cargo config in [`build-review.toml`](build-review.md) |
@@ -312,7 +310,7 @@ With `--message-format json`, stdout holds only JSON records, one per line. All 
 | `ignore-expired` | An ignore past its `expires` date | `tool`, `file`, `line`, `id`, `expires` |
 | `inspect` | What [`inspect`](#inspect) found | See [inspect](#inspect) |
 | `ambiguous-dependency` | `update` was given a bare name that is locked at more than one version | `tool`, `package`, `candidates` (each `name@version`) |
-| `sfw-missing` | `settings.sfw = "auto"` found no `sfw`, so downloads aren't filtered | `message` |
+| `sfw-missing` | `settings.sfw = "auto"` found no `sfw`, so downloads aren't filtered; written when a command that may download starts, whether or not it downloads | `message` |
 | `error` | The command failed | `message` |
 | `summary` | The last record of `add`, `update`, `install`, `check`, `review` and `audit` | `ok`, `vulnerabilities`, `warnings`, `pending_reviews`, `missing_targets` |
 
