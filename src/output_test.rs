@@ -157,6 +157,15 @@ fn sandbox_records_name_the_tool_and_setting() {
         line(&built),
         r#"{"version":1,"kind":"built","tool":"t","tool_version":"1.0.0","sandbox":"sandbox-exec","bins":["t"]}"#
     );
+    let up_to_date = Record::UpToDate {
+        tool: "t".into(),
+        tool_version: "1.0.0".into(),
+        bins: vec!["t".into()],
+    };
+    assert_eq!(
+        line(&up_to_date),
+        r#"{"version":1,"kind":"up-to-date","tool":"t","tool_version":"1.0.0","bins":["t"]}"#
+    );
 }
 
 #[test]

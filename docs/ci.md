@@ -4,7 +4,12 @@ Install the project's tools in GitHub Actions, and audit their locks.
 
 ## Install the tools
 
-Binaries and build directories are cached separately. `install` runs on every run: it audits the locks, then skips each tool whose stamp and checksums in `.project-tools/bin` still match, so a restored bin cache is enough to build nothing. The bin cache falls back to an older entry with `restore-keys`, and then only the tools that changed are rebuilt.
+Binaries and build directories are cached separately. `install` runs on every run: it audits the locks, then skips each tool whose stamp and checksums in `.project-tools/bin` still match, so a restored bin cache is enough to build nothing. The bin cache falls back to an older entry with `restore-keys`, and then only the tools that changed are rebuilt. With `--message-format json`, each tool gets a `built` or an `up-to-date` record, so the job can tell what a cache hit left alone:
+
+```bash
+cargo project-tools install --message-format json > records.jsonl
+jq -r 'select(.kind == "built" or .kind == "up-to-date") | "\(.tool) \(.kind)"' records.jsonl
+```
 
 ```yaml
 jobs:

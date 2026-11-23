@@ -161,6 +161,13 @@ pub enum Record {
         sandbox: String,
         bins: Vec<String>,
     },
+    /// A tool `install` or `check` found up to date: its binaries match the lock, settings,
+    /// targets and review it was built with, so nothing is built.
+    UpToDate {
+        tool: String,
+        tool_version: String,
+        bins: Vec<String>,
+    },
     Advisory {
         tool: String,
         file: String,

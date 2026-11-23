@@ -337,6 +337,12 @@ pub fn install(
             say!("{name} {} is up to date; nothing to review", tool.version);
         } else {
             say!("{name} {} is up to date", tool.version);
+            // So CI can tell a cache hit built nothing, without comparing file times.
+            output::emit(Record::UpToDate {
+                tool: name.to_string(),
+                tool_version: tool.version.clone(),
+                bins: stamp.bins,
+            });
         }
         return Ok(());
     }
