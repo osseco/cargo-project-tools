@@ -244,6 +244,14 @@ fn verify_flags() {
     assert!(parse(&["verify", "--deny-warnings"]).is_err());
     let plain = parse(&["verify"]).unwrap().command;
     assert!(!plain.downloads_packages());
+    // `audit` goes through sfw (and reports a missing one) even when it downloads nothing.
+    assert!(parse(&["audit"]).unwrap().command.downloads_packages());
+    assert!(
+        !parse(&["audit-db", "update"])
+            .unwrap()
+            .command
+            .downloads_packages()
+    );
     let repair = parse(&["verify", "--repair", "--profile", "dist", "x"])
         .unwrap()
         .command;

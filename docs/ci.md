@@ -106,7 +106,7 @@ Downloading needs the network: the tool's source, the advisory database, and ven
 
 With `settings.sfw = "auto"`, downloads go through sfw only when it's on `PATH`, and otherwise carry on with only a note. For CI, install it with [`osseco/setup-sfw-free`](https://github.com/osseco/setup-sfw-free) and set `sfw = "require"`, so a runner without it fails instead of downloading unfiltered.
 
-If you keep `auto`, a missing sfw is also an `sfw-missing` record with `--message-format json`, which you can turn into your CI's own warning:
+If you keep `auto`, a missing sfw is also an `sfw-missing` record with `--message-format json`, which you can turn into your CI's own warning. It's written once, when a command that may download packages starts (`add`, `update`, `upgrade`, `install`, `check`, `review`, `audit`, `inspect` and `verify --repair`), whether or not that run ends up downloading anything:
 
 ```bash
 cargo project-tools install --message-format json > records.jsonl
