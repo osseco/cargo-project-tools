@@ -113,6 +113,17 @@ cargo project-tools check
 cargo project-tools install --offline --no-audit --sandbox off --message-format json > records.jsonl
 ```
 
+`check`'s records say whether the offline install has anything to do. Each tool gets `up-to-date` (nothing to build) or `prepared` (`install --offline` builds it); a tool with neither failed the check, and its other records say why. So start the offline install only when there's a `prepared` record:
+
+```bash
+cargo project-tools check --message-format json > check.jsonl
+if jq -e 'select(.kind == "prepared")' check.jsonl > /dev/null; then
+  : # run install --offline --no-audit in the container
+fi
+```
+
+When a build fails, `install` writes `build-failed` (with the `tool`, its `sandbox` and cargo's `exit_status`) before the `error`. What `check` prepared for that tool is used up, so run `check` again before retrying.
+
 The [sandbox](configuration.md#sandbox) enforces no network and no writes outside those paths for the build where there is one. Where there isn't, for example a container you provide, cut its network and mount `CARGO_HOME` read-only yourself, and pass `--sandbox off`. Each tool gets a `built` or `up-to-date` record.
 
 ## Socket Firewall in CI

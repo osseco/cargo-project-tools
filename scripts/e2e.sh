@@ -3,7 +3,7 @@
 # from tests/e2e-project, then checks that:
 # - `check --sandbox require` fails without a sandbox even when every tool is up to date,
 # - `install --offline` after `check` builds with no network and a read-only CARGO_HOME,
-# - a tool that's skipped gets an `up-to-date` record,
+# - a tool that's skipped gets an `up-to-date` record, and one `check` prepared a `prepared` record,
 # - `check --force` prepares an up-to-date tool for `install --offline --force`,
 # - `install --sandbox require` builds in bwrap.
 # It removes and installs bubblewrap with sudo and apt, and needs sfw and jq.
@@ -68,7 +68,8 @@ if isolated touch "${CARGO_HOME:-$HOME/.cargo}/e2e-write"; then
     fail "the isolated run can write to CARGO_HOME"
 fi
 rm -rf .project-tools/bin/.stamps
-cargo project-tools check --no-audit
+cargo project-tools check --no-audit --message-format json >prepare.jsonl
+expect prepare.jsonl '.kind == "prepared"'
 test -f .project-tools/targets/ripgrep/prepared.json || fail "check prepared nothing"
 isolated cargo project-tools install --offline --no-audit --sandbox off \
     --message-format json >offline.jsonl

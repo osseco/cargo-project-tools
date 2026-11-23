@@ -179,6 +179,23 @@ pub enum Record {
         sandbox: String,
         bins: Vec<String>,
     },
+    /// A tool `install` failed to build, and the sandbox it built in. What `check` prepared
+    /// for it is used up.
+    BuildFailed {
+        tool: String,
+        tool_version: String,
+        sandbox: String,
+        /// None when a signal ended the build.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        exit_status: Option<i32>,
+        message: String,
+    },
+    /// A tool `check` passed and prepared: its source and vendored dependencies are in
+    /// `targets/<tool>`, and `install --offline` builds it from them.
+    Prepared {
+        tool: String,
+        tool_version: String,
+    },
     /// A tool `install` or `check` found up to date: its binaries match the lock, settings,
     /// targets and review it was built with, so nothing is built.
     UpToDate {

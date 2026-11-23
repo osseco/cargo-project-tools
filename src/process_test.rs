@@ -72,3 +72,18 @@ fn verbatim_prefixes_are_dropped() {
         PathBuf::from("/home/p/targets")
     );
 }
+
+#[test]
+fn a_failed_command_carries_its_exit_code() {
+    let mut cmd = Command::new("git");
+    cmd.arg("--no-such-option").stderr(Stdio::null());
+    let err = run(&mut cmd).unwrap_err();
+    let failed = err.downcast_ref::<Failed>().unwrap();
+    assert!(failed.code.is_some_and(|c| c != 0), "{failed:?}");
+    // The message is what it was before the error had a type.
+    assert!(
+        err.to_string()
+            .starts_with("`git --no-such-option` failed ("),
+        "{err}"
+    );
+}
