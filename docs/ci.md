@@ -105,13 +105,21 @@ jq -e 'select(.kind == "built" and .sandbox == "none") | halt_error' records.jso
 
 ## Offline builds
 
-Downloading needs the network: the tool's source, the advisory database, and vendoring each tool's dependencies. The compile itself doesn't. It builds only from what was fetched and checked (the tool's source in `targets/<tool>/src` and its vendored dependencies), always with cargo's `--offline`, and writes only to `.project-tools/targets/<tool>`, `.project-tools/bin` and cargo's `.crates.toml` and `.crates2.json`. It never writes to `CARGO_HOME`, so that can be mounted read-only for the build. The [sandbox](configuration.md#sandbox) enforces both where there is one. Where there isn't, for example a container you provide, cut its network and mount `CARGO_HOME` read-only yourself, and pass `--sandbox off`.
+Downloading needs the network: the tool's source, the advisory database, and vendoring each tool's dependencies. `check` does all of it, and keeps each tool's source and vendored dependencies in `.project-tools/targets/<tool>` once its review passes. After that, `install --offline --no-audit` needs no network and nothing from `CARGO_HOME` but the toolchain. It builds from what `check` prepared, as long as the lock, settings, targets and review are the same, always with cargo's `--offline`. It writes only to `.project-tools/targets/<tool>`, `.project-tools/bin` and cargo's `.crates.toml` and `.crates2.json`. A tool that isn't up to date and wasn't prepared fails instead of fetching, and an offline `install` doesn't use sfw. What `check` prepared is used once, because review decisions are applied to it in place; run `check` again before another offline build.
+
+```bash
+cargo project-tools check
+# Then, with the network cut and CARGO_HOME read-only:
+cargo project-tools install --offline --no-audit --sandbox off --message-format json > records.jsonl
+```
+
+The [sandbox](configuration.md#sandbox) enforces no network and no writes outside those paths for the build where there is one. Where there isn't, for example a container you provide, cut its network and mount `CARGO_HOME` read-only yourself, and pass `--sandbox off`. Each tool gets a `built` or `up-to-date` record.
 
 ## Socket Firewall in CI
 
 With `settings.sfw = "auto"`, downloads go through sfw only when it's on `PATH`, and otherwise carry on with only a note. For CI, install it with [`osseco/setup-sfw-free`](https://github.com/osseco/setup-sfw-free) and set `sfw = "require"`, so a runner without it fails instead of downloading unfiltered.
 
-If you keep `auto`, a missing sfw is also an `sfw-missing` record with `--message-format json`, which you can turn into your CI's own warning. It's written once, when a command that may download packages starts (`add`, `update`, `upgrade`, `install`, `check`, `review`, `audit`, `inspect` and `verify --repair`), whether or not that run ends up downloading anything:
+If you keep `auto`, a missing sfw is also an `sfw-missing` record with `--message-format json`, which you can turn into your CI's own warning. It's written once, when a command that may download packages starts (`add`, `update`, `upgrade`, `install`, `check`, `review`, `audit`, `inspect` and `verify --repair`; `install` and `verify --repair` not with `--offline`), whether or not that run ends up downloading anything:
 
 ```bash
 cargo project-tools install --message-format json > records.jsonl

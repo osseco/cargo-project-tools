@@ -185,3 +185,97 @@ fn the_sandbox_choice_names_the_setting_that_applied() {
         .is_err()
     );
 }
+
+/// A checkout with a lock and vendored dependencies under `target/`, as `check` leaves it.
+fn prepared_checkout(target: &Path) -> (source::Checkout, vendor::Vendored) {
+    let root = target.join("src");
+    let package = root.join("t");
+    fs::create_dir_all(&package).unwrap();
+    fs::write(package.join("Cargo.toml"), "[package]\nname = \"t\"\n").unwrap();
+    fs::write(root.join("Cargo.lock"), "lock").unwrap();
+    fs::create_dir_all(target.join("vendor")).unwrap();
+    let config = target.join("vendor-config.toml");
+    fs::write(&config, "[source]").unwrap();
+    let checkout = source::Checkout::kept(
+        root.clone(),
+        root,
+        package,
+        "1.0.0".into(),
+        None,
+        Some("cc".into()),
+    );
+    let vendored = vendor::Vendored {
+        dir: target.join("vendor"),
+        config_args: vec!["--config".into(), config.to_string_lossy().into_owned()],
+    };
+    (checkout, vendored)
+}
+
+#[test]
+fn what_check_prepared_is_reused_only_as_it_was_left() {
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path();
+    let (checkout, vendored) = prepared_checkout(target);
+    write_prepared(target, "k", &checkout, &vendored).unwrap();
+
+    let (c, v) = read_prepared(target, "k", "lock").unwrap();
+    assert_eq!(c.package_dir, checkout.package_dir);
+    assert_eq!(c.checksum.as_deref(), Some("cc"));
+    assert_eq!(v.config_args, vendored.config_args);
+
+    // Another lock, settings or review (the key), or a changed vendor config: fetch again.
+    assert!(read_prepared(target, "other", "lock").is_none());
+    assert!(read_prepared(target, "k", "other lock").is_none());
+    fs::write(target.join("vendor-config.toml"), "[source.x]").unwrap();
+    assert!(read_prepared(target, "k", "lock").is_none());
+
+    // Paths that leave the checkout aren't followed.
+    let mut p: Prepared =
+        serde_json::from_str(&fs::read_to_string(target.join(PREPARED)).unwrap()).unwrap();
+    p.package_dir = PathBuf::from("../t");
+    fs::write(target.join(PREPARED), serde_json::to_string(&p).unwrap()).unwrap();
+    assert!(read_prepared(target, "k", "lock").is_none());
+
+    forget_prepared(target).unwrap();
+    assert!(!target.join(PREPARED).exists());
+    forget_prepared(target).unwrap();
+}
+
+#[test]
+fn an_offline_install_needs_what_check_prepared() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = Project {
+        root: tmp.path().to_path_buf(),
+    };
+    let lock = project.lock_path("t");
+    fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    fs::write(
+        &lock,
+        "version = 4\n\n[[package]]\nname = \"t\"\nversion = \"1.0.0\"\n",
+    )
+    .unwrap();
+    let tool = tool();
+    let known = review::KnownMap::new();
+    let err = install(
+        &project,
+        "t",
+        &tool,
+        &Build::default(),
+        &install_args(&["--offline", "--sandbox", "off"]),
+        Options {
+            force: false,
+            auto_approve: false,
+            picks: &[],
+            from: &known,
+            stage: Stage::Install,
+            checksums: Checksums::Write,
+            targets: None,
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("isn't prepared for an offline install"),
+        "{err}"
+    );
+}
