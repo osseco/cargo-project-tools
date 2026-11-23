@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::checksum;
@@ -29,6 +29,116 @@ const OLD_STAMP: &str = ".install-stamp.json";
 struct Stamp {
     key: String,
     bins: Vec<String>,
+}
+
+/// What `check` leaves in `targets/<tool>` for a tool that passed: its source and vendored
+/// dependencies, before any review decision is applied to them. `install` builds from these
+/// instead of fetching again, so after `check` it needs neither the network nor
+/// `CARGO_HOME`. Decisions are applied in place, so it's used once.
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+struct Prepared {
+    key: String,
+    /// Relative to `targets/<tool>/src`.
+    workspace_root: PathBuf,
+    package_dir: PathBuf,
+    version: String,
+    commit: Option<String>,
+    checksum: Option<String>,
+    /// sha256 of `vendor-config.toml`; none when the tool has no dependencies.
+    vendor_config: Option<String>,
+}
+
+const PREPARED: &str = "prepared.json";
+
+/// The stamp key, and this program's version: another version may lay out the source or
+/// vendor directory differently.
+fn prepared_key(stamp_key: &str) -> String {
+    registry_hash(format!("{}\0{stamp_key}", env!("CARGO_PKG_VERSION")).as_bytes())
+}
+
+fn write_prepared(
+    target_dir: &Path,
+    key: &str,
+    checkout: &source::Checkout,
+    vendored: &vendor::Vendored,
+) -> Result<()> {
+    let rel = |p: &Path| {
+        p.strip_prefix(&checkout.root)
+            .map(Path::to_path_buf)
+            .with_context(|| format!("{} is outside the checkout", p.display()))
+    };
+    let vendor_config = match vendored.config_args.as_slice() {
+        [] => None,
+        [_, path] => Some(registry_hash(&fs::read(path)?)),
+        _ => bail!("unexpected vendor config arguments"),
+    };
+    let prepared = Prepared {
+        key: key.to_string(),
+        workspace_root: rel(&checkout.workspace_root)?,
+        package_dir: rel(&checkout.package_dir)?,
+        version: checkout.version.clone(),
+        commit: checkout.commit.clone(),
+        checksum: checkout.checksum.clone(),
+        vendor_config,
+    };
+    fs::write(
+        target_dir.join(PREPARED),
+        serde_json::to_string_pretty(&prepared)?,
+    )?;
+    Ok(())
+}
+
+/// What `check` prepared, when it's for `key` and still as `check` left it.
+fn read_prepared(
+    target_dir: &Path,
+    key: &str,
+    lock_text: &str,
+) -> Option<(source::Checkout, vendor::Vendored)> {
+    let p: Prepared =
+        serde_json::from_str(&fs::read_to_string(target_dir.join(PREPARED)).ok()?).ok()?;
+    let inside = |rel: &Path| {
+        rel.components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+    };
+    if p.key != key || !inside(&p.workspace_root) || !inside(&p.package_dir) {
+        return None;
+    }
+    let root = target_dir.join("src");
+    let checkout = source::Checkout::kept(
+        root.clone(),
+        root.join(&p.workspace_root),
+        root.join(&p.package_dir),
+        p.version,
+        p.commit,
+        p.checksum,
+    );
+    if !checkout.manifest_path().is_file()
+        || fs::read_to_string(checkout.lock_path()).ok()? != lock_text
+    {
+        return None;
+    }
+    let dir = target_dir.join("vendor");
+    let config = target_dir.join("vendor-config.toml");
+    let config_args = match p.vendor_config {
+        None => Vec::new(),
+        Some(hash) => {
+            if !dir.is_dir() || registry_hash(&fs::read(&config).ok()?) != hash {
+                return None;
+            }
+            vec!["--config".into(), config.to_string_lossy().into_owned()]
+        }
+    };
+    Some((checkout, vendor::Vendored { dir, config_args }))
+}
+
+fn forget_prepared(target_dir: &Path) -> Result<()> {
+    let path = target_dir.join(PREPARED);
+    match fs::remove_file(&path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            Err(e).with_context(|| format!("removing {}", path.display()))
+        }
+        _ => Ok(()),
+    }
 }
 
 /// What to do with `bin/<tool>.sha256` after building.
@@ -337,6 +447,12 @@ pub fn install(
             say!("{name} {} is up to date; nothing to review", tool.version);
         } else {
             say!("{name} {} is up to date", tool.version);
+            // So CI can tell a cache hit built nothing, without comparing file times.
+            output::emit(Record::UpToDate {
+                tool: name.to_string(),
+                tool_version: tool.version.clone(),
+                bins: stamp.bins,
+            });
         }
         return Ok(());
     }
@@ -352,20 +468,46 @@ pub fn install(
         Stage::Install => sandbox::choose(name, &choice)?,
         _ => None,
     };
-    let checkout = source::checkout(
-        project,
-        name,
-        &Origin::of(tool),
-        Dest::Fixed(target_dir.join("src")),
-    )?;
+    // `review` applies decisions as it goes, so it always starts from a fresh copy.
+    let prepared_key = prepared_key(&key);
+    let prepared = match opts.stage {
+        Stage::Install | Stage::Check => read_prepared(&target_dir, &prepared_key, &lock_text),
+        Stage::Review | Stage::Diff => None,
+    };
+    let reused = prepared.is_some();
+    let (checkout, vendored) = match prepared {
+        Some(p) => {
+            say!("Using the source and dependencies `check` prepared");
+            p
+        }
+        None => {
+            if opts.stage == Stage::Install && args.offline {
+                bail!(
+                    "{name} {} isn't prepared for an offline install; run `cargo project-tools \
+                     check` with the same lock, settings and targets first",
+                    tool.version
+                );
+            }
+            forget_prepared(&target_dir)?;
+            let checkout = source::checkout(
+                project,
+                name,
+                &Origin::of(tool),
+                Dest::Fixed(target_dir.join("src")),
+            )?;
+            checkout.put_lock(&lock_path)?;
+            let vendored = vendor::vendor(project, name, &checkout, args.offline, &[])?;
+            (checkout, vendored)
+        }
+    };
     anyhow::ensure!(
         checkout.version == tool.version,
         "source of {name} is version {}, but project-tools.toml wants {}",
         checkout.version,
         tool.version
     );
-    checkout.put_lock(&lock_path)?;
-    let vendored = vendor::vendor(project, name, &checkout, args.offline, &[])?;
+    // Everything is vendored, so what was prepared needs no network.
+    let offline = args.offline || reused;
     let features = feature_args(tool);
     let config = resolve_config(build, &args.config);
     let selection = graph::Selection {
@@ -374,18 +516,21 @@ pub fn install(
         config: &config,
     };
     if opts.stage == Stage::Diff {
-        return review::diff(project, name, selection, &checkout, &vendored, args.offline);
+        return review::diff(project, name, selection, &checkout, &vendored, offline);
     }
     if opts.stage == Stage::Check {
-        return review::check_only(project, name, selection, &checkout, &vendored, args.offline);
+        review::check_only(project, name, selection, &checkout, &vendored, offline)?;
+        return write_prepared(&target_dir, &prepared_key, &checkout, &vendored);
     }
+    // Decisions are applied in place from here on.
+    forget_prepared(&target_dir)?;
     let changes = review::review(
         project,
         name,
         selection,
         &checkout,
         &vendored,
-        args.offline,
+        offline,
         review::Approval::new(
             opts.auto_approve,
             opts.picks,

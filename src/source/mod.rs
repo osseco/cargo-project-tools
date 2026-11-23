@@ -63,6 +63,27 @@ impl Checkout {
         }
     }
 
+    /// A checkout made earlier and kept in a fixed directory (`install` reusing what `check`
+    /// prepared).
+    pub fn kept(
+        root: PathBuf,
+        workspace_root: PathBuf,
+        package_dir: PathBuf,
+        version: String,
+        commit: Option<String>,
+        checksum: Option<String>,
+    ) -> Checkout {
+        Checkout {
+            root,
+            workspace_root,
+            package_dir,
+            version,
+            commit,
+            checksum,
+            _tmp: None,
+        }
+    }
+
     pub fn lock_path(&self) -> PathBuf {
         self.workspace_root.join("Cargo.lock")
     }

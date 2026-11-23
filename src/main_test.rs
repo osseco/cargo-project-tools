@@ -244,6 +244,16 @@ fn verify_flags() {
     assert!(parse(&["verify", "--deny-warnings"]).is_err());
     let plain = parse(&["verify"]).unwrap().command;
     assert!(!plain.downloads_packages());
+    // An offline repair or install only uses what `check` prepared.
+    let offline = parse(&["verify", "--repair", "--offline"]).unwrap().command;
+    assert!(!offline.downloads_packages());
+    assert!(
+        !parse(&["install", "--offline"])
+            .unwrap()
+            .command
+            .downloads_packages()
+    );
+    assert!(parse(&["install"]).unwrap().command.downloads_packages());
     // `audit` goes through sfw (and reports a missing one) even when it downloads nothing.
     assert!(parse(&["audit"]).unwrap().command.downloads_packages());
     assert!(

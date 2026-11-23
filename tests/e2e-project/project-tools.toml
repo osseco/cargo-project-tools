@@ -1,0 +1,12 @@
+# The project the Linux end-to-end job installs from (scripts/e2e.sh).
+
+[settings]
+sfw = "require"
+targets = ["x86_64-unknown-linux-gnu"]
+
+[build]
+# Quicker to build than release; the job tests installing, not the binary.
+profile = "dev"
+
+[tool.ripgrep]
+version = "14.1.1"

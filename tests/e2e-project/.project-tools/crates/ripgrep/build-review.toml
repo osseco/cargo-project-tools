@@ -1,0 +1,49 @@
+# Code that runs while building this tool. `install` halts on anything not listed here.
+# Review it on the review screen: `cargo project-tools review <tool>`. See docs/build-review.md.
+
+[[build-script]]
+package = "anyhow"
+path = "build.rs"
+sha256 = "914eb6158687216432aed82e357af5dff2d957d8c7746d075f7a778ba39df146"
+checksum = "10f00e1f6e58a40e807377c75c6a7f97bf9044fab57816f2414e6f5f4499d7b8"
+action = "approve"
+
+[[build-script]]
+package = "crossbeam-utils"
+path = "build.rs"
+sha256 = "5aa7a188847dfb7b5e09a3f2d2bdb324d6cae524a669987e395dc6e0153f4bf2"
+checksum = "22ec99545bb0ed0ea7bb9b8e1e9122ea386ff8a48c0922e43f36d45ab09e0e80"
+action = "approve"
+
+[[build-script]]
+package = "libc"
+path = "build.rs"
+sha256 = "54387230fed8d16f1169a845e92a1c1a5d9227559acbf3bfa383c7901b2d1be8"
+checksum = "d8adc4bb1803a324070e64a98ae98f38934d91957a99cfb3a43dcbc01bc56439"
+action = "approve"
+
+[[build-script]]
+package = "ripgrep"
+path = "build.rs"
+sha256 = "d2d21012db3fa4ef14b0017b70eaca046b30ca654ccbdb3bab8558cba2ec4040"
+checksum = "f77b8032dc584527975f34aa5a897d0ef5a785573fda778771a614ff9da501d9"
+action = "approve"
+
+[[build-script]]
+package = "serde"
+path = "build.rs"
+sha256 = "a98eaa82c783fdb4169d1646c06028ec5cb82937d39ee127ec8ed33651d2f238"
+checksum = "c8e3592472072e6e22e0a54d5904d9febf8508f65fb8552499a1abc7d1078c3a"
+action = "approve"
+
+[[build-script]]
+package = "serde_json"
+path = "build.rs"
+sha256 = "1630d0bbfc936b0975d840cec5cfb5910d861b6afeeeeabe11000a2c202d571d"
+checksum = "6ff5456707a1de34e7e37f2a6fd3d3f808c318259cbd01ab6377795054b483d8"
+action = "approve"
+
+[[cargo-config]]
+path = ".cargo/config.toml"
+sha256 = "19c86da310db9ee0a4ce6d06a4ae918723e09cb7d6cb189b1cf2cb2ac1ac4e27"
+action = "approve"

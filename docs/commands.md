@@ -149,7 +149,8 @@ To check all this without building, use [`check`](#check).
 | `--target <triple>` | Override `[build].target` |
 | `--config <value>` | Extra cargo `--config` values |
 | `--sandbox <mode>` | The [OS sandbox](configuration.md#sandbox) for this run, `auto`, `require` or `off`, whatever `[build].sandbox` and `[build.sandbox-os]` say |
-| `-j`, `--offline`, `--frozen`, `-q`, `-v`, `--color`, `--keep-going`, `--timings` | Passed through to cargo |
+| `--offline` | Build only from what [`check`](#check) prepared, with no network and nothing from `CARGO_HOME` but the toolchain; a tool that isn't up to date and wasn't prepared fails. Also uses the advisory database as it is (pair it with `--no-audit` after `check`), and doesn't use sfw |
+| `-j`, `--frozen`, `-q`, `-v`, `--color`, `--keep-going`, `--timings` | Passed through to cargo |
 
 ## check
 
@@ -158,7 +159,7 @@ cargo project-tools check
 cargo project-tools check cargo-nextest --target x86_64-pc-windows-msvc
 ```
 
-Checks what [`install`](#install) checks before it builds, then stops: this machine (and `--target`) against [`targets`](configuration.md#targets), the audit, and, for each tool that isn't up to date, its build-time code against `build-review.toml`. That still vendors the dependencies, but it builds nothing, and writes nothing to `project-tools.toml` or `build-review.toml`, and no binaries or install stamps (only the audit's `bin/.stamps/<tool>.built.json`). It reports every problem rather than stopping at the first, and fails if there are any. Use it in CI to fail fast before a long build, or in a job that only audits.
+Checks what [`install`](#install) checks before it builds, then stops: this machine (and `--target`) against [`targets`](configuration.md#targets), the audit, and, for each tool that isn't up to date, its build-time code against `build-review.toml`. That still vendors the dependencies, but it builds nothing, and writes nothing to `project-tools.toml` or `build-review.toml`, and no binaries or install stamps (only the audit's `bin/.stamps/<tool>.built.json`). A tool whose review passes keeps its source and vendored dependencies in `.project-tools/targets/<tool>` (with `prepared.json`), and `install` builds from them once without fetching again, as long as the lock, settings, targets and review are the same. See [offline builds](ci.md#offline-builds). It reports every problem rather than stopping at the first, and fails if there are any. Use it in CI to fail fast before a long build, or in a job that only audits.
 
 It never approves anything, so it has no `--auto-approve`, `--approve-target` or `--force`.
 
@@ -304,6 +305,7 @@ With `--message-format json`, stdout holds only JSON records, one per line. All 
 | `target-missing` | This machine or `--target` isn't in the tool's [`targets`](configuration.md#targets) | `tool`, `file`, `line`, `targets` |
 | `sandbox-missing` | The sandbox mode is `auto` and there's no working [sandbox](configuration.md#sandbox), so the tool builds without one | `tool`, `file`, `line` (the `sandbox` or `sandbox-os` setting that applied; left out for the default and `--sandbox`), `message` |
 | `built` | `install` built a tool | `tool`, `tool_version`, `sandbox` (`sandbox-exec`, `bwrap` or `none`), `bins` |
+| `up-to-date` | `install` or `check` found a tool's binaries current (stamp and checksums match), so it builds nothing | `tool`, `tool_version`, `bins` |
 | `advisory` | A finding of the [audit](#audit) that isn't ignored | `tool`, `file`, `line`, `id`, `type`, `package`, `package_version`, `title`, `patched`, `severity`, `fix`, `affected` |
 | `lock-change` | `add` or `update` changed the tool's lock: `add` lists what `--fix-advisories` or the setup screen changed in the published lock | `tool`, `file`, `package`, `from`, `to` (`from` left out for an added package, `to` for a removed one) |
 | `ignore-unused` | An ignore that matched nothing | `tool`, `file`, `line`, `id` |

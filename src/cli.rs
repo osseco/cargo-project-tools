@@ -413,10 +413,11 @@ impl Command {
     /// Commands that may download packages and should run through sfw, whether or not this
     /// run ends up downloading any. `audit` fetches a tool's crate to see what it builds;
     /// `audit-db` only fetches the advisory database, which isn't a package. `verify` only
-    /// builds when repairing.
+    /// builds when repairing. An offline `install` only uses what `check` prepared.
     pub fn downloads_packages(&self) -> bool {
         match self {
-            Command::Verify(args) => args.repair,
+            Command::Verify(args) => args.repair && !args.build.offline,
+            Command::Install(args) => !args.build.offline,
             _ => matches!(
                 self,
                 Command::Add(_)
