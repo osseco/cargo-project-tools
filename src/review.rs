@@ -1143,7 +1143,7 @@ impl Pick {
 pub fn check(
     path: &Path,
     items: Vec<Item>,
-    mode: Mode,
+    mode: Mode<'_>,
     known: &KnownMap,
     root: &Path,
 ) -> Result<Vec<Decided>> {
@@ -1169,10 +1169,33 @@ pub fn check(
     }
     let previous = previous_entries(&undecided, &stale);
     let pending: Vec<Pending> = undecided.into_iter().zip(previous).collect();
+    let waiting = pending.len();
+    let outcome = decide(path, pending, &stale, mode, known, root, &mut decided);
+    // A failure that isn't the list of what's pending (a pick that doesn't match, code that
+    // changed) recorded nothing: all of it is still waiting.
+    if let Err(e) = &outcome
+        && !e.is::<PendingReview>()
+    {
+        output::still_pending(waiting);
+    }
+    outcome?;
+    Ok(decided)
+}
+
+/// What `check` does with the pending items in `mode`; decisions go to `decided`.
+fn decide<'a>(
+    path: &Path,
+    pending: Vec<Pending<'a>>,
+    stale: &[&'a Entry],
+    mode: Mode<'_>,
+    known: &KnownMap,
+    root: &Path,
+    decided: &mut Vec<Decided>,
+) -> Result<()> {
     match mode {
         Mode::ApproveAll => {
             let decisions = pending.into_iter().map(Decision::keep_or_approve).collect();
-            decided.extend(record(path, decisions, &stale)?);
+            decided.extend(record(path, decisions, stale)?);
         }
         Mode::Picked {
             picks,
@@ -1189,9 +1212,7 @@ pub fn check(
                     None => Ok(String::new()),
                 })
                 .collect::<Result<Vec<_>>>()?;
-            decided.extend(settle(
-                path, pending, choices, &before, &stale, known, root,
-            )?);
+            decided.extend(settle(path, pending, choices, &before, stale, known, root)?);
         }
         Mode::Interactive { tool, crate_dir } if !pending.is_empty() => {
             let before = pending
@@ -1203,17 +1224,17 @@ pub fn check(
                 .map(|(item, _)| known_for(known, item).cloned())
                 .collect();
             match tui::run(tool, &pending, &hints, crate_dir)? {
-                Some(choices) => decided.extend(settle(
-                    path, pending, choices, &before, &stale, known, root,
-                )?),
+                Some(choices) => {
+                    decided.extend(settle(path, pending, choices, &before, stale, known, root)?)
+                }
                 // Cancelled.
-                None => report(path, &pending, &stale, known, root, true)?,
+                None => report(path, &pending, stale, known, root, true)?,
             }
         }
-        Mode::Report { record } => report(path, &pending, &stale, known, root, record)?,
-        _ => report(path, &pending, &stale, known, root, false)?,
+        Mode::Report { record } => report(path, &pending, stale, known, root, record)?,
+        _ => report(path, &pending, stale, known, root, false)?,
     }
-    Ok(decided)
+    Ok(())
 }
 
 /// The stale entry each undecided item replaces, each entry for at most one item. Versions of
@@ -1285,24 +1306,62 @@ fn picked(
     }
     let carried: Vec<bool> = choices.iter().map(Option::is_some).collect();
     for pick in picks {
-        let mut found = false;
-        for (((item, _), choice), carried) in pending.iter().zip(choices.iter_mut()).zip(&carried) {
-            if !pick.selects(item) {
-                continue;
+        let selected: Vec<usize> = (0..pending.len())
+            .filter(|&n| pick.selects(&pending[n].0))
+            .collect();
+        if selected.is_empty() {
+            let what = match pick.action {
+                Action::Approve => "",
+                _ => "build script or cargo config ",
+            };
+            bail!("no pending {what}matches {}", shown_line(&pick.spec));
+        }
+        // A package can have several pieces (a build script and a build dep, say); the hash
+        // picks the one it was read from.
+        let targets = match &pick.hash {
+            None => selected,
+            Some(hash) => {
+                let hit: Vec<usize> = selected
+                    .iter()
+                    .copied()
+                    .filter(|&n| pending[n].0.hash == *hash)
+                    .collect();
+                match (hit.is_empty(), selected.as_slice()) {
+                    (false, _) => hit,
+                    (true, [n]) => bail!(
+                        "{} is now {}, not {}; read it again",
+                        shown_line(&pending[*n].0.describe()),
+                        pending[*n].0.hash,
+                        shown_line(hash)
+                    ),
+                    // Errors are one line.
+                    (true, _) => bail!(
+                        "{} has {} pending pieces and none has hash {}; use one of: {}",
+                        shown_line(&pick.spec),
+                        selected.len(),
+                        shown_line(hash),
+                        selected
+                            .iter()
+                            .map(|&n| {
+                                let item = &pending[n].0;
+                                format!(
+                                    "{} ({} {})",
+                                    shown_line(&spec(item)),
+                                    item.kind.table(),
+                                    shown_line(&item.describe())
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                }
             }
-            found = true;
-            if let Some(hash) = &pick.hash
-                && *hash != item.hash
-            {
-                bail!(
-                    "{} is now {}, not {}; read it again",
-                    shown_line(&item.describe()),
-                    item.hash,
-                    shown_line(hash)
-                );
-            }
+        };
+        for n in targets {
+            let item = &pending[n].0;
+            let choice = &mut choices[n];
             // A pick wins over a decision carried over with `--from`.
-            if choice.is_some() && !carried {
+            if choice.is_some() && !carried[n] {
                 bail!("{} is picked twice", shown_line(&item.describe()));
             }
             let file = match pick.action {
@@ -1323,13 +1382,6 @@ fn picked(
                 action: pick.action,
                 file,
             });
-        }
-        if !found {
-            let what = match pick.action {
-                Action::Approve => "",
-                _ => "build script or cargo config ",
-            };
-            bail!("no pending {what}matches {}", shown_line(&pick.spec));
         }
     }
     Ok(choices)

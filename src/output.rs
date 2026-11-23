@@ -37,6 +37,18 @@ pub fn init(format: Format, summary: bool) {
     SUMMARY.store(summary, Ordering::Relaxed);
 }
 
+/// `n` pieces of build-time code are still pending, though no `review-pending` record was
+/// written for them (the review failed before it could list them).
+pub fn still_pending(n: usize) {
+    PENDING_REVIEWS.fetch_add(n, Ordering::Relaxed);
+}
+
+/// What the summary would report as pending.
+#[cfg(test)]
+pub fn pending_reviews() -> usize {
+    PENDING_REVIEWS.load(Ordering::Relaxed)
+}
+
 /// This process wrote nothing itself (it re-ran under sfw): no summary at exit.
 pub fn skip_summary() {
     SUMMARY.store(false, Ordering::Relaxed);

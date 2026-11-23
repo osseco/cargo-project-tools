@@ -1875,3 +1875,82 @@ fn decisions_from_another_file_carry_over_only_on_an_exact_match() {
         .collect();
     assert_eq!(decided, [("libc".to_string(), Action::Strip)]);
 }
+
+#[test]
+fn a_hash_picks_the_one_piece_of_a_package_it_names() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join(FILE);
+    // proc-macro2 has a build script and is a build dependency: two pieces, one version.
+    let script = real_script(tmp.path(), "pm");
+    let sha = script.hash.clone();
+    let mut dep = under(proc_macro("pm", "cc"), tmp.path());
+    dep.kind = Kind::BuildDep;
+    fs::create_dir_all(&dep.location).unwrap();
+    assert_ne!(spec(&script), spec(&dep));
+    let items = || vec![script.clone(), dep.clone()];
+    let run = |text: &str| {
+        check(
+            &file,
+            items(),
+            Mode::Picked {
+                picks: &[Pick::parse(Action::Approve, text).unwrap()],
+                from: &KnownMap::new(),
+                crate_dir: tmp.path(),
+            },
+            &KnownMap::new(),
+            tmp.path(),
+        )
+    };
+    let approved = || -> Vec<Kind> {
+        load(&file)
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.action == Action::Approve)
+            .map(|e| e.kind)
+            .collect()
+    };
+
+    // A hash neither piece has: no claim that the code changed, and the specs to use.
+    let before = output::pending_reviews();
+    let err = run("pm@1.0.0=other").unwrap_err().to_string();
+    assert!(err.contains("2 pending pieces"), "{err}");
+    assert!(err.contains(&format!("pm@1.0.0={sha}")), "{err}");
+    assert!(err.contains("pm@1.0.0=cc"), "{err}");
+    assert!(!err.contains("read it again"), "{err}");
+    assert!(!file.exists());
+    // Both are still pending, though nothing listed them.
+    assert!(output::pending_reviews() >= before + 2);
+
+    // The script's hash approves the script; the build dep stays pending.
+    let err = run(&format!("pm@1.0.0={sha}")).unwrap_err();
+    assert!(err.is::<PendingReview>(), "{err}");
+    assert_eq!(approved(), [Kind::BuildScript]);
+
+    // The crate checksum approves the build dep.
+    run("pm@1.0.0=cc").unwrap();
+    assert_eq!(approved().len(), 2);
+    check(&file, items(), Mode::Check, &KnownMap::new(), tmp.path()).unwrap();
+}
+
+#[test]
+fn a_bare_spec_approves_every_piece_of_the_package() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join(FILE);
+    let script = real_script(tmp.path(), "pm");
+    let mut dep = under(proc_macro("pm", "cc"), tmp.path());
+    dep.kind = Kind::BuildDep;
+    fs::create_dir_all(&dep.location).unwrap();
+    check(
+        &file,
+        vec![script.clone(), dep.clone()],
+        Mode::Picked {
+            picks: &[Pick::parse(Action::Approve, "pm@1.0.0").unwrap()],
+            from: &KnownMap::new(),
+            crate_dir: tmp.path(),
+        },
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap();
+    assert_eq!(load(&file).unwrap().len(), 2);
+}
