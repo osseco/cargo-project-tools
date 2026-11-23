@@ -256,26 +256,57 @@ fn an_offline_install_needs_what_check_prepared() {
     .unwrap();
     let tool = tool();
     let known = review::KnownMap::new();
-    let err = install(
-        &project,
-        "t",
-        &tool,
-        &Build::default(),
-        &install_args(&["--offline", "--sandbox", "off"]),
-        Options {
-            force: false,
-            auto_approve: false,
-            picks: &[],
-            from: &known,
-            stage: Stage::Install,
-            checksums: Checksums::Write,
-            targets: None,
-        },
-    )
-    .unwrap_err()
-    .to_string();
+    let args = install_args(&["--offline", "--sandbox", "off"]);
+    let run = |force: bool| {
+        install(
+            &project,
+            "t",
+            &tool,
+            &Build::default(),
+            &args,
+            Options {
+                force,
+                auto_approve: false,
+                picks: &[],
+                from: &known,
+                stage: Stage::Install,
+                checksums: Checksums::Write,
+                targets: None,
+            },
+        )
+        .unwrap_err()
+        .to_string()
+    };
+    let err = run(false);
     assert!(
         err.contains("isn't prepared for an offline install"),
         "{err}"
     );
+    assert!(!err.contains("--force"), "{err}");
+
+    // Up to date, so `check` didn't prepare it: forcing a rebuild needs `check --force`.
+    fs::create_dir_all(project.bin_dir()).unwrap();
+    fs::write(project.bin_dir().join("t"), "binary").unwrap();
+    checksum::write(&project, "t", &["t".into()]).unwrap();
+    let key = stamp_key(
+        "t",
+        &tool,
+        &fs::read_to_string(&lock).unwrap(),
+        &review::file_digest(&project, "t").unwrap(),
+        &cargo_args(&tool, &Build::default(), &args),
+        None,
+    );
+    let stamp = project.stamp_path("t");
+    fs::create_dir_all(stamp.parent().unwrap()).unwrap();
+    fs::write(
+        &stamp,
+        serde_json::to_string(&Stamp {
+            key,
+            bins: vec!["t".into()],
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    let err = run(true);
+    assert!(err.contains("check --force"), "{err}");
 }

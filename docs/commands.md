@@ -161,10 +161,11 @@ cargo project-tools check cargo-nextest --target x86_64-pc-windows-msvc
 
 Checks what [`install`](#install) checks before it builds, then stops: this machine (and `--target`) against [`targets`](configuration.md#targets), the audit, and, for each tool that isn't up to date, its build-time code against `build-review.toml`. That still vendors the dependencies, but it builds nothing, and writes nothing to `project-tools.toml` or `build-review.toml`, and no binaries or install stamps (only the audit's `bin/.stamps/<tool>.built.json`). A tool whose review passes keeps its source and vendored dependencies in `.project-tools/targets/<tool>` (with `prepared.json`), and `install` builds from them once without fetching again, as long as the lock, settings, targets and review are the same. See [offline builds](ci.md#offline-builds). It reports every problem rather than stopping at the first, and fails if there are any. Use it in CI to fail fast before a long build, or in a job that only audits.
 
-It never approves anything, so it has no `--auto-approve`, `--approve-target` or `--force`.
+It never approves anything, so it has no `--auto-approve` or `--approve-target`.
 
 | Option | Meaning |
 | --- | --- |
+| `--force` | Also check and prepare tools that are up to date, so `install --offline --force` can rebuild them |
 | `--no-audit` | Skip the audit |
 | `--deny-warnings` | Also fail on warnings that aren't ignored |
 | `--target <triple>`, `--config <value>`, `--profile <name>`, `--debug`, `--offline` | As for `install`: what would be built, and so what is checked |

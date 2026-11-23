@@ -1143,7 +1143,7 @@ fn check(project: &Project, config: &Config, args: &CheckArgs) -> Result<()> {
             &build,
             &args.build,
             install::Options {
-                force: false,
+                force: args.force,
                 auto_approve: false,
                 picks: &[],
                 from: &review::KnownMap::new(),
