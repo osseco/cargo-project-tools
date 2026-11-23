@@ -274,9 +274,32 @@ fn an_offline_install_needs_what_check_prepared() {
                 targets: None,
             },
         )
+        .map_err(|e| format!("{e:#}"))
         .unwrap_err()
-        .to_string()
     };
+    // The error names the tool, for its `error` record.
+    let tool_of = |force: bool| {
+        install(
+            &project,
+            "t",
+            &tool,
+            &Build::default(),
+            &args,
+            Options {
+                force,
+                auto_approve: false,
+                picks: &[],
+                from: &known,
+                stage: Stage::Install,
+                checksums: Checksums::Write,
+                targets: None,
+            },
+        )
+        .unwrap_err()
+        .downcast_ref::<output::ForTool>()
+        .map(|t| t.tool.clone())
+    };
+    assert_eq!(tool_of(false).as_deref(), Some("t"));
     let err = run(false);
     assert!(
         err.contains("isn't prepared for an offline install"),

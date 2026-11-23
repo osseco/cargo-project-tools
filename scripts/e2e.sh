@@ -48,11 +48,14 @@ expect install.jsonl '.kind == "built" and .sandbox == "none"'
 if grep -q "to your PATH" install.log; then
     fail "cargo asked to add the bin directory to PATH"
 fi
-if cargo project-tools check --no-audit --sandbox require 2>require.log; then
+if cargo project-tools check --no-audit --sandbox require --message-format json \
+    >require.jsonl 2>require.log; then
     fail "check --sandbox require passed without a sandbox"
 fi
 grep -q "a build sandbox is required" require.log ||
     fail "check failed for another reason: $(cat require.log)"
+# The failure's record names the tool.
+expect require.jsonl '.kind == "error"'
 cargo project-tools check --no-audit --message-format json >check.jsonl
 expect check.jsonl '.kind == "up-to-date"'
 echo "::endgroup::"

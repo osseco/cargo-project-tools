@@ -80,7 +80,8 @@ pub fn run(cmd: &mut Command) -> Result<()> {
 /// A command that `run` started exited unsuccessfully.
 #[derive(Debug)]
 pub struct Failed {
-    command: String,
+    /// The whole command line.
+    pub command: String,
     status: String,
     /// The exit code; none when a signal ended it.
     pub code: Option<i32>,

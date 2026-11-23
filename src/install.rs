@@ -16,6 +16,7 @@ use crate::process;
 use crate::project::Project;
 use crate::review;
 use crate::sandbox;
+use crate::sanitize::shown_line;
 use crate::source::registry::sha256_hex as registry_hash;
 use crate::source::{self, Dest, Origin};
 use crate::toml_line;
@@ -393,7 +394,24 @@ fn installed_bins(project: &Project, name: &str, version: &str) -> Vec<String> {
         .collect()
 }
 
+/// Check, review or build one tool, as `opts.stage` says. Its errors name the tool.
 pub fn install(
+    project: &Project,
+    name: &str,
+    tool: &Tool,
+    build: &Build,
+    args: &BuildArgs,
+    opts: Options,
+) -> Result<()> {
+    install_one(project, name, tool, build, args, opts).map_err(|e| {
+        e.context(output::ForTool {
+            tool: name.to_string(),
+            tool_version: tool.version.clone(),
+        })
+    })
+}
+
+fn install_one(
     project: &Project,
     name: &str,
     tool: &Tool,
@@ -488,16 +506,14 @@ pub fn install(
         None => {
             if opts.stage == Stage::Install && args.offline && current.is_some() {
                 bail!(
-                    "{name} {} isn't prepared for an offline install; `check` skips tools that \
-                     are up to date, so run `cargo project-tools check --force` first",
-                    tool.version
+                    "isn't prepared for an offline install; `check` skips tools that are up to \
+                     date, so run `cargo project-tools check --force` first"
                 );
             }
             if opts.stage == Stage::Install && args.offline {
                 bail!(
-                    "{name} {} isn't prepared for an offline install; run `cargo project-tools \
-                     check` with the same lock, settings and targets first",
-                    tool.version
+                    "isn't prepared for an offline install; run `cargo project-tools check` with \
+                     the same lock, settings and targets first"
                 );
             }
             forget_prepared(&target_dir)?;
@@ -601,20 +617,34 @@ pub fn install(
     };
     let sandbox_name = sandbox.as_ref().map_or("none", sandbox::Kind::name);
     if let Err(e) = process::run(&mut cmd) {
+        let Some(failed) = e.downcast_ref::<process::Failed>() else {
+            // It didn't start: that error says why.
+            return Err(e);
+        };
+        let mut why = match failed.code {
+            Some(code) => format!("failed to build (cargo exit {code})"),
+            None => "failed to build (cargo was ended by a signal)".to_string(),
+        };
         // What `check` prepared had the review applied to it, so it can't be built again.
-        let message = format!(
-            "{name} {} failed to build; what `check` prepared is used up, so run `check` \
-             again before an offline retry",
-            tool.version
-        );
+        if reused {
+            why.push_str(
+                "; what `check` prepared is used up, so run `check` again before an offline \
+                 retry",
+            );
+        }
+        // The command is long (the sandbox profile is part of it): its own field, and once
+        // on stderr, rather than in every message.
+        say!("  the build command was: {}", shown_line(&failed.command));
         output::emit(Record::BuildFailed {
             tool: name.to_string(),
             tool_version: tool.version.clone(),
             sandbox: sandbox_name.to_string(),
-            exit_status: e.downcast_ref::<process::Failed>().and_then(|f| f.code),
-            message: message.clone(),
+            exit_status: failed.code,
+            prepared: reused,
+            command: failed.command.clone(),
+            message: format!("{name} {} {why}", tool.version),
         });
-        return Err(e.context(message));
+        bail!("{why}");
     }
 
     let bins = installed_bins(project, name, &tool.version);

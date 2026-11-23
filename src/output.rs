@@ -188,14 +188,15 @@ pub enum Record {
         /// None when a signal ended the build.
         #[serde(skip_serializing_if = "Option::is_none")]
         exit_status: Option<i32>,
+        /// It built from what `check` prepared, which is now used up.
+        prepared: bool,
+        /// The whole build command, sandbox included.
+        command: String,
         message: String,
     },
     /// A tool `check` passed and prepared: its source and vendored dependencies are in
     /// `targets/<tool>`, and `install --offline` builds it from them.
-    Prepared {
-        tool: String,
-        tool_version: String,
-    },
+    Prepared { tool: String, tool_version: String },
     /// A tool `install` or `check` found up to date: its binaries match the lock, settings,
     /// targets and review it was built with, so nothing is built.
     UpToDate {
@@ -265,10 +266,13 @@ pub enum Record {
         candidates: Vec<String>,
     },
     /// `settings.sfw = "auto"` found no sfw, so downloads aren't filtered.
-    SfwMissing {
-        message: String,
-    },
+    SfwMissing { message: String },
     Error {
+        /// The tool it concerns, when it's about one.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tool: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tool_version: Option<String>,
         message: String,
     },
     Summary {
@@ -448,12 +452,39 @@ pub fn print_error(e: &anyhow::Error) {
     eprintln!("error: {}", crate::sanitize::shown_line(&format!("{e:#}")));
 }
 
+/// Context naming the tool an error is about; its `error` record names it too.
+#[derive(Debug)]
+pub struct ForTool {
+    pub tool: String,
+    pub tool_version: String,
+}
+
+impl std::fmt::Display for ForTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {}", self.tool, self.tool_version)
+    }
+}
+
+fn error_record(e: &anyhow::Error) -> Record {
+    let tool = e.downcast_ref::<ForTool>();
+    Record::Error {
+        tool: tool.map(|t| t.tool.clone()),
+        tool_version: tool.map(|t| t.tool_version.clone()),
+        message: format!("{e:#}"),
+    }
+}
+
+/// A failure of one tool in a command that goes on with the others: printed, and an
+/// `error` record of its own.
+pub fn tool_error(e: &anyhow::Error) {
+    print_error(e);
+    emit(error_record(e));
+}
+
 /// At exit: an `error` record for a failure, then the `summary` when the command has one.
 pub fn finish(error: Option<&anyhow::Error>, ok: bool) {
     if let Some(e) = error {
-        emit(Record::Error {
-            message: format!("{e:#}"),
-        });
+        emit(error_record(e));
     }
     if SUMMARY.load(Ordering::Relaxed) {
         let audited = AUDITED.load(Ordering::Relaxed);
