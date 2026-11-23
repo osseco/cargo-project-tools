@@ -532,7 +532,13 @@ pub fn install(
     }
     if opts.stage == Stage::Check {
         review::check_only(project, name, selection, &checkout, &vendored, offline)?;
-        return write_prepared(&target_dir, &prepared_key, &checkout, &vendored);
+        write_prepared(&target_dir, &prepared_key, &checkout, &vendored)?;
+        // So CI knows `install --offline` has something to build.
+        output::emit(Record::Prepared {
+            tool: name.to_string(),
+            tool_version: tool.version.clone(),
+        });
+        return Ok(());
     }
     // Decisions are applied in place from here on.
     forget_prepared(&target_dir)?;
@@ -593,7 +599,23 @@ pub fn install(
             cmd
         }
     };
-    process::run(&mut cmd)?;
+    let sandbox_name = sandbox.as_ref().map_or("none", sandbox::Kind::name);
+    if let Err(e) = process::run(&mut cmd) {
+        // What `check` prepared had the review applied to it, so it can't be built again.
+        let message = format!(
+            "{name} {} failed to build; what `check` prepared is used up, so run `check` \
+             again before an offline retry",
+            tool.version
+        );
+        output::emit(Record::BuildFailed {
+            tool: name.to_string(),
+            tool_version: tool.version.clone(),
+            sandbox: sandbox_name.to_string(),
+            exit_status: e.downcast_ref::<process::Failed>().and_then(|f| f.code),
+            message: message.clone(),
+        });
+        return Err(e.context(message));
+    }
 
     let bins = installed_bins(project, name, &tool.version);
     say!(
@@ -608,10 +630,7 @@ pub fn install(
     output::emit(Record::Built {
         tool: name.to_string(),
         tool_version: tool.version.clone(),
-        sandbox: sandbox
-            .as_ref()
-            .map_or("none", sandbox::Kind::name)
-            .to_string(),
+        sandbox: sandbox_name.to_string(),
         bins: bins.clone(),
     });
     match opts.checksums {

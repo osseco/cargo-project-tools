@@ -306,6 +306,8 @@ With `--message-format json`, stdout holds only JSON records, one per line. All 
 | `target-missing` | This machine or `--target` isn't in the tool's [`targets`](configuration.md#targets) | `tool`, `file`, `line`, `targets` |
 | `sandbox-missing` | The sandbox mode is `auto` and there's no working [sandbox](configuration.md#sandbox), so the tool builds without one | `tool`, `file`, `line` (the `sandbox` or `sandbox-os` setting that applied; left out for the default and `--sandbox`), `message` |
 | `built` | `install` built a tool | `tool`, `tool_version`, `sandbox` (`sandbox-exec`, `bwrap` or `none`), `bins` |
+| `prepared` | `check` passed a tool that isn't up to date (or every tool, with `--force`) and kept its source and vendored dependencies for `install --offline` | `tool`, `tool_version` |
+| `build-failed` | `install` couldn't build a tool; what `check` prepared for it is used up, so run `check` again before an offline retry. Comes before the `error` | `tool`, `tool_version`, `sandbox`, `exit_status` (left out when a signal ended the build), `message` |
 | `up-to-date` | `install` or `check` found a tool's binaries current (stamp and checksums match), so it builds nothing | `tool`, `tool_version`, `bins` |
 | `advisory` | A finding of the [audit](#audit) that isn't ignored | `tool`, `file`, `line`, `id`, `type`, `package`, `package_version`, `title`, `patched`, `severity`, `fix`, `affected` |
 | `lock-change` | `add` or `update` changed the tool's lock: `add` lists what `--fix-advisories` or the setup screen changed in the published lock | `tool`, `file`, `package`, `from`, `to` (`from` left out for an added package, `to` for a removed one) |

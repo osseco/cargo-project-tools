@@ -228,3 +228,38 @@ fn the_summary_says_whether_anything_was_audited() {
         r#"{"version":1,"kind":"summary","ok":false,"audited":true,"vulnerabilities":1,"warnings":0,"pending_reviews":0,"missing_targets":0}"#
     );
 }
+
+#[test]
+fn prepared_and_failed_builds_have_records() {
+    let prepared = Record::Prepared {
+        tool: "t".into(),
+        tool_version: "1.0.0".into(),
+    };
+    assert_eq!(
+        line(&prepared),
+        r#"{"version":1,"kind":"prepared","tool":"t","tool_version":"1.0.0"}"#
+    );
+    let failed = Record::BuildFailed {
+        tool: "t".into(),
+        tool_version: "1.0.0".into(),
+        sandbox: "bwrap".into(),
+        exit_status: Some(101),
+        message: "m".into(),
+    };
+    assert_eq!(
+        line(&failed),
+        r#"{"version":1,"kind":"build-failed","tool":"t","tool_version":"1.0.0","sandbox":"bwrap","exit_status":101,"message":"m"}"#
+    );
+    // Ended by a signal: no exit status.
+    let signalled = Record::BuildFailed {
+        tool: "t".into(),
+        tool_version: "1.0.0".into(),
+        sandbox: "none".into(),
+        exit_status: None,
+        message: "m".into(),
+    };
+    assert_eq!(
+        line(&signalled),
+        r#"{"version":1,"kind":"build-failed","tool":"t","tool_version":"1.0.0","sandbox":"none","message":"m"}"#
+    );
+}

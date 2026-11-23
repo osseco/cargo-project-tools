@@ -67,10 +67,32 @@ pub fn run(cmd: &mut Command) -> Result<()> {
         .status()
         .with_context(|| format!("failed to start `{}`", describe(cmd)))?;
     if !status.success() {
-        bail!("`{}` failed ({status})", describe(cmd));
+        return Err(Failed {
+            command: describe(cmd),
+            status: status.to_string(),
+            code: status.code(),
+        }
+        .into());
     }
     Ok(())
 }
+
+/// A command that `run` started exited unsuccessfully.
+#[derive(Debug)]
+pub struct Failed {
+    command: String,
+    status: String,
+    /// The exit code; none when a signal ended it.
+    pub code: Option<i32>,
+}
+
+impl std::fmt::Display for Failed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "`{}` failed ({})", self.command, self.status)
+    }
+}
+
+impl std::error::Error for Failed {}
 
 /// Run capturing stdout (stderr is passed through, or captured while a full-screen view is
 /// up); error on non-zero exit.
