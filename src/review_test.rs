@@ -1954,3 +1954,57 @@ fn a_bare_spec_approves_every_piece_of_the_package() {
     .unwrap();
     assert_eq!(load(&file).unwrap().len(), 2);
 }
+
+#[test]
+fn a_spec_that_matches_nothing_pending_says_why() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join(FILE);
+    let script = real_script(tmp.path(), "pm");
+    let sha = script.hash.clone();
+    let mut dep = under(proc_macro("pm", "cc"), tmp.path());
+    dep.kind = Kind::BuildDep;
+    fs::create_dir_all(&dep.location).unwrap();
+    let items = || vec![script.clone(), dep.clone()];
+    check(
+        &file,
+        items(),
+        Mode::ApproveAll,
+        &KnownMap::new(),
+        tmp.path(),
+    )
+    .unwrap();
+    let run = |text: &str| {
+        check(
+            &file,
+            items(),
+            Mode::Picked {
+                picks: &[Pick::parse(Action::Approve, text).unwrap()],
+                from: &KnownMap::new(),
+                crate_dir: tmp.path(),
+            },
+            &KnownMap::new(),
+            tmp.path(),
+        )
+        .unwrap_err()
+        .to_string()
+    };
+
+    // Already decided: how, and for which piece the hash names.
+    let err = run("pm@1.0.0=cc");
+    assert!(err.contains("already decided"), "{err}");
+    assert!(err.contains("build-dep"), "{err}");
+    assert!(!err.contains("build-script"), "{err}");
+    let err = run("pm@1.0.0");
+    assert!(
+        err.contains("build-script") && err.contains("build-dep"),
+        "{err}"
+    );
+    assert!(err.contains("approve"), "{err}");
+    // A hash none of its pieces has: the specs they do have.
+    let err = run("pm@1.0.0=other");
+    assert!(err.contains("none of its pieces has hash other"), "{err}");
+    assert!(err.contains(&format!("pm@1.0.0={sha}")), "{err}");
+    // A package the tool doesn't build.
+    let err = run("nope@1.0.0");
+    assert!(err.contains("builds nothing by that name"), "{err}");
+}

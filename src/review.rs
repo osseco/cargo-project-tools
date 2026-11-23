@@ -3,7 +3,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 
 use crate::build_files::{self, Pulled};
@@ -1127,6 +1127,11 @@ impl Pick {
         if self.action != Action::Approve && item.kind.whole_crate() {
             return false;
         }
+        self.names(item)
+    }
+
+    /// Whether the spec names `item`, whatever the action.
+    fn names(&self, item: &Item) -> bool {
         match self.spec.split_once('@') {
             Some((name, version)) => item.package == name && item.version == version,
             None => item.kind == Kind::CargoConfig && item.path == self.spec,
@@ -1202,7 +1207,7 @@ fn decide<'a>(
             from,
             crate_dir,
         } => {
-            let choices = picked(&pending, picks, from, crate_dir)?;
+            let choices = picked(&pending, decided, picks, from, crate_dir)?;
             // Only what's decided is compared again before it's recorded.
             let before = pending
                 .iter()
@@ -1263,11 +1268,66 @@ fn previous_entries<'a>(items: &[Item], stale: &[&'a Entry]) -> Vec<Option<&'a E
     out
 }
 
+/// Why `pick` matches nothing pending: only a whole crate it can't strip or override, pieces
+/// that are already decided (with the hash it names, or not), or nothing the tool builds.
+fn nothing_pending(pick: &Pick, pending: &[Pending], decided: &[Decided]) -> anyhow::Error {
+    let spec_shown = shown_line(&pick.spec);
+    if pending.iter().any(|(item, _)| pick.names(item)) {
+        return anyhow!(
+            "no pending build script or cargo config matches {spec_shown}: a proc macro or \
+             build-dep can only be approved"
+        );
+    }
+    let known: Vec<&Decided> = decided.iter().filter(|d| pick.names(&d.item)).collect();
+    let list = |ds: &[&Decided]| {
+        ds.iter()
+            .map(|d| {
+                format!(
+                    "{} ({} {}, {})",
+                    shown_line(&spec(&d.item)),
+                    d.item.kind.table(),
+                    shown_line(&d.item.describe()),
+                    d.action.as_str()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if known.is_empty() {
+        return anyhow!(
+            "no pending piece matches {spec_shown}, and the tool builds nothing by that name"
+        );
+    }
+    match &pick.hash {
+        Some(hash) if !known.iter().any(|d| d.item.hash == *hash) => anyhow!(
+            "nothing is pending for {spec_shown}, and none of its pieces has hash {}; its pieces are {}",
+            shown_line(hash),
+            list(&known)
+        ),
+        Some(hash) => {
+            let hit: Vec<&Decided> = known
+                .iter()
+                .copied()
+                .filter(|d| d.item.hash == *hash)
+                .collect();
+            anyhow!(
+                "nothing is pending for {spec_shown}: already decided, {}",
+                list(&hit)
+            )
+        }
+        None => anyhow!(
+            "nothing is pending for {spec_shown}: already decided, {}",
+            list(&known)
+        ),
+    }
+}
+
 /// The decision `picks` make for each pending item, if any. Fails, before anything is
 /// written, on a pick that matches nothing pending, an item picked twice, a hash that isn't
 /// the item's, or an override file that isn't there.
 fn picked(
     pending: &[Pending],
+    decided: &[Decided],
     picks: &[Pick],
     from: &KnownMap,
     crate_dir: &Path,
@@ -1310,11 +1370,7 @@ fn picked(
             .filter(|&n| pick.selects(&pending[n].0))
             .collect();
         if selected.is_empty() {
-            let what = match pick.action {
-                Action::Approve => "",
-                _ => "build script or cargo config ",
-            };
-            bail!("no pending {what}matches {}", shown_line(&pick.spec));
+            return Err(nothing_pending(pick, pending, decided));
         }
         // A package can have several pieces (a build script and a build dep, say); the hash
         // picks the one it was read from.
