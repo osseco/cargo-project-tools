@@ -191,6 +191,33 @@ jobs:
             target
           key: ${{ steps.cache-key.outputs.key }}
 
+  # The tool end to end on Linux (scripts/e2e.sh): a real install, a required sandbox
+  # that's missing, an offline install from what `check` prepared with no network and a
+  # read-only CARGO_HOME, and a build in bwrap. Nothing here is released.
+  e2e:
+    needs: vuln-check
+    name: End to end (Linux)
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: |
+          rustup set profile minimal
+          rustup toolchain install --no-self-update
+      - uses: osseco/setup-sfw-free@e1cbeae80920eb20b289196bb420d5f45a45ead1 # v1.15.6-0.2.0
+        with:
+          cache: ${{ github.ref == 'refs/heads/main' && 'true' || 'restore' }}
+      - run: sfw cargo build --locked
+      - name: End to end
+        run: |
+          PATH="$GITHUB_WORKSPACE/target/debug:$PATH" scripts/e2e.sh "$RUNNER_TEMP/e2e"
+
   pre-commit:
     needs: vuln-check
     permissions:

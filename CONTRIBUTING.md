@@ -15,7 +15,7 @@ Conventions for commits, branches and sfw are in [AGENTS.md](AGENTS.md). This pa
 | `pr.yml` | every pull request | calculates the next version, runs `product.yml` with `<next>-pr.<number>.<run>.<attempt>` and `site.yml`, then `Merge gate` |
 | `site.yml` | called by `pr.yml` and `pages.yml` | audit, lint, typecheck, test and build the Pages site in `site/` |
 | `pages.yml` | push to `main` touching `site/`, `docs/` or `llms.txt` | runs `site.yml`, builds with the Pages base path, deploys to GitHub Pages |
-| `product.yml` | called by `pr.yml` and `release.yml` | cargo-deny, tests on Linux, macOS and Windows, pre-commit, SBOMs, builds; calls CodeQL, zizmor, actionlint and Socket |
+| `product.yml` | called by `pr.yml` and `release.yml` | cargo-deny, tests on Linux, macOS and Windows, an end-to-end install on Linux (`scripts/e2e.sh`), pre-commit, SBOMs, builds; calls CodeQL, zizmor, actionlint and Socket |
 | `release.yml` | push to `main` touching the product | the same product run for every target, then publishes the release |
 | `codeql.yml`, `zizmor.yml`, `actionlint.yml`, `socket.yml` | also weekly | report findings to code scanning |
 
