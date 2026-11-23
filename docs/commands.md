@@ -161,10 +161,11 @@ cargo project-tools check cargo-nextest --target x86_64-pc-windows-msvc
 
 Checks what [`install`](#install) checks before it builds, then stops: this machine (and `--target`) against [`targets`](configuration.md#targets), the audit, and, for each tool that isn't up to date, its build-time code against `build-review.toml`. That still vendors the dependencies, but it builds nothing, and writes nothing to `project-tools.toml` or `build-review.toml`, and no binaries or install stamps (only the audit's `bin/.stamps/<tool>.built.json`). A tool whose review passes keeps its source and vendored dependencies in `.project-tools/targets/<tool>` (with `prepared.json`), and `install` builds from them once without fetching again, as long as the lock, settings, targets and review are the same. See [offline builds](ci.md#offline-builds). It reports every problem rather than stopping at the first, and fails if there are any. Use it in CI to fail fast before a long build, or in a job that only audits.
 
-It never approves anything, so it has no `--auto-approve`, `--approve-target` or `--force`.
+It never approves anything, so it has no `--auto-approve` or `--approve-target`.
 
 | Option | Meaning |
 | --- | --- |
+| `--force` | Also check and prepare tools that are up to date, so `install --offline --force` can rebuild them |
 | `--no-audit` | Skip the audit |
 | `--deny-warnings` | Also fail on warnings that aren't ignored |
 | `--target <triple>`, `--config <value>`, `--profile <name>`, `--debug`, `--offline` | As for `install`: what would be built, and so what is checked |
@@ -314,7 +315,7 @@ With `--message-format json`, stdout holds only JSON records, one per line. All 
 | `ambiguous-dependency` | `update` was given a bare name that is locked at more than one version | `tool`, `package`, `candidates` (each `name@version`) |
 | `sfw-missing` | `settings.sfw = "auto"` found no `sfw`, so downloads aren't filtered; written when a command that may download starts, whether or not it downloads | `message` |
 | `error` | The command failed | `message` |
-| `summary` | The last record of `add`, `update`, `install`, `check`, `review` and `audit` | `ok`, `vulnerabilities`, `warnings`, `pending_reviews`, `missing_targets` |
+| `summary` | The last record of `add`, `update`, `install`, `check`, `review` and `audit` | `ok`, `audited` (whether any lock was audited), `vulnerabilities` and `warnings` (only when `audited` is `true`: with `--no-audit` nothing was counted, so they're left out), `pending_reviews`, `missing_targets` |
 
 Every record also has `"version": 1`. The version goes up when a record changes in a way that breaks readers.
 
@@ -341,7 +342,7 @@ Other fields:
 
 ```json
 {"version":1,"kind":"target-missing","tool":"cargo-deny","file":"project-tools.toml","line":4,"targets":["x86_64-unknown-linux-gnu"]}
-{"version":1,"kind":"summary","ok":false,"vulnerabilities":0,"warnings":0,"pending_reviews":0,"missing_targets":1}
+{"version":1,"kind":"summary","ok":false,"audited":true,"vulnerabilities":0,"warnings":0,"pending_reviews":0,"missing_targets":1}
 ```
 
 Control characters, DEL, C1 controls, and characters that hide or reorder text (bidi controls, zero-width and other invisible characters, line and paragraph separators) are written as `\uXXXX` escapes, so `cat`ing the records can't drive a terminal. The values themselves aren't changed. Check a value before you use it in a command or a CI annotation, above all one that comes from someone else:

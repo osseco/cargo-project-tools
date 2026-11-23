@@ -24,6 +24,12 @@ static VULNERABILITIES: AtomicUsize = AtomicUsize::new(0);
 static WARNINGS: AtomicUsize = AtomicUsize::new(0);
 static PENDING_REVIEWS: AtomicUsize = AtomicUsize::new(0);
 static MISSING_TARGETS: AtomicUsize = AtomicUsize::new(0);
+static AUDITED: AtomicBool = AtomicBool::new(false);
+
+/// A lock was audited: the summary's counts of findings mean something.
+pub fn audited() {
+    AUDITED.store(true, Ordering::Relaxed);
+}
 
 /// Set once, before anything is printed. `summary`: end with a `summary` record.
 pub fn init(format: Format, summary: bool) {
@@ -238,8 +244,13 @@ pub enum Record {
     },
     Summary {
         ok: bool,
-        vulnerabilities: usize,
-        warnings: usize,
+        /// Whether any lock was audited. Without it the findings weren't counted, so their
+        /// counts are left out rather than shown as 0.
+        audited: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        vulnerabilities: Option<usize>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        warnings: Option<usize>,
         pending_reviews: usize,
         missing_targets: usize,
     },
@@ -416,10 +427,13 @@ pub fn finish(error: Option<&anyhow::Error>, ok: bool) {
         });
     }
     if SUMMARY.load(Ordering::Relaxed) {
+        let audited = AUDITED.load(Ordering::Relaxed);
+        let counted = |n: &AtomicUsize| audited.then(|| n.load(Ordering::Relaxed));
         emit(Record::Summary {
             ok,
-            vulnerabilities: VULNERABILITIES.load(Ordering::Relaxed),
-            warnings: WARNINGS.load(Ordering::Relaxed),
+            audited,
+            vulnerabilities: counted(&VULNERABILITIES),
+            warnings: counted(&WARNINGS),
             pending_reviews: PENDING_REVIEWS.load(Ordering::Relaxed),
             missing_targets: MISSING_TARGETS.load(Ordering::Relaxed),
         });

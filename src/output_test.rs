@@ -199,3 +199,32 @@ fn affected_lists_only_what_the_database_names() {
     };
     assert_eq!(serde_json::to_string(&a).unwrap(), r#"{"os":["windows"]}"#);
 }
+
+#[test]
+fn the_summary_says_whether_anything_was_audited() {
+    // Not audited: no counts, rather than a 0 that reads as clean.
+    let summary = Record::Summary {
+        ok: true,
+        audited: false,
+        vulnerabilities: None,
+        warnings: None,
+        pending_reviews: 0,
+        missing_targets: 0,
+    };
+    assert_eq!(
+        line(&summary),
+        r#"{"version":1,"kind":"summary","ok":true,"audited":false,"pending_reviews":0,"missing_targets":0}"#
+    );
+    let summary = Record::Summary {
+        ok: false,
+        audited: true,
+        vulnerabilities: Some(1),
+        warnings: Some(0),
+        pending_reviews: 0,
+        missing_targets: 0,
+    };
+    assert_eq!(
+        line(&summary),
+        r#"{"version":1,"kind":"summary","ok":false,"audited":true,"vulnerabilities":1,"warnings":0,"pending_reviews":0,"missing_targets":0}"#
+    );
+}

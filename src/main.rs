@@ -1030,6 +1030,7 @@ fn audit_tool(
     say!("{name}:");
     let built = built_of(name, tool)?;
     let report = auditor.audit(&project.lock_path(name), name, tool.git.is_some(), &built)?;
+    output::audited();
     if report.skipped > 0 {
         say!(
             "  skipped {} packages not built with these features",
@@ -1143,7 +1144,7 @@ fn check(project: &Project, config: &Config, args: &CheckArgs) -> Result<()> {
             &build,
             &args.build,
             install::Options {
-                force: false,
+                force: args.force,
                 auto_approve: false,
                 picks: &[],
                 from: &review::KnownMap::new(),

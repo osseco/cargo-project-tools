@@ -428,19 +428,24 @@ pub fn install(
     if opts.stage == Stage::Check {
         sandbox::choose(name, &choice)?;
     }
+    // The binaries, when they're what this lock, review and settings build.
+    let current = read_stamp(&stamp_path)
+        .filter(|stamp| {
+            stamp.key == key
+                && !stamp.bins.is_empty()
+                && stamp
+                    .bins
+                    .iter()
+                    .all(|b| project.bin_dir().join(b).is_file())
+                && checksum::check(project, name).is_ok_and(|m| m.is_empty())
+        })
+        .map(|stamp| stamp.bins);
     // Approving reviews now, even when the binaries are current.
     if !opts.force
         && !opts.auto_approve
         && opts.picks.is_empty()
         && opts.from.is_empty()
-        && let Some(stamp) = read_stamp(&stamp_path)
-        && stamp.key == key
-        && !stamp.bins.is_empty()
-        && stamp
-            .bins
-            .iter()
-            .all(|b| project.bin_dir().join(b).is_file())
-        && checksum::check(project, name).is_ok_and(|m| m.is_empty())
+        && let Some(bins) = &current
     {
         if matches!(opts.stage, Stage::Review | Stage::Diff) {
             // The stamp covers the lock and the review file it was built with.
@@ -451,7 +456,7 @@ pub fn install(
             output::emit(Record::UpToDate {
                 tool: name.to_string(),
                 tool_version: tool.version.clone(),
-                bins: stamp.bins,
+                bins: bins.clone(),
             });
         }
         return Ok(());
@@ -481,6 +486,13 @@ pub fn install(
             p
         }
         None => {
+            if opts.stage == Stage::Install && args.offline && current.is_some() {
+                bail!(
+                    "{name} {} isn't prepared for an offline install; `check` skips tools that \
+                     are up to date, so run `cargo project-tools check --force` first",
+                    tool.version
+                );
+            }
             if opts.stage == Stage::Install && args.offline {
                 bail!(
                     "{name} {} isn't prepared for an offline install; run `cargo project-tools \

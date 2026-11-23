@@ -4,6 +4,7 @@
 # - `check --sandbox require` fails without a sandbox even when every tool is up to date,
 # - `install --offline` after `check` builds with no network and a read-only CARGO_HOME,
 # - a tool that's skipped gets an `up-to-date` record,
+# - `check --force` prepares an up-to-date tool for `install --offline --force`,
 # - `install --sandbox require` builds in bwrap.
 # It removes and installs bubblewrap with sudo and apt, and needs sfw and jq.
 #
@@ -76,6 +77,11 @@ test ! -f .project-tools/targets/ripgrep/prepared.json || fail "prepared state u
 isolated cargo project-tools install --offline --no-audit --sandbox off \
     --message-format json >again.jsonl
 expect again.jsonl '.kind == "up-to-date"'
+# A forced offline rebuild of an up-to-date tool, from what `check --force` prepared.
+cargo project-tools check --no-audit --force
+isolated cargo project-tools install --offline --no-audit --sandbox off --force \
+    --message-format json >forced.jsonl
+expect forced.jsonl '.kind == "built"'
 echo "::endgroup::"
 
 echo "::group::In bwrap"

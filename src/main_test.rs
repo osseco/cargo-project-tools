@@ -144,9 +144,14 @@ fn check_flags() {
     };
     assert!(parse(&["check", "--no-audit", "--deny-warnings"]).is_err());
     // It approves and builds nothing.
-    for flag in ["--auto-approve", "--approve-target", "--force"] {
+    for flag in ["--auto-approve", "--approve-target"] {
         assert!(parse(&["check", flag]).is_err(), "{flag}");
     }
+    // `--force` checks and prepares up-to-date tools too.
+    let Command::Check(args) = parse(&["check", "--force"]).unwrap().command else {
+        panic!("not check");
+    };
+    assert!(args.force);
     let cmd = parse(&["check", "--target", "x86_64-unknown-linux-gnu", "x"])
         .unwrap()
         .command;

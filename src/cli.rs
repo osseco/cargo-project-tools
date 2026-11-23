@@ -274,6 +274,10 @@ pub struct CheckArgs {
     /// Also fail on warnings (unmaintained, unsound, yanked, git-source) that aren't ignored.
     #[arg(long, conflicts_with = "no_audit")]
     pub deny_warnings: bool,
+    /// Check and prepare every tool, even one that's up to date, so `install --offline
+    /// --force` can rebuild it.
+    #[arg(long)]
+    pub force: bool,
     #[command(flatten)]
     pub build: BuildArgs,
 }
