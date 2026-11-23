@@ -66,7 +66,7 @@ cargo project-tools review <tool> --message-format json \
   --strip <spec>
 ```
 
-`spec` is `package@version=hash` (`path=hash` for cargo config), with the hash you read the piece with. If the code changed since, the command fails and writes nothing: read it again. For `--override`, write the replacement at `overrides/<package>/<path>` in the tool's crate directory first. Each call replaces the pending entries it decides, and lists what's still waiting, so you can work through them until none are left. A proc macro or a `build-dep` (a library build-time code runs) can only be approved; to avoid one, turn off the feature that pulls it in.
+`spec` is `package@version=hash` (`path=hash` for cargo config), with the hash you read the piece with. When a package has more than one piece (a build script and a `build-dep`, say), the hash picks the one it names. If the code changed since, the command fails and writes nothing: read it again. For `--override`, write the replacement at `overrides/<package>/<path>` in the tool's crate directory first. Each call replaces the pending entries it decides, and lists what's still waiting, so you can work through them until none are left. A proc macro or a `build-dep` (a library build-time code runs) can only be approved; to avoid one, turn off the feature that pulls it in.
 
 When the same code has already been decided elsewhere, for example on another branch, carry those decisions over first, with the person's yes:
 
