@@ -307,7 +307,7 @@ With `--message-format json`, stdout holds only JSON records, one per line. All 
 | `sandbox-missing` | The sandbox mode is `auto` and there's no working [sandbox](configuration.md#sandbox), so the tool builds without one | `tool`, `file`, `line` (the `sandbox` or `sandbox-os` setting that applied; left out for the default and `--sandbox`), `message` |
 | `built` | `install` built a tool | `tool`, `tool_version`, `sandbox` (`sandbox-exec`, `bwrap` or `none`), `bins` |
 | `prepared` | `check` passed a tool that isn't up to date (or every tool, with `--force`) and kept its source and vendored dependencies for `install --offline` | `tool`, `tool_version` |
-| `build-failed` | `install` couldn't build a tool; what `check` prepared for it is used up, so run `check` again before an offline retry. Comes before the `error` | `tool`, `tool_version`, `sandbox`, `exit_status` (left out when a signal ended the build), `message` |
+| `build-failed` | `install` couldn't build a tool. With `prepared`, what `check` prepared for it is used up, so run `check` again before an offline retry. Comes before the `error` | `tool`, `tool_version`, `sandbox`, `exit_status` (left out when a signal ended the build), `prepared` (it built from what `check` prepared, which is now used up), `command` (the whole build command), `message` (short, for an annotation) |
 | `up-to-date` | `install` or `check` found a tool's binaries current (stamp and checksums match), so it builds nothing | `tool`, `tool_version`, `bins` |
 | `advisory` | A finding of the [audit](#audit) that isn't ignored | `tool`, `file`, `line`, `id`, `type`, `package`, `package_version`, `title`, `patched`, `severity`, `fix`, `affected` |
 | `lock-change` | `add` or `update` changed the tool's lock: `add` lists what `--fix-advisories` or the setup screen changed in the published lock | `tool`, `file`, `package`, `from`, `to` (`from` left out for an added package, `to` for a removed one) |
@@ -316,7 +316,7 @@ With `--message-format json`, stdout holds only JSON records, one per line. All 
 | `inspect` | What [`inspect`](#inspect) found | See [inspect](#inspect) |
 | `ambiguous-dependency` | `update` was given a bare name that is locked at more than one version | `tool`, `package`, `candidates` (each `name@version`) |
 | `sfw-missing` | `settings.sfw = "auto"` found no `sfw`, so downloads aren't filtered; written when a command that may download starts, whether or not it downloads | `message` |
-| `error` | The command failed | `message` |
+| `error` | The command failed, or (in `check` and `verify --repair`, which go on with the other tools) one tool did | `message`; `tool` and `tool_version` when it's about one tool |
 | `summary` | The last record of `add`, `update`, `install`, `check`, `review` and `audit` | `ok`, `audited` (whether any lock was audited), `vulnerabilities` and `warnings` (only when `audited` is `true`: with `--no-audit` nothing was counted, so they're left out), `pending_reviews`, `missing_targets` |
 
 Every record also has `"version": 1`. The version goes up when a record changes in a way that breaks readers.

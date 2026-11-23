@@ -1154,7 +1154,7 @@ fn check(project: &Project, config: &Config, args: &CheckArgs) -> Result<()> {
             },
         );
         if let Err(e) = checked {
-            output::print_error(&e);
+            output::tool_error(&e);
             failed.push(name.to_string());
         }
     }
@@ -1339,7 +1339,7 @@ fn verify(project: &Project, config: &Config, args: &VerifyArgs) -> Result<ExitC
                     say!("{name}: repaired");
                     failed.retain(|f| *f != name);
                 }
-                Err(e) => output::print_error(&e),
+                Err(e) => output::tool_error(&e),
             }
         }
     }

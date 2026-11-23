@@ -74,6 +74,8 @@ fn advisory_leaves_out_a_missing_fix() {
 #[test]
 fn control_characters_are_escaped() {
     let record = Record::Error {
+        tool: None,
+        tool_version: None,
         message: "a\nb\u{1b}[2J".into(),
     };
     assert_eq!(
@@ -113,6 +115,8 @@ fn a_held_command_failure_carries_its_stderr() {
 fn characters_a_terminal_acts_on_or_hides_are_escaped() {
     let message = "a\u{7f}b\u{9b}2Jc\u{202e}d\u{2028}e\u{200b}f\u{e0041}g \u{e9}";
     let json = line(&Record::Error {
+        tool: None,
+        tool_version: None,
         message: message.into(),
     });
     assert_eq!(
@@ -244,11 +248,13 @@ fn prepared_and_failed_builds_have_records() {
         tool_version: "1.0.0".into(),
         sandbox: "bwrap".into(),
         exit_status: Some(101),
+        prepared: true,
+        command: "cargo install".into(),
         message: "m".into(),
     };
     assert_eq!(
         line(&failed),
-        r#"{"version":1,"kind":"build-failed","tool":"t","tool_version":"1.0.0","sandbox":"bwrap","exit_status":101,"message":"m"}"#
+        r#"{"version":1,"kind":"build-failed","tool":"t","tool_version":"1.0.0","sandbox":"bwrap","exit_status":101,"prepared":true,"command":"cargo install","message":"m"}"#
     );
     // Ended by a signal: no exit status.
     let signalled = Record::BuildFailed {
@@ -256,10 +262,29 @@ fn prepared_and_failed_builds_have_records() {
         tool_version: "1.0.0".into(),
         sandbox: "none".into(),
         exit_status: None,
+        prepared: false,
+        command: "cargo install".into(),
         message: "m".into(),
     };
     assert_eq!(
         line(&signalled),
-        r#"{"version":1,"kind":"build-failed","tool":"t","tool_version":"1.0.0","sandbox":"none","message":"m"}"#
+        r#"{"version":1,"kind":"build-failed","tool":"t","tool_version":"1.0.0","sandbox":"none","prepared":false,"command":"cargo install","message":"m"}"#
+    );
+}
+
+#[test]
+fn an_error_about_one_tool_names_it() {
+    let e = anyhow::anyhow!("isn't prepared").context(ForTool {
+        tool: "t".into(),
+        tool_version: "1.0.0".into(),
+    });
+    assert_eq!(
+        line(&error_record(&e)),
+        r#"{"version":1,"kind":"error","tool":"t","tool_version":"1.0.0","message":"t 1.0.0: isn't prepared"}"#
+    );
+    let e = anyhow::anyhow!("check failed (t)");
+    assert_eq!(
+        line(&error_record(&e)),
+        r#"{"version":1,"kind":"error","message":"check failed (t)"}"#
     );
 }

@@ -84,7 +84,7 @@ fn decide(
         } else {
             "sandbox = \"require\""
         };
-        bail!("{tool}: a build sandbox is required ({set}), but {why}");
+        bail!("a build sandbox is required ({set}), but {why}");
     }
     let message =
         format!("no build sandbox ({why}); build scripts run with network and write access");

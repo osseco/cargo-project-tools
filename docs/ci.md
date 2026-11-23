@@ -122,7 +122,7 @@ if jq -e 'select(.kind == "prepared")' check.jsonl > /dev/null; then
 fi
 ```
 
-When a build fails, `install` writes `build-failed` (with the `tool`, its `sandbox` and cargo's `exit_status`) before the `error`. What `check` prepared for that tool is used up, so run `check` again before retrying.
+When a build fails, `install` writes `build-failed` (with the `tool`, its `sandbox` and cargo's `exit_status`) before the `error`. Its `message` is short enough for an annotation, and the whole build command is in `command`. With `"prepared": true` it built from what `check` prepared, which is now used up, so run `check` again before an offline retry. Any `error` about one tool, a build or anything before it (such as an offline install of a tool that wasn't prepared), names it in `tool`.
 
 The [sandbox](configuration.md#sandbox) enforces no network and no writes outside those paths for the build where there is one. Where there isn't, for example a container you provide, cut its network and mount `CARGO_HOME` read-only yourself, and pass `--sandbox off`. Each tool gets a `built` or `up-to-date` record.
 
